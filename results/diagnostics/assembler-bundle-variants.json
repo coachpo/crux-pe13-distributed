@@ -1,0 +1,77 @@
+{
+  "verification_environment": "private mount namespace; read-only original source lower and OUT; tmpfs source upper",
+  "shards": [
+    {
+      "added_source_files_verified": [
+        {
+          "mode": 420,
+          "path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libavc/common/armv8/ih264_neon_macros.s",
+          "reasons": [
+            "literal-assembler-include"
+          ],
+          "sha256": "c3e425d8d786dc63495ff10a86adf48e917d329c21e1500374e732f22a95b0b5",
+          "size": 1416,
+          "type": "file"
+        }
+      ],
+      "base_inline_bundle_sha256": "16d7840b3a50c7191487aa84374df442511c660f077ae5ce92bae1f61156d637",
+      "corrupt_macro_rejected": "input integrity mismatch (sha256): /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libavc/common/armv8/ih264_neon_macros.s",
+      "graph_specs_unchanged": true,
+      "manifest_sha256": "ebdede08a8861391cf3ba819ec8fe10b17c3168b06c5ca178702aa0379ecf28e",
+      "missing_macro_rejected": "missing input: /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libavc/common/armv8/ih264_neon_macros.s",
+      "original_file_specs_unchanged": true,
+      "shard": "w000-s002",
+      "variant_bundle_sha256": "743df177569b9cd39e6268bb3e4be6821bcb4ccaf4407c36aecb5611ae64bb54",
+      "verified_file_count": 164263,
+      "worker_verify_bundle": "PASS"
+    },
+    {
+      "added_source_files_verified": [
+        {
+          "mode": 420,
+          "path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+          "reasons": [
+            "literal-assembler-include"
+          ],
+          "sha256": "07b1d99266016d8ab0e3c769393d5617b32f12ef8fa06fc11410445d5c32fd3d",
+          "size": 1461,
+          "type": "file"
+        }
+      ],
+      "base_inline_bundle_sha256": "a66dfd8e6ddb62ba7daacfae47224f1c203a10f01c41f2e53d20a0d87b036195",
+      "corrupt_macro_rejected": "input integrity mismatch (sha256): /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+      "graph_specs_unchanged": true,
+      "manifest_sha256": "2bf2c7a44af07daf6482be4e5fc8789dee840c4e8016c692bfb7de6818165f5a",
+      "missing_macro_rejected": "missing input: /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+      "original_file_specs_unchanged": true,
+      "shard": "w000-s006",
+      "variant_bundle_sha256": "8de88bf830247ac8dc92ab8c7e08c425ac3849b39636df97d6c667204eaac453",
+      "verified_file_count": 33850,
+      "worker_verify_bundle": "PASS"
+    },
+    {
+      "added_source_files_verified": [
+        {
+          "mode": 420,
+          "path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+          "reasons": [
+            "literal-assembler-include"
+          ],
+          "sha256": "07b1d99266016d8ab0e3c769393d5617b32f12ef8fa06fc11410445d5c32fd3d",
+          "size": 1461,
+          "type": "file"
+        }
+      ],
+      "base_inline_bundle_sha256": "5f31e622cdad1fad372ce8312bee5e2d863ebd02496ba2eada486b784be6c3e3",
+      "corrupt_macro_rejected": "input integrity mismatch (sha256): /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+      "graph_specs_unchanged": true,
+      "manifest_sha256": "1156b69a7e59f555588b872b064ca2efffe5e1c2e5f54a60c13386cd60155d7f",
+      "missing_macro_rejected": "missing input: /home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+      "original_file_specs_unchanged": true,
+      "shard": "w000-s007",
+      "variant_bundle_sha256": "6eeb8ddef91a238d0cde3058dc21c42ab9faae7dea268044991d245ad28db4e0",
+      "verified_file_count": 22193,
+      "worker_verify_bundle": "PASS"
+    }
+  ]
+}

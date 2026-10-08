@@ -1,0 +1,11 @@
+{
+  "classification": "fresh same-action argument scratch file, recreated before response consumption",
+  "original_same_action_matches": 1178,
+  "original_misclassified_input_count": 1178,
+  "corrected_gate_count": 0,
+  "source_contract": [
+    "build/make/core/definitions.mk:682-703",
+    "build/make/core/definitions.mk:2327-2335"
+  ],
+  "invariant": "Fresh same-action files are not source inputs; prior reads, append-only contents, touch-only files and explicit graph leaves retain their input requirements."
+}

@@ -122,6 +122,12 @@ def command_tokens(command):
         raise CapsuleError("Cannot parse expanded command: %s" % error) from error
 
 
+def command_operand(token):
+    if token.startswith("@"):
+        return token[1:]
+    return token.partition("=")[2] if "=" in token else token
+
+
 class Collector:
     def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
                  selection_roots=None, scan_cache=None):
@@ -442,8 +448,59 @@ class Collector:
             if directive == "include":
                 self.assembler_inputs(dependency, include_paths)
 
+    def action_temporaries(self, tokens):
+        """Find literal files recreated before consumption in this shell action."""
+        # Alternative/pipeline branches do not establish an ordered fresh write.
+        if any(token in {"||", "|", "&"} for token in tokens):
+            return set()
+        states, program = {}, None
+        boundaries = {";", "&&", "||", "|", "(", ")"}
+
+        def state(value):
+            if not value or value.startswith("-") or any(c in value for c in "$*?[\n"):
+                return None
+            path = self.path(value)
+            return states.setdefault(path, {"read": None, "removed": False, "fresh": None})
+
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token in boundaries:
+                program = None
+            elif token in {">", ">|", ">>", "<"} and index + 1 < len(tokens):
+                index += 1
+                item = state(tokens[index])
+                if item:
+                    if token in {">", ">|"}:
+                        if item["fresh"] is None:
+                            item["fresh"] = index
+                    elif token == "<" or (token == ">>" and item["fresh"] is None):
+                        if item["read"] is None:
+                            item["read"] = index
+            elif program is None:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+                    item = state(command_operand(token))
+                    if item and item["read"] is None:
+                        item["read"] = index
+                else:
+                    program = Path(token).name
+            elif not token.startswith("-") or "=" in token:
+                item = state(command_operand(token))
+                if item:
+                    if program == "rm":
+                        item["removed"] = True
+                    elif program == "touch":
+                        if item["removed"] and item["fresh"] is None:
+                            item["fresh"] = index
+                    elif program not in {"echo", "printf", "mkdir"} and item["read"] is None:
+                        item["read"] = index
+            index += 1
+        return {path for path, item in states.items() if item["fresh"] is not None
+                and (item["read"] is None or item["read"] > item["fresh"])}
+
     def command(self, command):
         tokens = command_tokens(command)
+        temporary_outputs = self.action_temporaries(tokens)
         literal_tokens = set()
         for position, token in enumerate(tokens):
             if Path(token).name == "ln":
@@ -516,6 +573,10 @@ class Collector:
         index = 0
         while index < len(tokens):
             token = tokens[index]
+            operand = command_operand(token)
+            if operand and not operand.startswith("-") and self.path(operand) in temporary_outputs:
+                index += 1
+                continue
             if index in literal_tokens:
                 index += 1
                 continue
@@ -575,7 +636,7 @@ class Collector:
                     if path.is_file():
                         self.command(path.read_text())
             elif token not in {"&&", "||", ";", "|", "(", ")", ">", "<"}:
-                value = token.partition("=")[2] if "=" in token else token
+                value = command_operand(token)
                 if value and not value.startswith("-"):
                     path = self.path(value)
                     if self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):

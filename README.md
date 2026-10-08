@@ -14,7 +14,11 @@ The experiment is not yet a completed ROM build. The standard runner probe and
 the cold common/library compilation trial succeeded. The full build now uses
 41 dependency-ordered tasks across nine waves, covering 136,014 commands,
 including a cold source build of the `bpglob` graph helper. The first 13 main
-compilation tasks are running in [wave 1](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37854864171).
+compilation tasks were dispatched together in [wave 1](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37854864171).
+All thirteen succeeded across the original run and its
+[four-task retry](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37857642143).
+Verified assembler inputs and the native Python binding corrected four failures;
+the other nine successful producers were reused.
 
 After updating Actions dependencies to Node.js 24, the repeated resource probe
 succeeded with zero annotations. Actual resource receipts are in

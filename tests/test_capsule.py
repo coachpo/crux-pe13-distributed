@@ -314,6 +314,45 @@ class CapsuleTests(unittest.TestCase):
         self.assertNotIn(str(raw).lstrip("/"),archive.getnames())
         self.assertIn(str(runtime / "libgcc.a").lstrip("/"),archive.getnames())
 
+    def test_notice_response_arguments_recreated_in_same_action_are_not_source_seeds(self):
+        arguments = self.out / "notice/module.meta_lic/arguments"
+        self.write(arguments, "stale response data\n")
+        self.manifest["commands"] = ["/bin/bash -c 'rm -f " + str(arguments) + " && touch " + str(arguments)
+            + " && echo -n source >> " + str(arguments) + " && build_license_metadata @" + str(arguments) + "'"]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(arguments).lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_action_fresh_write_does_not_hide_prior_reads_append_only_or_explicit_leaves(self):
+        arguments = self.out / "arguments"
+        self.write(arguments, "original response\n")
+        commands = [
+            "cat " + str(arguments) + " && rm -f " + str(arguments) + " && touch " + str(arguments)
+                + " && echo new >> " + str(arguments),
+            "echo appended >> " + str(arguments) + " && reader @" + str(arguments),
+            "touch " + str(arguments) + " && echo appended >> " + str(arguments),
+            "rm -f " + str(arguments) + " || touch " + str(arguments) + " ; reader " + str(arguments),
+            "reader --input=" + str(arguments) + " && echo new > " + str(arguments),
+            "reader CONFIG=" + str(arguments) + " && echo new > " + str(arguments),
+            "CONFIG=" + str(arguments) + " reader && echo new > " + str(arguments),
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.manifest["commands"] = [command]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = ["echo new > " + str(arguments) + " && reader @" + str(arguments)]
+        self.manifest["leaf_inputs"].append(str(arguments))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_truncating_write_recreates_action_local_argument_file(self):
+        arguments = self.out / "arguments"
+        self.write(arguments, "old data\n")
+        self.manifest["commands"] = ["echo new > " + str(arguments) + " && reader " + str(arguments)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(arguments).lstrip("/"), archive.getnames())
+
     def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
         headers=self.out / "include"
         self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")
