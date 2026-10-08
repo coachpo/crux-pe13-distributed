@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import copy
 from pathlib import Path
 import shutil
 import sys
@@ -245,6 +246,55 @@ class WorkerTests(unittest.TestCase):
         receipt = self.run_worker()
         self.assertEqual(receipt["status"], "success", receipt.get("error"))
         self.assertEqual(receipt["build_environment"]["DIST_DIR"], str(custom))
+
+    def bound_producer(self):
+        self.assertEqual(self.run_worker()["status"], "success")
+        self.output.unlink()
+        path = self.root / "producer/receipt.json"
+        receipt = json.loads(path.read_text())
+        receipt.update(run_id="301", worker_commit="a" * 40)
+        path.write_text(json.dumps(receipt))
+        return {"id": "producer", "run_id": 301, "artifact": "shard-producer",
+                "expected_worker_commit": "a" * 40, "expected_manifest_sha256": receipt["manifest_sha256"]}
+
+    def test_controller_bound_dependency_is_installed(self):
+        binding = self.bound_producer()
+        accepted, _ = worker.merge_dependencies([self.root / "producer"], [binding], self.source, self.source / "out")
+        self.assertIn(str(self.output), accepted)
+        self.assertTrue(self.output.exists())
+
+    def test_dependency_identity_mismatch_never_installs_outputs(self):
+        binding = self.bound_producer()
+        for changes in ({"id": "other", "artifact": "shard-other"}, {"run_id": 302},
+                        {"expected_worker_commit": "b" * 40}, {"expected_manifest_sha256": "f" * 64},
+                        {"artifact": "shard-other"}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                worker.merge_dependencies([self.root / "producer"], [{**binding, **changes}], self.source, self.source / "out")
+            self.assertFalse(self.output.exists())
+
+    def test_dependency_context_mismatch_never_installs_outputs(self):
+        binding = self.bound_producer()
+        path = self.root / "producer/receipt.json"
+        original = json.loads(path.read_text())
+        for field in ("source_root", "out_root"):
+            receipt = {**original, field: str(self.root / "other-context")}
+            path.write_text(json.dumps(receipt))
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field + " differs"):
+                worker.merge_dependencies([self.root / "producer"], [binding], self.source, self.source / "out")
+            self.assertFalse(self.output.exists())
+
+    def test_all_dependency_headers_are_preflighted_before_any_member(self):
+        binding = self.bound_producer()
+        second = self.root / "second-producer"
+        shutil.copytree(self.root / "producer", second)
+        receipt_path = second / "receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt["run_id"] = "302"
+        receipt_path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError, "run_id differs"):
+            worker.merge_dependencies([self.root / "producer", second], [binding, copy.deepcopy(binding)],
+                                      self.source, self.source / "out")
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

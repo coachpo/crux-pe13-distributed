@@ -93,6 +93,12 @@ jobs:
                       raise SystemExit('Invalid dependency run ID')
                   if not re.fullmatch(r'shard-[A-Za-z0-9][A-Za-z0-9_.-]*', dependency['artifact']):
                       raise SystemExit('Invalid dependency artifact name')
+                  if dependency.get('id') != dependency['artifact'][6:]:
+                      raise SystemExit('Dependency id and artifact differ')
+                  if not re.fullmatch(r'[a-f0-9]{40}', dependency.get('expected_worker_commit', '')):
+                      raise SystemExit('Dependency has no expected compilation worker commit')
+                  if not re.fullmatch(r'[a-f0-9]{64}', dependency.get('expected_manifest_sha256', '')):
+                      raise SystemExit('Dependency has no expected Ninja manifest identity')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps({'include': include}, separators=(',', ':')) + '\n')
           PY
@@ -204,10 +210,13 @@ jobs:
           task = json.loads(os.environ['TASK_JSON'])
           staging = Path(os.environ['RUNNER_TEMP'])
           source = Path(os.environ['SOURCE_ROOT'])
+          bindings = staging / 'result/dependency-bindings.json'
+          bindings.write_text(json.dumps(task.get('dependencies', []), indent=2) + '\n')
           command = ['python3', 'scripts/worker.py', '--id', task['id'],
                      '--manifest', str(source / '.crux-task/graph/manifest.json'),
                      '--bundle', str(source / '.crux-task/graph/bundle.json'),
-                     '--output-dir', str(staging / 'result'), '--jobs', '4']
+                     '--output-dir', str(staging / 'result'), '--jobs', '4',
+                     '--dependency-bindings', str(bindings)]
           for index, dependency in enumerate(task.get('dependencies', [])):
               command += ['--dependency-dir', str(staging / 'dependencies' / str(index))]
           raise SystemExit(subprocess.run(command).returncode)

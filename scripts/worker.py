@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import resource
+import re
 import shutil
 import stat
 import subprocess
@@ -118,16 +119,40 @@ def archive_path(name):
     return "/" + str(path)
 
 
-def merge_dependencies(directories):
+def merge_dependencies(directories, bindings=None, source_root=None, out_root=None):
     """Validate the producer receipt before accepting any compiled output."""
-    accepted = {}
-    receipts = []
-    for directory in directories:
+    directories = list(directories)
+    if bindings is not None and (not isinstance(bindings, list) or len(bindings) != len(directories)):
+        raise ValueError("dependency bindings must align with every dependency directory")
+    prepared = []
+    # Preflight all declared producers before installing even the first member.
+    for index, directory in enumerate(directories):
         directory = Path(directory)
-        receipt_path = directory / "receipt.json"
-        receipt = read_json(receipt_path)
+        receipt = read_json(directory / "receipt.json")
         if receipt.get("schema_version") != 1 or receipt.get("status") != "success":
             raise ValueError(f"dependency did not complete successfully: {directory}")
+        if bindings is not None:
+            binding = bindings[index]
+            if (not isinstance(binding, dict) or not binding.get("id") or
+                    binding.get("artifact") != "shard-" + binding["id"] or
+                    not str(binding.get("run_id", "")).isdigit() or
+                    not re.fullmatch(r'[a-f0-9]{40}', binding.get("expected_worker_commit", "")) or
+                    not re.fullmatch(r'[a-f0-9]{64}', binding.get("expected_manifest_sha256", ""))):
+                raise ValueError(f"dependency has no complete controller binding: {directory}")
+            for field, expected in (("id", binding["id"]), ("run_id", str(binding["run_id"])),
+                                    ("worker_commit", binding["expected_worker_commit"]),
+                                    ("manifest_sha256", binding["expected_manifest_sha256"])):
+                actual = str(receipt.get(field)) if field == "run_id" else receipt.get(field)
+                if actual != expected:
+                    raise ValueError(f"dependency receipt {field} differs from controller binding: {directory}")
+            for field, expected in (("source_root", source_root), ("out_root", out_root)):
+                if expected is None or receipt.get(field) != str(expected):
+                    raise ValueError(f"dependency receipt {field} differs from consumer context: {directory}")
+        prepared.append((directory, receipt))
+    accepted = {}
+    receipts = []
+    for directory, receipt in prepared:
+        receipt_path = directory / "receipt.json"
         archive = directory / "outputs.tar.zst"
         if digest(archive) != receipt["archive_sha256"]:
             raise ValueError(f"dependency archive integrity mismatch: {directory}")
@@ -264,7 +289,8 @@ def retain_abi_diagnostics(source_root, build_environment, output_dir):
     return retained
 
 
-def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4):
+def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4,
+              dependency_bindings=None):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed", "outputs": [],
@@ -289,6 +315,9 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             bundle = verify_bundle(bundle_path, manifest_path)
             if Path(bundle["source_root"]) != source_root:
                 raise ValueError("capsule and Ninja source roots differ")
+            out_root = Path(bundle["out_root"])
+            if not out_root.is_absolute():
+                raise ValueError("capsule out_root must be an absolute path")
             for path in manifest["outputs"]:
                 resolved = absolute(path, source_root)
                 if resolved.exists() or resolved.is_symlink():
@@ -297,7 +326,9 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                 resolved = absolute(path, source_root)
                 if resolved.exists() or resolved.is_symlink():
                     raise ValueError(f"cold capsule contains a producer input: {resolved}")
-            accepted, receipts = merge_dependencies(dependency_dirs)
+            if dependency_bindings is not None:
+                receipt["declared_dependencies"] = dependency_bindings
+            accepted, receipts = merge_dependencies(dependency_dirs, dependency_bindings, source_root, out_root)
             receipt["dependencies"] = receipts
             for path in manifest["external_inputs"]:
                 resolved = str(absolute(path, source_root))
@@ -312,9 +343,6 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             if not isinstance(build_environment, dict) or any(not isinstance(key, str) or not isinstance(value, str)
                                                               for key, value in build_environment.items()):
                 raise ValueError("build_environment must contain string keys and values")
-            out_root = Path(bundle["out_root"])
-            if not out_root.is_absolute():
-                raise ValueError("capsule out_root must be an absolute path")
             for variable, expected in (("OUT_DIR", out_root), ("ANDROID_BUILD_TOP", source_root)):
                 if variable in build_environment and (not build_environment[variable] or
                                                       absolute(build_environment[variable], source_root) != expected):
@@ -385,11 +413,13 @@ def main():
     parser.add_argument("--id", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dependency-dir", action="append", default=[])
+    parser.add_argument("--dependency-bindings", help="JSON controller bindings aligned with dependency directory arguments")
     parser.add_argument("--ninja")
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     receipt = run_shard(args.manifest, args.bundle, args.id, args.output_dir,
-                        args.dependency_dir, args.ninja, args.jobs)
+                        args.dependency_dir, args.ninja, args.jobs,
+                        read_json(args.dependency_bindings) if args.dependency_bindings else None)
     print(json.dumps({key: receipt.get(key) for key in ("id", "status", "elapsed_seconds", "error")}))
     return 0 if receipt["status"] == "success" else 1
 
