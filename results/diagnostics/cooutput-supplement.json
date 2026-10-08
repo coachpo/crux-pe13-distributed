@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "verified": true,
+  "supplement": {
+    "schema_version": 1,
+    "verified": true,
+    "supplement_id": "bionic-headers-build-date-v1",
+    "manifest_sha256": "008a7ce749171042438cfd09b56628465b079b8747f488a248736ed76569d295",
+    "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+    "old_OUT_input_seed": false,
+    "leaf_input_count": 1737,
+    "native_versioner_command_count": 3,
+    "native_versioner_commands_byte_preserved": true,
+    "emitted_native_commands": 4,
+    "new_frontend_date_actions": 1,
+    "declared_native_cooutputs": 708,
+    "declared_total_outputs": 709,
+    "generated_headers": 705,
+    "header_output_mode": 420,
+    "frontend_date": {
+      "value": "1791434831",
+      "bytes": 10,
+      "append_newline": false,
+      "creation_mode": 438,
+      "umask": 18,
+      "output_mode": 420,
+      "root_accepted": true
+    },
+    "cold_verification": "cold-verification.json",
+    "source_provenance": [
+      "bionic/libc/Android.bp:1828-1832",
+      "build/soong/cc/library.go:1658-1702",
+      "build/soong/cc/ndk_headers.go:246-259",
+      "build/soong/ui/build/config.go:417-424",
+      "build/soong/ui/build/build.go:51-58"
+    ],
+    "cooutput_ownership": "All235headerspervariantareoriginalNinjaimplicitoutputsunderthesameversioner.timestampproducer;noapprovalofpreexistinggeneratedheaders."
+  },
+  "variants": [
+    {
+      "task_id": "w001-s000",
+      "variant_dir": "/Users/qingli/Documents/project/crux-pe13-distributed/.work/consumer-variants/cooutputs-v1/w001-s000",
+      "original_manifest_sha256": "d71c08fc63b66c467f5dbb40ff838a96dfdf809950baddebff15b4612ef6533c",
+      "variant_manifest_sha256": "980b800290e940f848d9b273b4a01cb7e44c2917be8a5bd1ca196d692950b165",
+      "native_commands_preserved": true,
+      "native_command_count": 4000,
+      "command_rsp_dep_metadata_preserved": true,
+      "scopes": [
+        {
+          "file": "file-2.ninja",
+          "sha256": "89fcda23acf9c1b127e7be5bda76f3903ee4cd57455f19a01e054513d69ec29f",
+          "byte_identical": true
+        },
+        {
+          "file": "file-3.ninja",
+          "sha256": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+          "byte_identical": true
+        },
+        {
+          "file": "file-4.ninja",
+          "sha256": "e616425e98dc942baf7aee95ab9d4cac8dea0eae918205e39e82a9be1954c7ed",
+          "byte_identical": true
+        }
+      ],
+      "entry_original_bytes_preserved_as_prefix": true,
+      "added_external_inputs": 471,
+      "generated_header_inputs": 470,
+      "date_input": true,
+      "supplement_id": "bionic-headers-build-date-v1",
+      "old_OUT_input_seed": false
+    },
+    {
+      "task_id": "w001-s001",
+      "variant_dir": "/Users/qingli/Documents/project/crux-pe13-distributed/.work/consumer-variants/cooutputs-v1/w001-s001",
+      "original_manifest_sha256": "56e56343d45b8b2041522facd4448535ec425244e3d8572a18a5211b3663f34a",
+      "variant_manifest_sha256": "ab52df8b3bf50892a9e44c1fb2d0b71cf1b23b26ee85e3a59624e3a32cb93c27",
+      "native_commands_preserved": true,
+      "native_command_count": 4000,
+      "command_rsp_dep_metadata_preserved": true,
+      "scopes": [
+        {
+          "file": "file-2.ninja",
+          "sha256": "084baf5e5b024321d346bd311c620635afc65f248670039791f5b3921f85de5d",
+          "byte_identical": true
+        },
+        {
+          "file": "file-3.ninja",
+          "sha256": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+          "byte_identical": true
+        },
+        {
+          "file": "file-4.ninja",
+          "sha256": "228e86b57415d82753eefd33744d52c8d4a478dd41b416e7c623f9910672a885",
+          "byte_identical": true
+        }
+      ],
+      "entry_original_bytes_preserved_as_prefix": true,
+      "added_external_inputs": 471,
+      "generated_header_inputs": 470,
+      "date_input": true,
+      "supplement_id": "bionic-headers-build-date-v1",
+      "old_OUT_input_seed": false
+    },
+    {
+      "task_id": "w001-s002",
+      "variant_dir": "/Users/qingli/Documents/project/crux-pe13-distributed/.work/consumer-variants/cooutputs-v1/w001-s002",
+      "original_manifest_sha256": "eb2bfa93bb234537d82dba841b9e68c90f1f429a9a5cc964dada1c56412de75d",
+      "variant_manifest_sha256": "3c8a1897fe2abe2cc07293095e28d17a84911d69bce2220eb6e775eee11da8d5",
+      "native_commands_preserved": true,
+      "native_command_count": 1367,
+      "command_rsp_dep_metadata_preserved": true,
+      "scopes": [
+        {
+          "file": "file-2.ninja",
+          "sha256": "7dbcfe5f637fa2e607b9fa26aa445d7a6367c2699cba09ff937f5b5f5d4351e4",
+          "byte_identical": true
+        },
+        {
+          "file": "file-3.ninja",
+          "sha256": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+          "byte_identical": true
+        },
+        {
+          "file": "file-4.ninja",
+          "sha256": "481aed4d5af41014f01ac185022a8942a2ca7f15f67d69e905c6c7354e7b93a4",
+          "byte_identical": true
+        }
+      ],
+      "entry_original_bytes_preserved_as_prefix": true,
+      "added_external_inputs": 471,
+      "generated_header_inputs": 470,
+      "date_input": true,
+      "supplement_id": "bionic-headers-build-date-v1",
+      "old_OUT_input_seed": false
+    },
+    {
+      "task_id": "w003-s000",
+      "variant_dir": "/Users/qingli/Documents/project/crux-pe13-distributed/.work/consumer-variants/cooutputs-v1/w003-s000",
+      "original_manifest_sha256": "24c14728bcab6d87515f8ffbb92618d2a305de04a9319e990a3a3a01a5571d1b",
+      "variant_manifest_sha256": "7ad961e163af1ec9c467703bf660a5ac02c3793c2020eae9d5bb17dd9ba75600",
+      "native_commands_preserved": true,
+      "native_command_count": 4000,
+      "command_rsp_dep_metadata_preserved": true,
+      "scopes": [
+        {
+          "file": "file-2.ninja",
+          "sha256": "7624df48528503f84e81fefd8e1b70ebd9385e90e6a1d2e11b0c0863ccfdc0c7",
+          "byte_identical": true
+        },
+        {
+          "file": "file-3.ninja",
+          "sha256": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+          "byte_identical": true
+        },
+        {
+          "file": "file-4.ninja",
+          "sha256": "6191c3b6ca72c5d828768c17b8783829246ffa6ba684eba2d43fc52f1a12faa0",
+          "byte_identical": true
+        }
+      ],
+      "entry_original_bytes_preserved_as_prefix": true,
+      "added_external_inputs": 235,
+      "generated_header_inputs": 235,
+      "date_input": false,
+      "supplement_id": "bionic-headers-build-date-v1",
+      "old_OUT_input_seed": false
+    }
+  ],
+  "frozen_v3_plan_and_original_assets_modified": false,
+  "original_successful_tasks_retained": true,
+  "crossing_action_contract": "Future sharding exports every declared co-output whenever any output of that action crosses a task boundary.",
+  "root_acceptance_required_before_publish_dispatch": true
+}

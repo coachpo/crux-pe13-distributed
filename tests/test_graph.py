@@ -265,6 +265,46 @@ class GraphTests(unittest.TestCase):
                     cwd=root,capture_output=True,text=True)
                 self.assertEqual(cold.returncode,0,cold.stderr)
 
+    def test_stamp_export_transports_declared_header_cooutputs(self):
+        if not shutil.which('ninja'):
+            self.skipTest('native Ninja executable is required for co-output transport validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);producer=root/'producer';consumer=root/'consumer'
+            producer.mkdir();consumer.mkdir()
+            (producer/'build.ninja').write_text('rule generate\n'
+                '  command = mkdir -p include && printf payload > include/generated.h && touch $out\n'
+                'rule consume\n  command = cat include/generated.h > $out\n'
+                'build stamp | include/generated.h: generate\nbuild result: consume stamp\n')
+            db=root/'index.sqlite';graph.index_graph(producer/'build.ninja',producer,db)
+            plan=graph.Graph(db).shard(['result'],root/'shards',max_actions=1)
+            first=plan['waves'][0][0];second=plan['waves'][1][0]
+            self.assertEqual(first['export_outputs'],['include/generated.h','stamp'])
+            self.assertEqual(second['external_inputs'],['include/generated.h','stamp'])
+            subprocess.run(['ninja','-f','build.ninja','stamp'],cwd=producer,check=True,
+                           capture_output=True,text=True)
+            archive=root/'outputs.tar'
+            with tarfile.open(archive,'w') as output:
+                for path in first['export_outputs']:
+                    output.add(producer/path,arcname=path)
+            with tarfile.open(archive) as outputs:outputs.extractall(consumer)
+            shutil.copytree(root/'shards'/second['id'],consumer/'.crux-task/graph')
+            capsule_path=MODULE.parent/'capsule.py'
+            capsule_spec=importlib.util.spec_from_file_location('cooutput_capsule',capsule_path)
+            capsule=importlib.util.module_from_spec(capsule_spec)
+            capsule_spec.loader.exec_module(capsule)
+            manifest=json.loads((consumer/'.crux-task/graph/manifest.json').read_text())
+            collector=capsule.Collector(manifest,consumer,consumer/'include')
+            header=consumer/'include/generated.h'
+            self.assertTrue(collector.produced(header))
+            collector.add(header,'existing-generated-header')
+            collector.include_directory(consumer/'include','compiler-include-directory')
+            self.assertEqual(collector.errors,set())
+            self.assertNotIn(header,collector.entries)
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','result'],
+                cwd=consumer,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stderr)
+            self.assertEqual((consumer/'result').read_text(),'payload')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -798,9 +798,20 @@ class Graph:
                 selected = self.closure(job_targets,cut,include_validations=False)
                 if set(selected['edge_ids']) & actions != chosen:
                     raise ValueError('shard closure differs from assigned actions')
+                # Readiness may name only a stamp while an include directory
+                # consumes the producer's other declared outputs. Import the
+                # same complete contract that the predecessor exports.
+                imported=set(selected['external_inputs'])
+                for path in list(imported):
+                    imported.update(records[producers[path]]['outputs'])
+                selected['external_inputs']=sorted(imported)
                 upstream = sorted({assignments[producers[path]] for path in selected['external_inputs']})
                 for path in selected['external_inputs']:
-                    required_exports[assignments[producers[path]]].add(path)
+                    # A timestamp can be the only readiness input while the
+                    # action's generated headers are consumed through -I.
+                    # Transport the complete declared output contract together.
+                    owner=producers[path]
+                    required_exports[assignments[owner]].update(records[owner]['outputs'])
                     for directory,owner in {**self.side_output_dirs,**self.group_export_dirs}.items():
                         if owner == producers[path]:
                             required_exports[assignments[owner]].add(directory)
