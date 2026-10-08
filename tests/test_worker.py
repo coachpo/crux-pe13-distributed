@@ -41,6 +41,7 @@ class WorkerTests(unittest.TestCase):
                                              "edge_count": 1, "outputs": ["out/result.bin"],
                                              "leaf_inputs": ["source.txt"], "external_inputs": list(external)}))
         self.bundle.write_text(json.dumps({"schema_version": 1, "source_root": str(self.source),
+                                           "out_root": str(self.source / "out"),
                                            "manifest_sha256": worker.digest(self.manifest),
                                            "files": [worker.describe(path) for path in
                                                      (self.input, self.ninja, self.ninja_file)]}))
@@ -157,6 +158,34 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(receipt["build_environment"]["PATH"].split(":")[0], str(self.source / ".crux-task/host-bin"))
         command = json.loads((self.root / "producer/command.json").read_text())
         self.assertEqual(command["runtime_aliases"], receipt["runtime_aliases"])
+
+    def test_native_command_receives_verified_external_output_context(self):
+        actual_out = self.root / "external-android-out"
+        self.ninja.write_text(f"#!{sys.executable}\nimport json,os\nfrom pathlib import Path\np=Path('out/result.bin')\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text(json.dumps({{name:os.environ[name] for name in ('OUT_DIR','ANDROID_BUILD_TOP')}}))\n")
+        self.write_manifests()
+        bundle = json.loads(self.bundle.read_text())
+        bundle["out_root"] = str(actual_out)
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        captured = json.loads(self.output.read_text())
+        self.assertEqual(captured, {"OUT_DIR": str(actual_out), "ANDROID_BUILD_TOP": str(self.source)})
+        self.assertNotEqual(captured["OUT_DIR"], captured["ANDROID_BUILD_TOP"])
+        self.assertEqual(receipt["out_root"], str(actual_out))
+        command = json.loads((self.root / "producer/command.json").read_text())
+        self.assertEqual(command["environment"]["OUT_DIR"], captured["OUT_DIR"])
+
+    def test_explicit_output_context_must_match_frozen_capsule(self):
+        manifest = json.loads(self.manifest.read_text())
+        manifest["build_environment"] = {"OUT_DIR": str(self.root / "wrong-output")}
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle["manifest_sha256"] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("OUT_DIR differs", receipt["error"])
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

@@ -288,7 +288,16 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             if not isinstance(build_environment, dict) or any(not isinstance(key, str) or not isinstance(value, str)
                                                               for key, value in build_environment.items()):
                 raise ValueError("build_environment must contain string keys and values")
-            build_environment = {**build_environment, "NINJA_STATUS": "[%f/%t %e sec] ", "CCACHE_DISABLE": "1"}
+            out_root = Path(bundle["out_root"])
+            if not out_root.is_absolute():
+                raise ValueError("capsule out_root must be an absolute path")
+            for variable, expected in (("OUT_DIR", out_root), ("ANDROID_BUILD_TOP", source_root)):
+                if variable in build_environment and (not build_environment[variable] or
+                                                      absolute(build_environment[variable], source_root) != expected):
+                    raise ValueError(f"{variable} differs from the verified capsule build context")
+            build_environment = {**build_environment, "OUT_DIR": str(out_root), "ANDROID_BUILD_TOP": str(source_root),
+                                 "NINJA_STATUS": "[%f/%t %e sec] ", "CCACHE_DISABLE": "1"}
+            receipt["out_root"] = str(out_root)
             runtime_aliases = prepare_python2_aliases(bundle, source_root)
             if runtime_aliases:
                 alias_dir = str(source_root / ".crux-task/host-bin")
