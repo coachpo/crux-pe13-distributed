@@ -123,7 +123,8 @@ def command_tokens(command):
 
 
 class Collector:
-    def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None):
+    def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
+                 selection_roots=None, scan_cache=None):
         self.manifest = manifest
         self.source_root = Path(source_root).resolve()
         self.out_root = Path(out_root).resolve()
@@ -132,6 +133,9 @@ class Collector:
         self.errors = set()
         self.outputs = {self.path(item) for item in manifest.get("outputs", [])}
         self.external = {self.path(item) for item in manifest.get("external_inputs", [])}
+        self.aux_outputs = {self.path(item) for item in manifest.get("depfiles", []) + manifest.get("rspfiles", [])}
+        self.aux_outputs.update(self.path(edge[key]) for edge in manifest.get("edges", [])
+                                for key in ("depfile", "rspfile") if edge.get(key))
         self.output_dirs = ({self.path(item) for item in manifest.get("output_dirs", [])}
                             | {path for path in self.outputs if path.is_dir()})
         self.external_dirs = ({self.path(item) for item in manifest.get("external_input_dirs", [])}
@@ -149,8 +153,15 @@ class Collector:
         self.external_roots = set()
         self.used_generated = set()
         self.system_tools = set()
-        self.scan_cache = set()
+        self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
+        self.selection_roots = None
+        if selection_roots is not None:
+            self.selection_roots = {self.path(path) for path in selection_roots}
+            self.selection_roots.update(path.resolve() for path in tuple(self.selection_roots))
+
+    def selected(self, path):
+        return self.selection_roots is None or any(beneath(path, root) for root in self.selection_roots)
 
     def path(self, value):
         if isinstance(value, dict):
@@ -164,7 +175,7 @@ class Collector:
         return any(part in FORBIDDEN_PARTS for part in path.parts)
 
     def produced(self, path):
-        return (path in self.outputs or path in self.external
+        return (path in self.outputs or path in self.external or path in self.aux_outputs
                 or any(beneath(path, root) for root in self.output_dirs | self.external_dirs))
 
     def register(self, path, reason):
@@ -172,18 +183,32 @@ class Collector:
 
     def symlink_ancestors(self, path, reason):
         # Archive the link and the actual target, never entries below a link.
-        current = Path(path.anchor)
-        for part in path.parts[1:]:
-            current = current / part
-            if current.is_symlink():
-                target = current.resolve()
+        current, pending = Path(path.anchor), list(path.parts[1:])
+        while pending:
+            part = pending.pop(0)
+            if part == ".":
+                continue
+            if part == "..":
+                current = current.parent
+                continue
+            candidate = current / part
+            if candidate.is_symlink():
+                target = candidate.resolve()
                 if self.excluded(target):
-                    raise CapsuleError("Excluded symlink target: %s" % current)
-                if beneath(current, self.source_root):
+                    raise CapsuleError("Excluded symlink target: %s" % candidate)
+                if beneath(candidate, self.source_root) and target.exists():
                     self.external_roots.add(target if target.is_dir() else target.parent)
-                if self.allowed_path(current):
-                    self.register(current, reason + ":symlink")
-        return path.resolve()
+                if self.allowed_path(candidate):
+                    self.register(candidate, reason + ":symlink")
+                link = Path(os.readlink(candidate))
+                if link.is_absolute():
+                    current = Path(link.anchor)
+                    pending = list(link.parts[1:]) + pending
+                else:
+                    pending = list(link.parts) + pending
+            else:
+                current = candidate
+        return current
 
     def allowed_path(self, path):
         return (beneath(path, self.source_root) or beneath(path, self.out_root)
@@ -201,13 +226,15 @@ class Collector:
 
     def add(self, value, reason, required=True):
         path = self.path(value)
-        if self.excluded(path) or self.produced(path):
+        if not self.selected(path) or self.excluded(path) or self.produced(path):
             return
         if not path.exists() and not path.is_symlink():
             if required:
                 self.errors.add("Missing input: %s (%s)" % (path, reason))
             return
         resolved = self.symlink_ancestors(path, reason)
+        if path.is_symlink() and not resolved.exists() and not required:
+            return
         if self.produced(resolved):
             return
         if not self.allowed_path(resolved):
@@ -266,7 +293,7 @@ class Collector:
 
     def include_directory(self, value, reason):
         path = self.path(value)
-        if not path.is_dir() or self.excluded(path) or self.produced(path):
+        if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
             return
         resolved = self.symlink_ancestors(path, reason)
         if self.allowed_path(resolved):
@@ -274,9 +301,11 @@ class Collector:
 
     def tool_package(self, value):
         path = self.path(value)
-        if not path.exists() or not beneath(path, self.source_root):
+        if not self.selected(path) or not beneath(path, self.source_root):
             return
         relative = path.relative_to(self.source_root).parts
+        if not relative or relative[0] != "prebuilts" or not path.exists():
+            return
         package = None
         if relative[:4] == ("prebuilts", "clang", "host", "linux-x86") and len(relative) > 5:
             package = self.source_root.joinpath(*relative[:5])
@@ -305,20 +334,26 @@ class Collector:
             self.add(package, "runtime-package:" + str(path.relative_to(self.source_root)))
 
     def python_package(self, path):
-        if path.suffix == ".py" and path.is_file() and beneath(path, self.source_root):
+        if self.selected(path) and path.suffix == ".py" and path.is_file() and beneath(path, self.source_root):
             self.add(path.parent, "python-siblings:" + str(path.relative_to(self.source_root)))
+            if path.resolve().parent != path.parent:
+                self.add(path.resolve().parent, "python-target-siblings:" + str(path.relative_to(self.source_root)))
 
     def environment(self, token):
         match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", token, re.DOTALL)
         if not match:
             return False
         name, value = match.groups()
+        if name in {"PWD", "OLDPWD", "TMPDIR", "TMP", "TEMP"}:
+            return True  # Working and scratch locations do not carry source inputs.
         if name in {"PATH", "PERL5LIB", "PYTHONPATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "CLASSPATH",
                     "BISON_PKGDATADIR", "PYTHONHOME"}:
             for item in value.split(":"):
                 if not item or "$" in item:
                     continue
                 path = self.path(item)
+                if not self.selected(path):
+                    continue
                 if not optional_probe(path, "exists"):
                     continue
                 if name == "PATH":
@@ -333,7 +368,7 @@ class Collector:
             self.tool_package(self.path(value).parent)
         else:
             path = self.path(value)
-            if value and (optional_probe(path) or optional_probe(path, "is_symlink")):
+            if value and self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):
                 self.add(path, "command-environment:" + name, required=False)
                 self.tool_package(path)
                 self.python_package(path)
@@ -343,6 +378,14 @@ class Collector:
         tokens = command_tokens(command)
         include_flags = {"-I", "-isystem", "-iquote", "-idirafter", "--sysroot", "-isysroot"}
         file_flags = {"-include", "-imacros"}
+        include_paths = []
+        for index, token in enumerate(tokens):
+            if token in include_flags and index + 1 < len(tokens):
+                include_paths.append(self.path(tokens[index + 1]))
+            elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
+                match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
+                if match:
+                    include_paths.append(self.path(match[1]))
         index = 0
         while index < len(tokens):
             token = tokens[index]
@@ -366,7 +409,11 @@ class Collector:
                 if token in include_flags:
                     self.include_directory(value, "command-include:" + token)
                 else:
-                    self.add(value, "command-input:" + token)
+                    candidates = [self.path(value)]
+                    if not Path(value).is_absolute():
+                        candidates.extend(directory / value for directory in include_paths)
+                    found = next((path for path in candidates if path.is_file() or self.produced(path)), candidates[0])
+                    self.add(found, "command-input:" + token)
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
@@ -382,13 +429,13 @@ class Collector:
                 value = token.partition("=")[2] if "=" in token else token
                 if value and not value.startswith("-"):
                     path = self.path(value)
-                    if optional_probe(path) or optional_probe(path, "is_symlink"):
+                    if self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):
                         self.add(path, "command-file", required=False)
                         self.tool_package(path)
                         self.python_package(path)
             index += 1
 
-    def collect(self, slice_dir):
+    def collect(self, slice_dir, include_task=True):
         for value in self.manifest.get("leaf_inputs", []):
             self.add(value, "graph-leaf")
             path = self.path(value)
@@ -396,21 +443,26 @@ class Collector:
                 self.include_directory(path.parent, "source-local-headers")
             self.python_package(path)
             self.tool_package(path)
-        for command in self.manifest.get("commands", []):
-            self.command(command)
+        commands = list(self.manifest.get("commands", []))
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
-                self.command(edge["command"])
+                commands.append(edge["command"])
             if edge.get("rspfile_content"):
-                self.command(edge["rspfile_content"])
+                commands.append(edge["rspfile_content"])
+        for command in dict.fromkeys(commands):
+            self.command(command)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
-        for value in depfiles:
+        for value in dict.fromkeys(depfiles):
             path = self.path(value)
             if path.is_file():
                 for dependency in make_dependencies(path.read_text(errors="replace")):
                     self.add(dependency, "observed-depfile:" + str(path))
         self.add("prebuilts/build-tools/linux-x86/bin/ninja", "runner-ninja")
+        if not include_task:
+            if self.errors:
+                raise CapsuleError("Shared source input audit failed:\n" + "\n".join(sorted(self.errors)))
+            return None
         runtime_dir = Path(self.manifest.get("runtime_dir", ".crux-task/graph"))
         if runtime_dir.is_absolute() or ".." in runtime_dir.parts:
             raise CapsuleError("runtime_dir must be a safe relative path")
@@ -427,7 +479,7 @@ class Collector:
             raise CapsuleError("Capsule input audit failed:\n" + "\n".join(sorted(self.errors)))
         return task_path
 
-    def metadata(self, manifest_path, task_path):
+    def file_specs(self):
         files = []
         for path, reasons in sorted(self.entries.items()):
             info = path.lstat()
@@ -439,6 +491,10 @@ class Collector:
             else:
                 item.update(type="file", size=info.st_size, sha256=self.digester(path))
             files.append(item)
+        return files
+
+    def metadata(self, manifest_path, task_path):
+        files = self.file_specs()
         for path, (data, mode) in sorted(self.virtual_files.items()):
             files.append({"path": str(path), "mode": mode, "type": "file", "size": len(data),
                           "sha256": hashlib.sha256(data).hexdigest(), "reasons": ["task-graph"]})
@@ -458,9 +514,11 @@ class Collector:
                                              for path in sorted(self.used_generated)],
                 "graph_inputs": graph_inputs, "system_tools": sorted(self.system_tools)}
 
-    def archive(self, stream, metadata, task_path):
+    def archive(self, stream, metadata, task_path, omitted=()):
         with tarfile.open(fileobj=stream, mode="w|") as archive:
             for path in sorted(self.entries):
+                if str(path) in omitted:
+                    continue
                 archive.add(path, arcname=str(path).lstrip("/"), recursive=False)
             for path, (data, mode) in sorted(self.virtual_files.items()):
                 info = tarfile.TarInfo(str(path).lstrip("/"))
@@ -468,22 +526,14 @@ class Collector:
                 info.uid = info.gid = 0
                 archive.addfile(info, io.BytesIO(data))
             data = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode()
-            info = tarfile.TarInfo(str(task_path / "bundle.json").lstrip("/"))
+            metadata_destination = (task_path / "bundle.json" if task_path else
+                                    self.source_root / ".crux-task/shared-layers" / (metadata["layer_id"] + ".json"))
+            info = tarfile.TarInfo(str(metadata_destination).lstrip("/"))
             info.size, info.mode = len(data), 0o644
             archive.addfile(info, io.BytesIO(data))
 
 
-def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None):
-    manifest_path = Path(manifest_path).resolve()
-    manifest = json.loads(manifest_path.read_text())
-    if manifest.get("schema_version") != 1:
-        raise CapsuleError("Unsupported slice schema_version")
-    if Path(manifest.get("source_root", source_root)) != Path(source_root):
-        raise CapsuleError("--source-root differs from manifest source_root")
-    digester = DigestCache(digest_cache)
-    collector = Collector(manifest, source_root, out_root, allowed_generated, digester)
-    task_path = collector.collect(manifest_path.parent)
-    metadata = collector.metadata(manifest_path, task_path)
+def write_archive(collector, metadata, task_path, output, digester, omitted=()):
     output = Path(output).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     if not str(output).endswith(".tar.zst"):
@@ -496,7 +546,7 @@ def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_gener
         with open(temporary.name, "wb") as destination:
             compressor = subprocess.Popen(["zstd", "-q", "-T0", "-3", "-c"], stdin=subprocess.PIPE, stdout=destination)
             try:
-                collector.archive(compressor.stdin, metadata, task_path)
+                collector.archive(compressor.stdin, metadata, task_path, omitted)
             finally:
                 compressor.stdin.close()
             if compressor.wait() != 0:
@@ -513,6 +563,115 @@ def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_gener
     return metadata_path, metadata
 
 
+def identity_spec(spec):
+    keys = ["path", "type", "mode"]
+    if spec["type"] == "file":
+        keys.extend(["size", "sha256"])
+    elif spec["type"] == "symlink":
+        keys.append("target")
+    return {key: spec[key] for key in keys}
+
+
+def layer_identity(files):
+    data = [identity_spec(spec) for spec in sorted(files, key=lambda spec: spec["path"])]
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def shared_inputs(metadata, shared_manifest, digester=digest):
+    if not shared_manifest:
+        return set()
+    layer_path = Path(shared_manifest).resolve()
+    layer = json.loads(layer_path.read_text())
+    if layer.get("schema_version") != 1 or layer.get("kind") != "shared-source-layer":
+        raise CapsuleError("Unsupported shared source layer schema")
+    if layer["source_root"] != metadata["source_root"]:
+        raise CapsuleError("Shared source layer uses a different source_root")
+    if layer_identity(layer["files"]) != layer["layer_id"]:
+        raise CapsuleError("Shared source layer file identity mismatch")
+    available = {spec["path"]: spec for spec in layer["files"]}
+    if len(available) != len(layer["files"]):
+        raise CapsuleError("Shared source layer has duplicate file paths")
+    omitted = set()
+    for spec in metadata["files"]:
+        prior = available.get(spec["path"])
+        if prior:
+            if beneath(Path(spec["path"]), Path(metadata["out_root"])):
+                raise CapsuleError("Shared source layers must not contain OUT inputs")
+            if identity_spec(spec) != identity_spec(prior):
+                raise CapsuleError("Input differs from frozen shared source layer: %s" % spec["path"])
+            omitted.add(spec["path"])
+    metadata["shared_layers"] = [{"layer_id": layer["layer_id"], "manifest_sha256": digester(layer_path),
+                                  "required_files": sorted(omitted)}]
+    metadata["task_archive_input_bytes"] = sum(spec["size"] for spec in metadata["files"]
+                                              if spec["path"] not in omitted)
+    return omitted
+
+
+def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None,
+         shared_manifest=None):
+    manifest_path = Path(manifest_path).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("schema_version") != 1:
+        raise CapsuleError("Unsupported slice schema_version")
+    if Path(manifest.get("source_root", source_root)) != Path(source_root):
+        raise CapsuleError("--source-root differs from manifest source_root")
+    digester = DigestCache(digest_cache)
+    collector = Collector(manifest, source_root, out_root, allowed_generated, digester)
+    task_path = collector.collect(manifest_path.parent)
+    metadata = collector.metadata(manifest_path, task_path)
+    omitted = shared_inputs(metadata, shared_manifest, digester)
+    return write_archive(collector, metadata, task_path, output, digester, omitted)
+
+
+def manifest_paths(values):
+    result = set()
+    for value in values:
+        path = Path(value).resolve()
+        if path.is_file():
+            result.add(path)
+        else:
+            result.update(path.rglob("manifest.json"))
+    if not result:
+        raise CapsuleError("No slice manifest.json files found")
+    return sorted(result)
+
+
+def build_layer(manifests, source_root, output, out_root=DEFAULT_OUT, shared_roots=None, digest_cache=None,
+                metadata_only=False):
+    source_root, out_root = Path(source_root).resolve(), Path(out_root).resolve()
+    roots = shared_roots or ["prebuilts"]
+    roots = [Path(root) if Path(root).is_absolute() else source_root / root for root in roots]
+    for root in roots:
+        if not beneath(root, source_root) or beneath(root, out_root):
+            raise CapsuleError("Shared roots must belong to the frozen source tree: %s" % root)
+    digester = DigestCache(digest_cache)
+    entries, scan_cache, provenance = {}, set(), []
+    aggregate = None
+    for path in manifest_paths(manifests):
+        manifest = json.loads(path.read_text())
+        if manifest.get("schema_version") != 1 or Path(manifest["source_root"]) != source_root:
+            raise CapsuleError("Shared source slice schema/source_root mismatch: %s" % path)
+        collector = Collector(manifest, source_root, out_root, digester=digester,
+                              selection_roots=roots, scan_cache=scan_cache)
+        collector.entries = entries
+        collector.collect(path.parent, include_task=False)
+        provenance.append({"path": str(path), "sha256": digester(path)})
+        aggregate = collector
+    files = aggregate.file_specs()
+    metadata = {"schema_version": 1, "kind": "shared-source-layer", "source_root": str(source_root),
+                "out_root": str(out_root), "layer_id": layer_identity(files), "files": files,
+                "file_count": len(files), "input_bytes": sum(spec["size"] for spec in files),
+                "shared_roots": [str(root) for root in roots], "manifests": provenance}
+    if metadata_only:
+        metadata["digest_cache"] = {"computed": digester.computed, "reused": digester.reused}
+        metadata_path = Path(output).resolve()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+        digester.save()
+        return metadata_path, metadata
+    return write_archive(aggregate, metadata, None, output, digester)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -523,10 +682,25 @@ def main():
     pack_parser.add_argument("--output", required=True)
     pack_parser.add_argument("--allow-generated", action="append", default=[], metavar="PATH=REASON")
     pack_parser.add_argument("--digest-cache", help="local digest cache; source paths and stat identity only")
+    pack_parser.add_argument("--shared-manifest", help="frozen shared source layer JSON restored by the worker")
+    layer_parser = commands.add_parser("build-layer")
+    layer_parser.add_argument("--manifests", nargs="+", required=True, help="slice manifest paths or directories")
+    layer_parser.add_argument("--source-root", default=DEFAULT_SOURCE)
+    layer_parser.add_argument("--out-root", default=DEFAULT_OUT)
+    layer_parser.add_argument("--output", required=True)
+    layer_parser.add_argument("--digest-cache")
+    layer_parser.add_argument("--shared-root", action="append", help="relative source root; default: prebuilts")
+    layer_parser.add_argument("--metadata-only", action="store_true", help="write layer JSON without compression")
     arguments = parser.parse_args()
     try:
-        metadata_path, metadata = pack(arguments.manifest, arguments.source_root, arguments.output,
-                                       arguments.out_root, arguments.allow_generated, arguments.digest_cache)
+        if arguments.command == "pack":
+            metadata_path, metadata = pack(arguments.manifest, arguments.source_root, arguments.output,
+                                           arguments.out_root, arguments.allow_generated, arguments.digest_cache,
+                                           arguments.shared_manifest)
+        else:
+            metadata_path, metadata = build_layer(arguments.manifests, arguments.source_root, arguments.output,
+                                                  arguments.out_root, arguments.shared_root, arguments.digest_cache,
+                                                  arguments.metadata_only)
     except (CapsuleError, OSError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1

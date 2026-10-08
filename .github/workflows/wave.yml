@@ -54,11 +54,35 @@ jobs:
               if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', task['id']) or task['id'] in ids:
                   raise SystemExit('Invalid or duplicate task ID')
               ids.add(task['id'])
-              if not task['capsule_assets']:
+              if not isinstance(task['capsule_assets'], list) or not task['capsule_assets']:
                   raise SystemExit('Task has no capsule')
               for asset in task['capsule_assets']:
                   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', asset):
                       raise SystemExit('Invalid capsule asset name')
+              if not isinstance(task.get('shared_capsules', []), list):
+                  raise SystemExit('shared_capsules must be an array')
+              for layer in task.get('shared_capsules', []):
+                  if not isinstance(layer, dict):
+                      raise SystemExit('Invalid shared layer descriptor')
+                  if not isinstance(layer.get('assets'), list) or not layer['assets']:
+                      raise SystemExit('Shared layer has no asset parts')
+                  for asset in layer['assets']:
+                      if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', asset):
+                          raise SystemExit('Invalid shared layer asset name')
+                  if 'layer_id' in layer and not re.fullmatch(r'[a-f0-9]{64}', layer['layer_id']):
+                      raise SystemExit('Invalid shared layer identity')
+              if not isinstance(task.get('source_overlays', []), list):
+                  raise SystemExit('source_overlays must be an array')
+              for overlay in task.get('source_overlays', []):
+                  if not isinstance(overlay, dict) or not isinstance(overlay.get('assets'), list) or not overlay['assets']:
+                      raise SystemExit('Source overlay has no asset parts')
+                  for asset in overlay['assets']:
+                      if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', asset):
+                          raise SystemExit('Invalid source overlay asset name')
+              if 'source_archives' in task:
+                  profile = task['source_archives']
+                  if not isinstance(profile, dict) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*\.json', profile.get('profile_asset', '')):
+                      raise SystemExit('Invalid frozen source archive profile asset')
               for dependency in task.get('dependencies', []):
                   if not str(dependency['run_id']).isdigit():
                       raise SystemExit('Invalid dependency run ID')
@@ -106,25 +130,59 @@ jobs:
           mkdir -p "$RUNNER_TEMP/capsules" "$RUNNER_TEMP/dependencies" "$RUNNER_TEMP/result"
           exec > >(tee "$RUNNER_TEMP/result/transport.log") 2>&1
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, shutil, subprocess
           from pathlib import Path
           task = json.loads(os.environ['TASK_JSON'])
           staging = Path(os.environ['RUNNER_TEMP'])
-          for asset in task['capsule_assets']:
+          def restore(assets, label):
+              directory = staging / 'capsules' / label
+              directory.mkdir(parents=True, exist_ok=True)
+              process = subprocess.Popen(['sudo', 'tar', '--zstd', '--no-same-owner',
+                                          '-xpf', '-', '-C', '/'], stdin=subprocess.PIPE)
+              try:
+                  for asset in assets:
+                      subprocess.run(['gh', 'release', 'download', os.environ['RELEASE_TAG'],
+                                      '--pattern', asset, '--dir', str(directory)], check=True)
+                      part = directory / asset
+                      with part.open('rb') as source:
+                          shutil.copyfileobj(source, process.stdin, 1024 * 1024)
+                      process.stdin.flush()
+                      part.unlink()
+                  process.stdin.close()
+                  if process.wait() != 0:
+                      raise RuntimeError('Capsule extraction failed: ' + label)
+              finally:
+                  try:
+                      if not process.stdin.closed:
+                          process.stdin.close()
+                  finally:
+                      process.wait()
+              directory.rmdir()
+              print('Restored capsule ' + label, flush=True)
+          for index, layer in enumerate(task.get('shared_capsules', [])):
+              restore(layer['assets'], 'shared-' + str(index))
+              if 'layer_id' in layer:
+                  print('Shared source layer: ' + layer['layer_id'], flush=True)
+          restore(task['capsule_assets'], 'task')
+          for index, overlay in enumerate(task.get('source_overlays', [])):
+              restore(overlay['assets'], 'overlay-' + str(index))
+          if 'source_archives' in task:
+              profile_asset = task['source_archives']['profile_asset']
+              profile_dir = staging / 'source-archive-profile'
               subprocess.run(['gh', 'release', 'download', os.environ['RELEASE_TAG'],
-                              '--pattern', asset, '--dir', str(staging / 'capsules')], check=True)
+                              '--pattern', profile_asset, '--dir', str(profile_dir)], check=True)
+              profile = profile_dir / profile_asset
+              shutil.copy2(profile, staging / 'result/remote-source-profile.json')
+              subprocess.run(['sudo', 'python3', 'scripts/source_archives.py',
+                              '--profile', str(profile), '--bundle',
+                              str(Path(os.environ['SOURCE_ROOT']) / '.crux-task/graph/bundle.json'),
+                              '--receipt', str(staging / 'result/remote-source-receipt.json')], check=True)
           for index, dependency in enumerate(task.get('dependencies', [])):
               subprocess.run(['gh', 'run', 'download', str(dependency['run_id']),
                               '--name', dependency['artifact'], '--dir', str(staging / 'dependencies' / str(index))], check=True)
-          with open(staging / 'capsule.tar.zst', 'wb') as capsule:
-              for asset in task['capsule_assets']:
-                  with open(staging / 'capsules' / asset, 'rb') as part:
-                      import shutil
-                      shutil.copyfileobj(part, capsule, 1024 * 1024)
           PY
-          sudo tar --zstd --no-same-owner -xpf "$RUNNER_TEMP/capsule.tar.zst" -C /
           sudo chown -R "$(id -u):$(id -g)" /home/qingli
-          rm -rf "$RUNNER_TEMP/capsules" "$RUNNER_TEMP/capsule.tar.zst"
+          rmdir "$RUNNER_TEMP/capsules"
       - name: Compile selected native Ninja actions
         shell: bash
         run: |

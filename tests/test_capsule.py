@@ -95,6 +95,24 @@ class CapsuleTests(unittest.TestCase):
         self.assertIn(str(external / "include/kernel.h").lstrip("/"), archive.getnames())
         self.assertNotIn(str(self.source / "kernel/include/kernel.h").lstrip("/"), archive.getnames())
 
+    def test_two_hop_python_link_restores_logical_script_and_sibling_import(self):
+        target = self.source / "build/make/tools/fs_config/fs_config_generator.py"
+        self.write(target, "import sibling\nprint(sibling.VALUE)\n", 0o755)
+        self.write(target.parent / "sibling.py", "VALUE = 42\n")
+        (self.source / "build/tools").symlink_to("make/tools", target_is_directory=True)
+        logical = self.source / "bionic/libc/fs_config_generator.py"
+        logical.parent.mkdir(parents=True)
+        logical.symlink_to("../../build/tools/fs_config/fs_config_generator.py")
+        self.manifest["leaf_inputs"].append(str(logical))
+        _, _, archive = self.collect()
+        self.assertTrue(archive.getmember(str(self.source / "build/tools").lstrip("/")).issym())
+        self.assertIn(str(target.parent / "sibling.py").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        result = subprocess.run([shutil.which("python3"), str(logical)], check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(result.stdout.strip(), "42")
+
     def test_used_toolchain_and_python_siblings_are_available(self):
         used = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
         unused = self.source / "prebuilts/clang/host/linux-x86/clang-r2"
@@ -103,13 +121,17 @@ class CapsuleTests(unittest.TestCase):
         self.write(unused / "bin/clang", "other compiler", 0o755)
         self.write(self.source / "build/tools/tool.py", "import sibling\n", 0o755)
         self.write(self.source / "build/tools/sibling.py", "VALUE = 3\n")
+        go = self.source / "prebuilts/go/linux-x86"
+        self.write(go / "pkg/tool/linux_amd64/compile", "go compiler", 0o755)
+        self.write(go / "pkg/linux_amd64/runtime.a", "go runtime")
         self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/clang -c lib/unit.c -o " + str(self.out / "unit.o"),
-                                      "python3 build/tools/tool.py"]
+                                      "python3 build/tools/tool.py", "prebuilts/go/linux-x86/pkg/tool/linux_amd64/compile lib/unit.c"]
         _, _, archive = self.collect()
         names = archive.getnames()
         self.assertIn(str(used / "lib64/clang/14/lib/linux/libclang_rt.a").lstrip("/"), names)
         self.assertNotIn(str(unused / "bin/clang").lstrip("/"), names)
         self.assertIn(str(self.source / "build/tools/sibling.py").lstrip("/"), names)
+        self.assertIn(str(go / "pkg/linux_amd64/runtime.a").lstrip("/"), names)
 
     def test_response_include_dirs_and_observed_depfile_inputs_are_collected(self):
         self.write(self.source / "include space/hidden.hpp", "#define HIDDEN 1\n")
@@ -119,6 +141,31 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive = self.collect()
         self.assertIn(str(self.source / "include space/hidden.hpp").lstrip("/"), archive.getnames())
         self.assertIn(str(self.source / "other/header with space.h").lstrip("/"), archive.getnames())
+
+    def test_compiler_depfile_output_is_observed_without_becoming_a_seed(self):
+        depfile = self.out / "unit.o.d"
+        self.write(depfile, str(self.out / "unit.o") + ": lib/unit.c lib/local.h\n")
+        self.manifest["depfiles"] = [str(depfile)]
+        self.manifest["commands"] = ["cc -MF " + str(depfile) + " -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "lib/local.h").lstrip("/"), archive.getnames())
+
+    def test_forced_include_basename_uses_declared_include_directory(self):
+        self.write(self.source / "include/fenv-access.h", "#pragma STDC FENV_ACCESS ON\n")
+        self.manifest["commands"] = ["cc -include fenv-access.h -Iinclude -c lib/unit.c"]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "include/fenv-access.h").lstrip("/"), archive.getnames())
+
+    def test_optional_header_scan_preserves_broken_source_symlink(self):
+        broken = self.source / "include/dne"
+        broken.parent.mkdir()
+        broken.symlink_to("missing-target")
+        self.manifest["commands"] = ["cc -Iinclude -c lib/unit.c"]
+        _, _, archive = self.collect()
+        member = archive.getmember(str(broken).lstrip("/"))
+        self.assertTrue(member.issym())
+        self.assertEqual(member.linkname, "missing-target")
 
     def test_nested_shell_command_discovers_toolchains_and_include_options(self):
         jdk = self.source / "prebuilts/jdk/jdk11/linux-x86"
@@ -192,7 +239,7 @@ class CapsuleTests(unittest.TestCase):
                                  or name.startswith(str(directory).lstrip("/") + "/") for name in names))
 
     def test_system_tools_are_recorded_without_archiving_host_paths(self):
-        self.manifest["commands"] = ["/usr/bin/python3 -c 'pass'"]
+        self.manifest["commands"] = ["PWD=/proc/self/cwd /usr/bin/python3 -c 'pass'"]
         _, metadata, archive = self.collect()
         self.assertIn(str(Path("/usr/bin/python3").resolve()), metadata["system_tools"])
         self.assertFalse(any(name.startswith("usr/") or name == "bin" for name in archive.getnames()))
@@ -227,6 +274,54 @@ class CapsuleTests(unittest.TestCase):
         compressed = subprocess.run(["zstd", "-q", "-dc", str(output)], check=True, stdout=subprocess.PIPE).stdout
         with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:") as archive:
             self.assertIn(str(self.source / ".crux-task/graph/bundle.json").lstrip("/"), archive.getnames())
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_shared_layer_and_task_capsule_restore_verified_complete_inputs(self):
+        used = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
+        unused = self.source / "prebuilts/clang/host/linux-x86/clang-r2"
+        self.write(used / "bin/clang", "compiler", 0o755)
+        self.write(used / "lib64/runtime.so", "compiler runtime")
+        self.write(unused / "bin/clang", "unused compiler", 0o755)
+        self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/clang -c lib/unit.c"]
+        manifest_path = self.slice / "manifest.json"
+        manifest_path.write_text(json.dumps(self.manifest))
+        cache_path = self.base / "input-digests.json"
+        layer_archive = self.base / "layer.tar.zst"
+        layer_path, layer = capsule.build_layer([self.slice], self.source, layer_archive, self.out,
+                                                 digest_cache=cache_path)
+        task_archive = self.base / "task.tar.zst"
+        _, task = capsule.pack(manifest_path, self.source, task_archive, self.out,
+                               digest_cache=cache_path, shared_manifest=layer_path)
+        self.assertFalse(any(spec["path"].startswith(str(unused)) for spec in layer["files"]))
+        self.assertFalse(any(spec["path"].startswith(str(self.out)) for spec in layer["files"]))
+        self.assertEqual(task["shared_layers"][0]["layer_id"], layer["layer_id"])
+        compiler_name = str(used / "bin/clang").lstrip("/")
+        task_data = subprocess.run(["zstd", "-q", "-dc", str(task_archive)], check=True, stdout=subprocess.PIPE).stdout
+        with tarfile.open(fileobj=io.BytesIO(task_data), mode="r:") as archive:
+            self.assertNotIn(compiler_name, archive.getnames())
+        self.assertIn(str(used / "bin/clang"), [spec["path"] for spec in task["files"]])
+        shutil.rmtree(self.source)
+        for archive_path in [layer_archive, task_archive]:
+            data = subprocess.run(["zstd", "-q", "-dc", str(archive_path)], check=True, stdout=subprocess.PIPE).stdout
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+                self.assertTrue(all(member.name.startswith(str(self.base).lstrip("/") + "/") for member in archive))
+                archive.extractall("/")
+        worker_spec = importlib.util.spec_from_file_location("worker", MODULE.parent / "worker.py")
+        worker = importlib.util.module_from_spec(worker_spec)
+        worker_spec.loader.exec_module(worker)
+        worker.verify_bundle(self.source / ".crux-task/graph/bundle.json",
+                             self.source / ".crux-task/graph/manifest.json")
+        self.assertEqual((used / "lib64/runtime.so").read_text(), "compiler runtime")
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_task_rejects_source_changed_after_shared_layer_freeze(self):
+        manifest_path = self.slice / "manifest.json"
+        manifest_path.write_text(json.dumps(self.manifest))
+        layer_path, _ = capsule.build_layer([self.slice], self.source, self.base / "layer.tar.zst", self.out)
+        self.write(self.source / "prebuilts/build-tools/linux-x86/bin/ninja", "different executable", 0o755)
+        with self.assertRaisesRegex(capsule.CapsuleError, "differs from frozen shared source layer"):
+            capsule.pack(manifest_path, self.source, self.base / "task.tar.zst", self.out,
+                          shared_manifest=layer_path)
 
 
 if __name__ == "__main__":
