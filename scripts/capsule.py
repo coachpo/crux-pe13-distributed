@@ -374,8 +374,31 @@ class Collector:
                 self.python_package(path)
         return True
 
+    def go_test_package(self, value):
+        directory = self.path(value)
+        if not self.selected(directory) or not beneath(directory, self.source_root):
+            return
+        self.add(directory, "go-test-runtime-package")
+        ancestor = directory
+        while beneath(ancestor, self.source_root):
+            self.add(ancestor / "testdata", "go-test-ancestor-fixtures", required=False)
+            if ancestor == self.source_root or (ancestor / ".git").exists():
+                break
+            ancestor = ancestor.parent
+
     def command(self, command):
         tokens = command_tokens(command)
+        for position, token in enumerate(tokens):
+            if Path(token).name == "gotestrunner":
+                for option in range(position + 1, len(tokens)):
+                    if tokens[option] == "--":
+                        break
+                    if tokens[option] == "-p" and option + 1 < len(tokens):
+                        self.go_test_package(tokens[option + 1])
+                        break
+                    if tokens[option].startswith("-p="):
+                        self.go_test_package(tokens[option][3:])
+                        break
         include_flags = {"-I", "-isystem", "-iquote", "-idirafter", "--sysroot", "-isysroot"}
         file_flags = {"-include", "-imacros"}
         include_paths = []

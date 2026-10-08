@@ -113,6 +113,23 @@ class CapsuleTests(unittest.TestCase):
                                 stdout=subprocess.PIPE, text=True)
         self.assertEqual(result.stdout.strip(), "42")
 
+    def test_go_test_runner_restores_binary_and_ancestor_runtime_fixtures(self):
+        package = self.source / "project/internal/zip"
+        self.write(package / "reader_test.go", "package zip\n")
+        self.write(package / "testdata/archive.zip", b"PK\x03\x04binary zip fixture")
+        self.write(self.source / "project/testdata/reference.png", b"\x89PNGfixture")
+        self.write(self.source / "project/.git", "gitdir: metadata\n")
+        script = package / "check.py"
+        self.write(script, "from pathlib import Path\nassert Path('testdata/archive.zip').read_bytes().startswith(b'PK')\nassert Path('../../testdata/reference.png').read_bytes().startswith(b'\\x89PNG')\nprint('PASS')\n")
+        self.manifest["commands"] = [str(self.out / "bin/gotestrunner") + " -p project/internal/zip -f "
+                                      + str(self.out / "test.passed") + " -- " + str(self.out / "test") + " -test.short"]
+        _, _, archive = self.collect()
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        result = subprocess.run([shutil.which("python3"), str(script)], cwd=package, check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(result.stdout.strip(), "PASS")
+
     def test_used_toolchain_and_python_siblings_are_available(self):
         used = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
         unused = self.source / "prebuilts/clang/host/linux-x86/clang-r2"
