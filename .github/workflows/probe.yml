@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Record actual standard runner resources
         run: |
           mkdir -p probe
@@ -18,7 +18,7 @@ jobs:
           df -B1 | tee probe/disks.txt
           cat /etc/os-release | tee probe/os-release.txt
           env | sort | sed -n '/^Image/p' | tee probe/image.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: standard-runner-probe
           path: probe/
