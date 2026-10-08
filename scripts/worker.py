@@ -240,6 +240,29 @@ def resources(source_root):
     return result
 
 
+def retain_abi_diagnostics(source_root, build_environment, output_dir):
+    if "DIST_DIR" not in build_environment:
+        return []
+    directory = absolute(build_environment["DIST_DIR"] + "/abidiffs", source_root)
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    retained = []
+    for current, directories, files in os.walk(directory, followlinks=False):
+        directories[:] = [name for name in directories if not (Path(current) / name).is_symlink()]
+        for name in files:
+            path = Path(current) / name
+            # Only regular report files inside the actual diagnostic directory
+            # are attachments; links must not expand collection into source/OUT.
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = path.relative_to(directory)
+            destination = Path(output_dir) / "abidiffs" / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+            retained.append({"source": str(path), "file": str(Path("abidiffs") / relative), "size": path.stat().st_size})
+    return retained
+
+
 def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -297,6 +320,7 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                     raise ValueError(f"{variable} differs from the verified capsule build context")
             build_environment = {**build_environment, "OUT_DIR": str(out_root), "ANDROID_BUILD_TOP": str(source_root),
                                  "NINJA_STATUS": "[%f/%t %e sec] ", "CCACHE_DISABLE": "1"}
+            build_environment.setdefault("DIST_DIR", str(out_root / "dist"))
             receipt["out_root"] = str(out_root)
             runtime_aliases = prepare_python2_aliases(bundle, source_root)
             if runtime_aliases:
@@ -333,6 +357,15 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             receipt["error"] = str(error)
             print(f"ERROR: {error}", file=log)
             archive.unlink(missing_ok=True)
+            try:
+                if "build_environment" in receipt:
+                    reports = retain_abi_diagnostics(receipt["source_root"], receipt["build_environment"], output_dir)
+                    if reports:
+                        receipt["abi_diagnostics"] = reports
+                        print(f"Retained {len(reports)} ABI diagnostic attachments", file=log)
+            except Exception as retention_error:
+                receipt["diagnostic_retention_error"] = str(retention_error)
+                print(f"ABI diagnostic retention failed: {retention_error}", file=log)
         finally:
             receipt["elapsed_seconds"] = time.monotonic() - started
             receipt["finished_at"] = datetime.now(timezone.utc).isoformat()

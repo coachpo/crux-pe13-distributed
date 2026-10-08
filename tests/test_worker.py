@@ -187,6 +187,30 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("OUT_DIR differs", receipt["error"])
         self.assertFalse(self.output.exists())
 
+    def test_default_dist_preserves_abi_diagnostics_and_compiler_failure(self):
+        self.ninja.write_text(f"#!{sys.executable}\nimport os\nfrom pathlib import Path\np=Path(os.environ['DIST_DIR'])/'abidiffs'/'fixture.abidiff'\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text('legitimate ABI change')\nraise SystemExit(7)\n")
+        self.write_manifests()
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["returncode"], 7)
+        self.assertEqual(receipt["build_environment"]["DIST_DIR"], str(self.source / "out/dist"))
+        self.assertEqual((self.source / "out/dist/abidiffs/fixture.abidiff").read_text(), "legitimate ABI change")
+        self.assertEqual((self.root / "producer/abidiffs/fixture.abidiff").read_text(), "legitimate ABI change")
+        self.assertEqual(receipt["abi_diagnostics"][0]["file"], "abidiffs/fixture.abidiff")
+        self.assertFalse((self.root / "producer/outputs.tar.zst").exists())
+
+    def test_captured_dist_directory_takes_precedence_over_default(self):
+        custom = self.root / "captured-dist"
+        manifest = json.loads(self.manifest.read_text())
+        manifest["build_environment"] = {"DIST_DIR": str(custom)}
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle["manifest_sha256"] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        self.assertEqual(receipt["build_environment"]["DIST_DIR"], str(custom))
+
 
 if __name__ == "__main__":
     unittest.main()
