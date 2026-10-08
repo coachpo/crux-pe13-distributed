@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "kind": "unchanged maintained recipe and boot-contract snapshot",
+  "recipe": {
+    "original_path": "/Users/qingli/Documents/project/crux/u-boot-port/scripts/package-pe13.py",
+    "sha256": "74f92f22372b6b26e95fcd78aeae88f696e4ae15499c29e79952fe937fb49d9f"
+  },
+  "boot_contracts": {
+    "purpose": "Retained boot-contract inputs for future cleanup ablation; kernel hardware graph still comes from current source bases/overlay",
+    "source_directory": "/Users/qingli/Documents/project/crux/out/crux-pe-repair-2026-10-03",
+    "trusted_expected_sha256": {
+      "rom-pstore.dtb": "0786c26214617bcd3b5002062003426be847820e89fe614207dea6d01b2e3790",
+      "recovery-pstore.dtb": "e70ab2f59216877b14c04c0b64ffc8e3174425377ece8230bb2b27a0144461c3"
+    },
+    "formal_packager_defaults_changed": false
+  },
+  "scope": "References supply retained boot contracts only; all kernel hardware graph, DT symbols and phandles must come from the new build."
+}

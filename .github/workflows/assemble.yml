@@ -1,9 +1,13 @@
-name: Assemble PE13 image build archive
+name: Assemble PE13 images and U-Boot FITs
 on:
   workflow_dispatch:
     inputs:
       producer_runs:
-        description: Exact producer artifacts as JSON array [{"run_id":123,"artifact":"shard-id"}]
+        description: JSON producers with run_id, artifact, expected_worker_commit and expected_manifest_sha256
+        required: true
+        type: string
+      accepted_worker_commits:
+        description: JSON array of explicitly approved full compilation worker SHAs
         required: true
         type: string
 permissions:
@@ -17,6 +21,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       PRODUCER_RUNS: ${{ inputs.producer_runs }}
+      ACCEPTED_WORKER_COMMITS: ${{ inputs.accepted_worker_commits }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Prepare assembly and record runner resources
@@ -30,7 +35,7 @@ jobs:
           sudo mkdir -p /home/qingli
           sudo chown "$(id -u):$(id -g)" /home/qingli
           sudo apt-get update
-          sudo apt-get install -y zstd
+          sudo apt-get install -y zstd u-boot-tools device-tree-compiler
       - name: Download exact successful image producer artifacts
         shell: bash
         run: |
@@ -42,19 +47,21 @@ jobs:
           sys.path.insert(0, 'scripts')
           import assemble
           producers = json.loads(os.environ['PRODUCER_RUNS'])
-          assemble.validate_producers(producers)
+          accepted = json.loads(os.environ['ACCEPTED_WORKER_COMMITS'])
+          assemble.validate_producers(producers, accepted)
           staging = Path(os.environ['RUNNER_TEMP'])
           (staging / 'producer-runs.json').write_text(json.dumps(producers, indent=2) + '\n')
           for index, producer in enumerate(producers):
               subprocess.run(['gh', 'run', 'download', str(producer['run_id']),
                               '--name', producer['artifact'], '--dir', str(staging / 'producers' / str(index))], check=True)
           PY
-      - name: Verify and assemble all four required images
+      - name: Verify images, paired symbols and both strict U-Boot FITs
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/assemble.py --producer-runs "$RUNNER_TEMP/producer-runs.json" \
-            --dependency-root "$RUNNER_TEMP/producers" --output-dir "$RUNNER_TEMP/result"
+            --dependency-root "$RUNNER_TEMP/producers" --output-dir "$RUNNER_TEMP/result" \
+            --accepted-worker-commits "$ACCEPTED_WORKER_COMMITS"
       - name: Upload image archive and assembly records
         if: always()
         uses: actions/upload-artifact@v7.0.2
