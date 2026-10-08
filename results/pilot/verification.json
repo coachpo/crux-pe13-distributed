@@ -1,0 +1,145 @@
+{
+  "scope": "Cold common prerequisite compiled once, transported to two independent shared-library consumers; not a full ROM result.",
+  "checks": [
+    "Successful worker receipt and output archive integrity",
+    "Every exported member type, mode, digest or symlink target matches its producer receipt",
+    "Both consumers import the identical successful common receipt and archive",
+    "libbase.so and libz.so are 64-bit little-endian AArch64 ELF files"
+  ],
+  "jobs": [
+    {
+      "id": "common",
+      "run_id": "37844277125",
+      "worker_commit": "f7adb82bec643986c11edc160dd95e00e10713dd",
+      "status": "success",
+      "edge_count": 1094,
+      "verified_output_count": 1104,
+      "elapsed_seconds": 14.942338622999998,
+      "archive_bytes": 3758305,
+      "manifest_sha256": "5bbafbf5345bb336ed82998ef3135e9ac25886280abe22044625f1b00cd95cf7",
+      "dependencies": [],
+      "verified_archive_members": 21,
+      "elf_outputs": [
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/host/linux-x86/bin/symbols_map",
+          "machine": 62,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libc/crtbegin_so/android_arm64_armv8-2a/crtbegin_so.o",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libc/crtend_so/android_arm64_armv8-2a/obj/bionic/libc/arch-common/bionic/crtend_so.o",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libc/libc/android_arm64_armv8-2a_shared/libc.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libc/libc/android_arm64_armv8-2a_shared_current/libc.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libdl/libdl/android_arm64_armv8-2a_shared/libdl.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libdl/libdl/android_arm64_armv8-2a_shared_current/libdl.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libm/libm/android_arm64_armv8-2a_shared/libm.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/bionic/libm/libm/android_arm64_armv8-2a_shared_current/libm.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/bootstrap/libc.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/bootstrap/libdl.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/bootstrap/libm.so",
+          "machine": 183,
+          "bits": 64
+        },
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/ld-android.so",
+          "machine": 183,
+          "bits": 64
+        }
+      ]
+    },
+    {
+      "id": "libbase",
+      "run_id": "37851472557",
+      "worker_commit": "330a9713fd9ced33f551f6e2417aa11f43c5881a",
+      "status": "success",
+      "edge_count": 117,
+      "verified_output_count": 120,
+      "elapsed_seconds": 15.374810866000004,
+      "archive_bytes": 92913,
+      "manifest_sha256": "d8f156c1f9393a7769628e78646ee1f3a2642b59f47f05a0e82367e1d0c000cc",
+      "dependencies": [
+        {
+          "id": "common",
+          "manifest_sha256": "5bbafbf5345bb336ed82998ef3135e9ac25886280abe22044625f1b00cd95cf7",
+          "receipt_sha256": "0e6fbc54bbf697dede19489da64f640fa2638384369db4e356444eda7d6dfc84",
+          "archive_sha256": "b9992ee1763328b42fc898370f9667d83dfde3cb5e4050926831159e0550af1c"
+        }
+      ],
+      "verified_archive_members": 1,
+      "elf_outputs": [
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/libbase.so",
+          "machine": 183,
+          "bits": 64
+        }
+      ]
+    },
+    {
+      "id": "libz",
+      "run_id": "37851472557",
+      "worker_commit": "330a9713fd9ced33f551f6e2417aa11f43c5881a",
+      "status": "success",
+      "edge_count": 43,
+      "verified_output_count": 44,
+      "elapsed_seconds": 3.3601570820000006,
+      "archive_bytes": 55141,
+      "manifest_sha256": "bae5e6eb7d8a9307cad297150d7b00098f4b9a82fc7beffcbd4951adc9349ce9",
+      "dependencies": [
+        {
+          "id": "common",
+          "manifest_sha256": "5bbafbf5345bb336ed82998ef3135e9ac25886280abe22044625f1b00cd95cf7",
+          "receipt_sha256": "0e6fbc54bbf697dede19489da64f640fa2638384369db4e356444eda7d6dfc84",
+          "archive_sha256": "b9992ee1763328b42fc898370f9667d83dfde3cb5e4050926831159e0550af1c"
+        }
+      ],
+      "verified_archive_members": 1,
+      "elf_outputs": [
+        {
+          "path": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/system/lib64/libz.so",
+          "machine": 183,
+          "bits": 64
+        }
+      ]
+    }
+  ]
+}

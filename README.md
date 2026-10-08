@@ -10,16 +10,24 @@ existing generated Android Ninja graph is a planning input: compilation is
 performed from source in cold runner tasks. An existing installed ROM binary is
 never a substitute for a successful distributed build.
 
-The experiment is not yet a completed ROM build. The initial standard runner
-probe succeeded; after updating Actions dependencies to Node.js 24, its repeat
-also succeeded with zero annotations. Actual resource receipts are in
-`results/resource-probe/`.
+The experiment is not yet a completed ROM build. The standard runner probe and
+the cold common/library compilation trial succeeded. The full build now uses
+41 dependency-ordered tasks across nine waves, covering 136,014 commands,
+including a cold source build of the `bpglob` graph helper. The first 13 main
+compilation tasks are running in [wave 1](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37854864171).
+
+After updating Actions dependencies to Node.js 24, the repeated resource probe
+succeeded with zero annotations. Actual resource receipts are in
+`results/resource-probe/`; the successful compilation exchange is recorded in
+[`results/pilot/`](results/pilot/).
 
 ## Pipeline
 
 1. Freeze source revisions and index the generated graph without compiling.
 2. Export small Ninja slices, preserving their commands and variable scopes.
-3. Archive only each slice's source, toolchain and approved generated metadata.
+3. Archive each slice's frozen source and declared toolchain inputs. Restore
+   eligible toolchain directories from exact public source revisions and verify
+   them against the same frozen input identities.
 4. Run dependency-ordered waves on `ubuntu-22.04`. A shared dependency is built
    once and transferred through successful task artifacts.
 5. Verify producer receipts and assemble `boot.img`, `recovery.img`,
@@ -29,13 +37,16 @@ also succeeded with zero annotations. Actual resource receipts are in
 archives; `scripts/scheduler.py` dispatches waves; `scripts/worker.py` executes
 cold tasks; `scripts/assemble.py` packages the four required images.
 
-The first real compilation trial uses two independent native shared-library
-consumers, `libbase` and `libz`, with one shared prerequisite task. Success of
-this trial alone does not establish full-ROM compilation.
+The first real compilation trial built two independent native shared-library
+consumers, `libbase` and `libz`, with one shared prerequisite task. Both consumers
+imported the identical successful common artifact. Every exported archive
+member matched its receipt, and both resulting libraries are AArch64 ELF files.
+Success of this trial alone does not establish full-ROM compilation.
 
 No accepted installed images or old compiled objects are supplied as cold
 compilation inputs. Vendor blobs and toolchain prebuilts remain declared source
 dependencies. `CCACHE_DISABLE=1` prevents reuse of an existing compiler cache.
+The accepted full plan contains no imported generated-metadata approvals.
 
 Current Actions dependencies are `actions/checkout@v7.0.1` and
 `actions/upload-artifact@v7.0.2`, both using Node.js 24. Android's source/toolchain

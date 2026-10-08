@@ -418,17 +418,18 @@ class Graph:
                 rule=self.db.execute('SELECT ref FROM statements WHERE id=?',(owner,)).fetchone()['ref']
                 self.rule_adaptations[rule].append(adaptation)
 
-    def producers(self, paths):
+    def producers(self, paths, directory_fallback=True):
         found = {}
         for batch in chunks(paths):
             marks = ','.join('?' for _ in batch)
             found.update((r['path'],r['edge']) for r in self.db.execute(
                 f'SELECT path,edge FROM outputs WHERE path IN ({marks})',batch))
-        for path in set(paths)-set(found):
-            for directory,edge in self.side_output_dirs.items():
-                if path.startswith(directory.rstrip('/')+'/'):
-                    found[path]=edge
-                    break
+        if directory_fallback:
+            for path in set(paths)-set(found):
+                for directory,edge in self.side_output_dirs.items():
+                    if path.startswith(directory.rstrip('/')+'/'):
+                        found[path]=edge
+                        break
         return found
 
     def closure(self, targets, external=(), include_validations=True):
@@ -453,8 +454,12 @@ class Graph:
                     dependencies.update(path for path,kind in json.loads(row['deps'])
                                         if include_validations or kind != 'validation')
             cut_paths = dependencies & external
+            exact_producers=self.producers(dependencies,directory_fallback=False)
             for directory in external & set(self.side_output_dirs):
-                cut_paths.update(path for path in dependencies if path.startswith(directory.rstrip('/')+'/'))
+                owner=self.side_output_dirs[directory]
+                cut_paths.update(path for path in dependencies
+                    if path.startswith(directory.rstrip('/')+'/')
+                    and (path not in exact_producers or exact_producers[path] == owner))
             cuts.update(cut_paths)
             dependencies -= cut_paths
             producers = self.producers(dependencies)
@@ -528,7 +533,7 @@ class Graph:
                     for directory in self.side_output_dirs:
                         if path.startswith(directory.rstrip('/')+'/'):
                             exact=self.db.execute('SELECT edge FROM outputs WHERE path=?',(path,)).fetchone()
-                            if exact is None:
+                            if exact is None and path not in closure['external_inputs']:
                                 synthetic_aliases[path]=directory
         def visit(file_id, env, active_rules):
             name = 'build.ninja' if file_id == self.meta['entry_file'] else f'file-{file_id}.ninja'
@@ -635,6 +640,12 @@ class Graph:
                     output.write('\n# Generated tree members follow their reviewed directory producer.\n')
                     for path,directory in sorted(synthetic_aliases.items()):
                         output.write(f'build {ninja_escape(path)}: phony {ninja_escape(directory)}\n')
+            external_phonies=sorted(set(closure['external_inputs'])-set(closure['outputs']))
+            if external_phonies:
+                with open(destination/'build.ninja','a') as output:
+                    output.write('\n# Imported inputs are verified by producer receipts before Ninja starts.\n')
+                    for path in external_phonies:
+                        output.write(f'build {ninja_escape(path)}: phony\n')
             external_owners=set(self.producers(closure['external_inputs']).values())
             all_dirs={**self.side_output_dirs,**self.group_export_dirs}
             manifest = {'schema_version':1,'source_root':self.meta['source_root'],
@@ -649,6 +660,7 @@ class Graph:
                 'runtime_adaptations':self.meta.get('runtime_adaptations'),
                 'deferred_validations':deferred,
                 'synthetic_aliases':synthetic_aliases,
+                'external_phony_inputs':external_phonies,
                 **{k:v for k,v in closure.items() if k != 'edge_ids'}}
             (destination/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
             return manifest

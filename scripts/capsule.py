@@ -306,6 +306,9 @@ class Collector:
                     continue
                 if headers_only and path.suffix not in HEADER_SUFFIXES and path.suffix:
                     continue
+                if headers_only and not path.suffix:
+                    if path.name.startswith(".") or (path.is_file() and self.compiled(path)):
+                        continue
                 self.add(path, reason, required=False)
 
     def include_directory(self, value, reason):
@@ -412,9 +415,41 @@ class Collector:
 
     def command(self, command):
         tokens = command_tokens(command)
+        literal_tokens = set()
+        for position, token in enumerate(tokens):
+            if Path(token).name == "ln":
+                end = position + 1
+                while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "(", ")"}:
+                    end += 1
+                arguments = tokens[position + 1:end]
+                if any(item == "--symbolic" or (item.startswith("-") and not item.startswith("--")
+                                                and "s" in item[1:]) for item in arguments):
+                    literal_tokens.update(range(position + 1, end))
+            if token == "--emit" and position + 1 < len(tokens):
+                emitted = tokens[position + 1]
+            elif token.startswith("--emit="):
+                emitted = token[len("--emit="):]
+            else:
+                continue
+            for item in emitted.split(","):
+                kind, separator, destination = item.partition("=")
+                if separator and kind in {"dep-info", "link", "metadata", "asm", "llvm-ir", "llvm-bc", "obj"}:
+                    self.aux_outputs.add(self.path(destination))
         for position, token in enumerate(tokens):
             if Path(token).name in {"python2", "python2.7"}:
                 self.require_python2()
+            if Path(token).name == "bpglob":
+                for option in range(position + 1, len(tokens) - 1):
+                    if tokens[option] == "-p":
+                        pattern = tokens[option + 1]
+                        parts = Path(pattern).parts
+                        fixed = []
+                        for part in parts:
+                            if any(character in part for character in "*?["):
+                                break
+                            fixed.append(part)
+                        if fixed:
+                            self.add(Path(*fixed), "source-glob-runtime-files", required=False)
             if Path(token).name == "gotestrunner":
                 for option in range(position + 1, len(tokens)):
                     if tokens[option] == "--":
@@ -431,14 +466,23 @@ class Collector:
         include_paths = []
         for index, token in enumerate(tokens):
             if token in include_flags and index + 1 < len(tokens):
-                include_paths.append(self.path(tokens[index + 1]))
+                directory = self.path(tokens[index + 1])
+                include_paths.append(directory)
+                if token in {"--sysroot", "-isysroot"}:
+                    include_paths.extend([directory / "usr/include", directory / "include"])
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
-                    include_paths.append(self.path(match[1]))
+                    directory = self.path(match[1])
+                    include_paths.append(directory)
+                    if token.startswith(("--sysroot=", "-isysroot")):
+                        include_paths.extend([directory / "usr/include", directory / "include"])
         index = 0
         while index < len(tokens):
             token = tokens[index]
+            if index in literal_tokens:
+                index += 1
+                continue
             shell_payload = (token.startswith("-") and "c" in token[1:]
                              and not token.startswith("--")
                              and any(Path(item).name in {"bash", "sh", "dash"}
@@ -450,9 +494,15 @@ class Collector:
                 pass
             elif token == "-C" and index + 1 < len(tokens):
                 index += 1
-                path = self.path(tokens[index])
-                if beneath(path, self.source_root) or self.produced(path):
-                    self.add(path, "command-directory:-C", required=False)
+                option = tokens[index]
+                if option.startswith("link-args="):
+                    self.command(option.partition("=")[2])
+                elif option.startswith("linker="):
+                    self.command(option.partition("=")[2])
+                else:
+                    path = self.path(option)
+                    if optional_probe(path, "is_dir") and (beneath(path, self.source_root) or self.produced(path)):
+                        self.add(path, "command-directory:-C", required=False)
             elif token in runtime_flags and index + 1 < len(tokens):
                 index += 1
                 self.runtime_directory(tokens[index], "command-runtime:" + token)
@@ -521,7 +571,9 @@ class Collector:
             if path.is_file():
                 for dependency in make_dependencies(path.read_text(errors="replace")):
                     self.add(dependency, "observed-depfile:" + str(path))
-        self.add("prebuilts/build-tools/linux-x86/bin/ninja", "runner-ninja")
+        runner_ninja = self.source_root / "prebuilts/build-tools/linux-x86/bin/ninja"
+        self.add(runner_ninja, "runner-ninja")
+        self.tool_package(runner_ninja)
         if not include_task:
             if self.errors:
                 raise CapsuleError("Shared source input audit failed:\n" + "\n".join(sorted(self.errors)))

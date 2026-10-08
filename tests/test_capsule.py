@@ -64,6 +64,15 @@ class CapsuleTests(unittest.TestCase):
         self.assertEqual(metadata["slice_path"], str(self.source / ".crux-task/graph"))
         self.assertIn(str(self.source / ".crux-task/graph/manifest.json").lstrip("/"), names)
 
+    def test_default_ninja_includes_declared_host_runtime_without_other_tool_commands(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/lib64/libjemalloc5.so"
+        self.write(runtime, b"\x7fELFninja runtime")
+        self.manifest["commands"] = []
+        _, metadata, archive = self.collect()
+        self.assertIn(str(runtime).lstrip("/"), archive.getnames())
+        specification = next(item for item in metadata["files"] if item["path"] == str(runtime))
+        self.assertEqual(specification["sha256"], capsule.digest(runtime))
+
     def test_compiled_out_leaf_fails_instead_of_seeding_previous_build(self):
         stale = self.out / "libupstream.a"
         self.write(stale, b"!<arch>\nold")
@@ -174,6 +183,13 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive = self.collect()
         self.assertIn(str(self.source / "include/fenv-access.h").lstrip("/"), archive.getnames())
 
+    def test_forced_host_header_resolves_sysroot_standard_include_location(self):
+        sysroot = self.source / "prebuilts/host-sysroot"
+        self.write(sysroot / "usr/include/stdio.h", "int puts(const char *);\n")
+        self.manifest["commands"] = ["clang --sysroot " + str(sysroot) + " -include stdio.h -c lib/unit.c"]
+        _, _, archive = self.collect()
+        self.assertIn(str(sysroot / "usr/include/stdio.h").lstrip("/"), archive.getnames())
+
     def test_optional_header_scan_preserves_broken_source_symlink(self):
         broken = self.source / "include/dne"
         broken.parent.mkdir()
@@ -259,6 +275,47 @@ class CapsuleTests(unittest.TestCase):
         self.assertEqual(metadata["required_interpreters"], [{"name":"python2","aliases":["python2","python2.7"],
                          "executable":str(runtime),"source_scripts":[str(script)]}])
         self.assertIn(str(runtime).lstrip("/"), archive.getnames())
+
+    def test_symbolic_link_target_and_output_are_literal_operands(self):
+        target=self.base / "outside-source-target"
+        target.mkdir()
+        destination=self.out / "root/d"
+        destination.parent.mkdir()
+        destination.symlink_to(target)
+        self.manifest["commands"]=["/bin/bash -c 'ln -sfn " + str(target) + " " + str(destination) + "'"]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(target).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(destination).lstrip("/"), archive.getnames())
+
+    def test_rust_emit_transient_depfile_and_codegen_arguments_are_outputs_and_data(self):
+        raw=self.out / "lib.rlib.d.raw"
+        self.write(raw, "old compiler depfile\n")
+        runtime=self.source / "prebuilts/linker-runtime"
+        self.write(runtime / "libgcc.a", b"!<arch>\nruntime")
+        self.manifest["commands"]=["rustc -C 'link-args=" + " -Wl,--no-undefined"*30
+                                      + " -L"+str(runtime)+"' --emit dep-info="+str(raw)
+                                      + " lib/unit.c && grep x "+str(raw)]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(raw).lstrip("/"),archive.getnames())
+        self.assertIn(str(runtime / "libgcc.a").lstrip("/"),archive.getnames())
+
+    def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
+        headers=self.out / "include"
+        self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")
+        self.write(headers / "wpa_cli", b"\x7fELFpreviously built executable")
+        self.manifest["commands"]=["cc -I"+str(headers)+" -c lib/unit.c"]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(headers / ".clang-format").lstrip("/"),archive.getnames())
+        self.assertNotIn(str(headers / "wpa_cli").lstrip("/"),archive.getnames())
+
+    def test_blueprint_glob_captures_runtime_asset_directory(self):
+        self.write(self.source / "app/assets/nested/data.bin", b"opaque asset\x00")
+        glob_tool=self.out / "soong/bpglob"
+        self.manifest["outputs"].append(str(glob_tool))
+        self.manifest["commands"]=[str(glob_tool)+" -o "+str(self.out / "assets.glob")
+                                    +" -p 'app/assets/**/*' -e .git"]
+        _, _, archive=self.collect()
+        self.assertIn(str(self.source / "app/assets/nested/data.bin").lstrip("/"),archive.getnames())
 
     def test_external_produced_objects_are_required_from_receipts(self):
         external = self.out / "upstream.o"

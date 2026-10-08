@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import tempfile
+import tarfile
 import unittest
 
 MODULE = Path(__file__).resolve().parents[1]/'scripts'/'graph.py'
@@ -214,6 +215,55 @@ class GraphTests(unittest.TestCase):
                     cwd=root,capture_output=True,text=True)
                 self.assertEqual(cold.returncode,0,cold.stderr)
                 self.assertEqual((root/'generated').read_text(),'payload')
+
+    def test_cold_exchange_preserves_broken_device_symlink(self):
+        if not shutil.which('ninja'):
+            self.skipTest('native Ninja executable is required for transport validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);producer=root/'producer';consumer=root/'consumer'
+            producer.mkdir();consumer.mkdir()
+            (producer/'build.ninja').write_text('rule link\n'
+                '  command = ln -s /apex/com.android.runtime/lib64/libm.so $out\n'
+                'rule install\n  command = cp -d $in $out\n'
+                'build imported: link\nbuild installed: install imported\n')
+            db=root/'index.sqlite';graph.index_graph(producer/'build.ninja',producer,db)
+            subprocess.run(['ninja','-f','build.ninja','imported'],cwd=producer,check=True,
+                           capture_output=True,text=True)
+            self.assertTrue((producer/'imported').is_symlink())
+            self.assertFalse((producer/'imported').exists())
+            archive=root/'producer.tar'
+            with tarfile.open(archive,'w') as output:
+                output.add(producer/'imported',arcname='imported')
+            with tarfile.open(archive) as imported:
+                imported.extractall(consumer)
+            self.assertEqual((consumer/'imported').readlink(),
+                Path('/apex/com.android.runtime/lib64/libm.so'))
+            manifest=graph.Graph(db).slice(['installed'],consumer/'.crux-task/graph',external=['imported'])
+            self.assertEqual(manifest['external_phony_inputs'],['imported'])
+            result=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','installed'],
+                cwd=consumer,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertTrue((consumer/'installed').is_symlink())
+            self.assertEqual((consumer/'installed').readlink(),(consumer/'imported').readlink())
+
+    def test_aggregate_tree_does_not_replace_an_explicit_child_producer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule action\n  command = mkdir -p root && touch $out\n'
+                'build root/a: action\nbuild root/b: action root/a\n'
+                'build stamp: action root/b\nbuild final: action stamp\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            graph.augment_graph(db,{'side_output_dirs':[{'producer':'stamp','dirs':['root'],
+                'rationale':'stamp aggregates completed tree','evidence':['aggregate recipe:20']}]})
+            indexed=graph.Graph(db)
+            manifest=indexed.slice(['root/a','root/b'],root/'.crux-task/graph',external=['root'])
+            self.assertEqual(manifest['external_inputs'],[])
+            self.assertEqual(manifest['external_phony_inputs'],[])
+            self.assertEqual(manifest['outputs'],['root/a','root/b'])
+            if shutil.which('ninja'):
+                cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','root/b'],
+                    cwd=root,capture_output=True,text=True)
+                self.assertEqual(cold.returncode,0,cold.stderr)
 
 
 if __name__ == '__main__':
