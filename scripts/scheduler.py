@@ -60,6 +60,32 @@ def successful_task(state, identity):
     return producer
 
 
+def frozen_manifest(task):
+    recipe = task.get('preparation')
+    return next(spec['sha256'] for spec in recipe['slice_files']
+                if spec['path'] == recipe['manifest']) if recipe else None
+
+
+def correction_manifest(task, correction, verify_proof=False):
+    original = frozen_manifest(task)
+    if not correction or not any(key in correction for key in
+                                  ('original_manifest_sha256', 'variant_manifest_sha256', 'variant_provenance')):
+        return original, None
+    provenance = correction.get('variant_provenance', {})
+    if not isinstance(provenance, dict) or not isinstance(provenance.get('proof', {}), dict):
+        raise ValueError('Invalid variant manifest provenance: ' + task['id'])
+    proof = provenance.get('proof', {})
+    variant = correction.get('variant_manifest_sha256')
+    if correction.get('approved') is not True or correction.get('original_manifest_sha256') != original \
+            or not original or not isinstance(variant, str) or not re.fullmatch(r'[a-f0-9]{64}', variant) \
+            or provenance.get('verified') is not True or not Path(proof.get('path', '')).is_absolute() \
+            or not re.fullmatch(r'[a-f0-9]{64}', proof.get('sha256', '')):
+        raise ValueError('Variant manifest lacks approved frozen original/provenance: ' + task['id'])
+    if verify_proof:
+        validate_frozen_file(proof)
+    return variant, original
+
+
 def record_successful_tasks(state, wave, run):
     """Retain successful shards even when another job makes the run fail."""
     known = {task['id']: task for task in wave['tasks']}
@@ -70,9 +96,8 @@ def record_successful_tasks(state, wave, run):
             continue
         identity = match[1]
         validate_worker(state, run.get('headSha'), 'Successful run ' + str(run['run_id']))
-        recipe = known[identity].get('preparation')
-        manifest_sha = next(spec['sha256'] for spec in recipe['slice_files']
-                            if spec['path'] == recipe['manifest']) if recipe else None
+        correction = run.get('input_corrections', {}).get(identity)
+        manifest_sha, original_sha = correction_manifest(known[identity], correction)
         prior = successful_task(state, identity)
         if prior:
             if manifest_sha:
@@ -86,6 +111,9 @@ def record_successful_tasks(state, wave, run):
                     'conclusion': 'success', 'wave': wave['id'], 'artifact': 'shard-' + identity}
         if manifest_sha:
             producer['manifest_sha256'] = manifest_sha
+        if original_sha:
+            producer.update(original_manifest_sha256=original_sha, variant_manifest_sha256=manifest_sha,
+                            variant_provenance=copy.deepcopy(correction['variant_provenance']))
         for source, target in [('databaseId', 'job_id'), ('url', 'job_url')]:
             if source in job:
                 producer[target] = job[source]
@@ -124,12 +152,13 @@ def require_wave_producers(state, wave, run):
             raise ValueError('Successful wave attempt is missing producer bindings: ' + ', '.join(missing))
 
 
-def apply_input_correction(state, task):
+def apply_input_correction(state, task, original_task=None):
     correction = state.get('input_corrections', {}).get(task['id'])
     if not correction:
         return task
     if correction.get('approved') is not True:
         raise ValueError('Input correction has no explicit approval: ' + task['id'])
+    correction_manifest(original_task or task, correction, verify_proof=True)
     for field, actual in [('expected_worker_sha', state.get('worker_sha')),
                           ('expected_worker_ref', state.get('worker_ref'))]:
         if field in correction and correction[field] != actual:
@@ -143,6 +172,39 @@ def apply_input_correction(state, task):
         if not isinstance(correction['source_archives'], dict):
             raise ValueError('Approved source archive correction must be an object')
         result['source_archives'] = {**task.get('source_archives', {}), **correction['source_archives']}
+    if 'supplemental_dependencies' in correction:
+        supplemental = correction['supplemental_dependencies']
+        if not isinstance(supplemental, list):
+            raise ValueError('Approved supplemental dependencies must be an array')
+        if not state.get('worker_sha'):
+            raise ValueError('Supplemental dependencies require a fixed current worker commit')
+        dependencies = list(task.get('dependencies', []))
+        bound = {dep.get('id', dep['artifact'].removeprefix('shard-')): dep for dep in dependencies}
+        fields = {'id', 'run_id', 'artifact', 'expected_worker_commit', 'expected_manifest_sha256'}
+        for dependency in supplemental:
+            if not isinstance(dependency, dict) or set(dependency) != fields \
+                    or not isinstance(dependency.get('id'), str) \
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', dependency['id']) \
+                    or not str(dependency['run_id']).isdigit() or int(dependency['run_id']) <= 0 \
+                    or dependency['artifact'] != 'shard-' + dependency['id'] \
+                    or not re.fullmatch(r'[a-f0-9]{40}', str(dependency['expected_worker_commit'])) \
+                    or not re.fullmatch(r'[a-f0-9]{64}', str(dependency['expected_manifest_sha256'])):
+                raise ValueError('Invalid approved supplemental dependency descriptor')
+            identity = dependency['id']
+            producer = successful_task(state, identity)
+            if not producer or str(producer['run_id']) != str(dependency['run_id']) \
+                    or producer.get('artifact') != dependency['artifact'] \
+                    or producer.get('headSha') != dependency['expected_worker_commit'] \
+                    or producer.get('manifest_sha256') != dependency['expected_manifest_sha256']:
+                raise ValueError('Supplemental dependency differs from its successful binding: ' + identity)
+            previous = bound.get(identity)
+            if previous:
+                if any(str(previous.get(key)) != str(dependency[key]) for key in fields):
+                    raise ValueError('Conflicting supplemental dependency: ' + identity)
+                continue
+            dependencies.append(dict(dependency))
+            bound[identity] = dependency
+        result['dependencies'] = dependencies
     return result
 
 
@@ -370,8 +432,8 @@ def main():
                 continue
             dependencies = [dependency_producer(state, dep) for dep in task.get('dependencies', [])]
             prepared = prepare_task(plan, task, state, state_path, args.repo, args.tag)
-            prepared = apply_input_correction(state, prepared)
-            tasks.append({**prepared, 'dependencies': dependencies})
+            prepared = apply_input_correction(state, {**prepared, 'dependencies': dependencies}, task)
+            tasks.append(prepared)
         if not tasks and wave['tasks']:
             state.setdefault('waves', {}).setdefault(wave_id, {})['status'] = 'success'
             save(state_path, state)

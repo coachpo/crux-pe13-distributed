@@ -184,6 +184,112 @@ class SchedulerTests(unittest.TestCase):
             dispatch.assert_not_called()
             self.assertNotIn('finished_at', json.loads(state_path.read_text()))
 
+    def test_approved_variant_and_supplemental_producer_reach_control_and_success_lineage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, _, _ = self.lazy_fixture(root)
+            task['dependencies'] = [{'wave': 0, 'shard': 'base'}]
+            original_sha = scheduler.frozen_manifest(task)
+            variant = root / 'variant-manifest.json'
+            variant.write_text(json.dumps({'runtime_dir': '.crux-task/graph',
+                                           'external_inputs': ['/out/fresh-bionic-header.h']}))
+            variant_sha = scheduler.digest(variant)
+            proof = root / 'variant-proof.json'
+            proof.write_text(json.dumps({'native_commands_unchanged': True,
+                                         'original_manifest_sha256': original_sha,
+                                         'variant_manifest_sha256': variant_sha}))
+            graph = root / 'graph-plan.json'
+            graph.write_text('{}')
+            revision = 'a' * 40
+            supplemental = {'id': 'bionic-headers-build-date', 'run_id': 789,
+                            'artifact': 'shard-bionic-headers-build-date',
+                            'expected_worker_commit': revision, 'expected_manifest_sha256': 'e' * 64}
+            correction = {'approved': True, 'original_manifest_sha256': original_sha,
+                          'variant_manifest_sha256': variant_sha,
+                          'variant_provenance': {'verified': True,
+                                                'proof': {'path': str(proof), 'sha256': scheduler.digest(proof)}},
+                          'source_overlays': [{'assets': ['reviewed-variant.tar.zst']}],
+                          'supplemental_dependencies': [supplemental, dict(supplemental)]}
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            plan_path.write_text(json.dumps({'schema_version': 2, 'source_root': '/source',
+                'preparation': {'out_root': '/out', 'graph_plan': {'path': str(graph), 'sha256': scheduler.digest(graph)}},
+                'waves': [{'id': 0, 'tasks': [{'id': 'base', 'capsule_assets': ['base.tar.zst']}]},
+                          {'id': 1, 'tasks': [task]}]}))
+            original_plan = plan_path.read_bytes()
+            state = {'repo': 'owner/project', 'tag': 'inputs', 'plan_sha256': scheduler.digest(plan_path),
+                'worker_sha': revision, 'worker_ref': 'fixed-worker',
+                'runs': {'0': {'run_id': 123, 'url': 'https://github.com/run/123',
+                              'headSha': revision, 'conclusion': 'success'}},
+                'inputs': {'task': {'uploaded': True, 'parts': [{'name': 'task.tar.zst'}]}},
+                'task_runs': {'base': {'run_id': 123, 'headSha': revision, 'conclusion': 'success',
+                                      'manifest_sha256': 'b' * 64, 'artifact': 'shard-base'},
+                              'bionic-headers-build-date': {'run_id': 789, 'headSha': revision,
+                                  'conclusion': 'success', 'manifest_sha256': 'e' * 64,
+                                  'artifact': 'shard-bionic-headers-build-date'}},
+                'input_corrections': {'task': correction}}
+            state_path.write_text(json.dumps(state))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs']
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh', return_value=revision), \
+                    patch.object(scheduler, 'dispatch', return_value={'databaseId': 456,
+                        'url': 'https://github.com/run/456', 'headSha': revision}), \
+                    patch.object(scheduler, 'wait', return_value={'conclusion': 'success',
+                                                               'jobs': [self.compile_job('task', 'success')]}):
+                scheduler.main()
+            control = json.loads((root / 'wave-1.json').read_text())['include'][0]
+            self.assertEqual(control['capsule_assets'], ['task.tar.zst'])
+            self.assertEqual(control['dependencies'], [
+                {'id': 'base', 'run_id': 123, 'artifact': 'shard-base',
+                 'expected_worker_commit': revision, 'expected_manifest_sha256': 'b' * 64}, supplemental])
+            self.assertEqual(control['source_overlays'], [{'assets': ['reviewed-variant.tar.zst']}])
+            bound = json.loads(state_path.read_text())['task_runs']['task']
+            self.assertEqual(bound['manifest_sha256'], variant_sha)
+            self.assertEqual(bound['variant_manifest_sha256'], variant_sha)
+            self.assertEqual(bound['original_manifest_sha256'], original_sha)
+            self.assertEqual(bound['variant_provenance'], correction['variant_provenance'])
+            self.assertEqual(plan_path.read_bytes(), original_plan)
+            prepared = {key: value for key, value in task.items() if key != 'preparation'}
+            correction['original_manifest_sha256'] = 'c' * 64
+            with self.assertRaisesRegex(ValueError, 'frozen original/provenance'):
+                scheduler.apply_input_correction(state, prepared, task)
+            correction['original_manifest_sha256'] = original_sha
+            proof.write_text('changed proof')
+            with self.assertRaisesRegex(ValueError, 'Frozen input changed'):
+                scheduler.apply_input_correction(state, prepared, task)
+
+    def test_supplemental_dependencies_reject_unknown_or_conflicting_producer_binding(self):
+        revision = 'a' * 40
+        descriptor = {'id': 'supplement', 'run_id': 789, 'artifact': 'shard-supplement',
+                      'expected_worker_commit': revision, 'expected_manifest_sha256': 'e' * 64}
+        producer = {'run_id': 789, 'headSha': revision, 'conclusion': 'success',
+                    'artifact': 'shard-supplement', 'manifest_sha256': 'e' * 64}
+        correction = {'approved': True, 'supplemental_dependencies': [descriptor]}
+        task = {'id': 'task', 'capsule_assets': ['task.tar.zst'], 'dependencies': []}
+        state = {'worker_sha': revision, 'task_runs': {'supplement': producer},
+                 'input_corrections': {'task': correction}}
+        for field, value in [('run_id', 790), ('expected_manifest_sha256', 'f' * 64),
+                             ('expected_worker_commit', 'b' * 40), ('id', 'unknown')]:
+            changed = dict(descriptor, **{field: value})
+            if field == 'id':
+                changed['artifact'] = 'shard-unknown'
+            correction['supplemental_dependencies'] = [changed]
+            with self.assertRaisesRegex(ValueError, 'successful binding'):
+                scheduler.apply_input_correction(state, task)
+        correction['supplemental_dependencies'] = [descriptor]
+        task['dependencies'] = [dict(descriptor, run_id=111)]
+        with self.assertRaisesRegex(ValueError, 'Conflicting supplemental dependency'):
+            scheduler.apply_input_correction(state, task)
+        task['dependencies'] = []
+        producer['headSha'] = 'b' * 40
+        descriptor['expected_worker_commit'] = 'b' * 40
+        with self.assertRaisesRegex(ValueError, 'different worker commit'):
+            scheduler.apply_input_correction(state, task)
+        producer['headSha'] = revision
+        descriptor['expected_worker_commit'] = revision
+        del state['worker_sha']
+        with self.assertRaisesRegex(ValueError, 'fixed current worker commit'):
+            scheduler.apply_input_correction(state, task)
+
     def test_failed_wave_retry_preserves_previous_run_and_pins_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
