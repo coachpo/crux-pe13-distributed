@@ -1,0 +1,128 @@
+{
+  "scope": "Six unchanged frozen Clang assembly commands reproduced in scratch, with only their output paths redirected.",
+  "before_failures": 6,
+  "after_successes": 6,
+  "overlay_archive": {
+    "name": "asm-includes-overlay.tar.zst",
+    "sha256": "6cc02290243ee139089015643120de04e18a4e54f6aa2e00b56c0c363f4cf909",
+    "size": 1851
+  },
+  "source_provenance": [
+    {
+      "git_status": "",
+      "nested_includes": [],
+      "path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libavc/common/armv8/ih264_neon_macros.s",
+      "project": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libavc",
+      "revision": "2acbbcf829c73268b698c80ee9fa73429fb20670",
+      "sha256": "c3e425d8d786dc63495ff10a86adf48e917d329c21e1500374e732f22a95b0b5",
+      "size": 1416
+    },
+    {
+      "git_status": "",
+      "nested_includes": [],
+      "path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc/common/arm64/ihevc_neon_macros.s",
+      "project": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/libhevc",
+      "revision": "5c3d7c9e9cd51f8fd2611d6d72ab214d91b06e6d",
+      "sha256": "07b1d99266016d8ab0e3c769393d5617b32f12ef8fa06fc11410445d5c32fd3d",
+      "size": 1461
+    }
+  ],
+  "commands": [
+    {
+      "source": "external/libavc/common/armv8/ih264_intra_pred_chroma_av8.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 5032
+    },
+    {
+      "source": "external/libavc/common/armv8/ih264_intra_pred_luma_16x16_av8.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 4896
+    },
+    {
+      "source": "external/libhevc/common/arm64/ihevc_itrans_recon_4x4.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 2800
+    },
+    {
+      "source": "external/libhevc/common/arm64/ihevc_itrans_recon_4x4_ttype1.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 2696
+    },
+    {
+      "source": "external/libhevc/common/arm64/ihevc_itrans_recon_8x8.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 5552
+    },
+    {
+      "source": "external/libhevc/common/arm64/ihevc_itrans_recon_32x32.s",
+      "before_exit": 1,
+      "after_exit": 0,
+      "changed_flags": [
+        "-o destination"
+      ],
+      "output": {
+        "class": 64,
+        "description": "AArch64 ELF64 relocatable object",
+        "endianness": "little",
+        "machine": 183,
+        "type": 1
+      },
+      "object_bytes": 12656
+    }
+  ]
+}

@@ -276,6 +276,21 @@ class CapsuleTests(unittest.TestCase):
                          "executable":str(runtime),"source_scripts":[str(script)]}])
         self.assertIn(str(runtime).lstrip("/"), archive.getnames())
 
+    def test_env_python_preserves_frozen_native_python2_default(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        self.write(runtime, b"\x7fELFhermetic Python2 runtime", 0o755)
+        wrapper = self.source / "prebuilts/build-tools/path/linux-x86/python"
+        wrapper.parent.mkdir(parents=True)
+        wrapper.symlink_to("../../linux-x86/bin/py2-cmd")
+        script = self.source / "build/hyphen.py"
+        self.write(script, "#!/usr/bin/env python\nprint('original runtime')\n", 0o755)
+        self.manifest["leaf_inputs"].append(str(script))
+        _, metadata, _ = self.collect()
+        item = metadata["required_interpreters"][0]
+        self.assertEqual(item["aliases"], ["python", "python2", "python2.7"])
+        self.assertEqual(item["native_default_wrapper"], str(wrapper))
+        self.assertEqual(item["executable"], str(runtime))
+
     def test_symbolic_link_target_and_output_are_literal_operands(self):
         target=self.base / "outside-source-target"
         target.mkdir()
@@ -316,6 +331,18 @@ class CapsuleTests(unittest.TestCase):
                                     +" -p 'app/assets/**/*' -e .git"]
         _, _, archive=self.collect()
         self.assertIn(str(self.source / "app/assets/nested/data.bin").lstrip("/"),archive.getnames())
+
+    def test_assembler_include_recurses_through_command_search_paths_and_opaque_data(self):
+        self.write(self.source / "asm/main.s", '.include "outer.s"\n.incbin "payload.bin"\n')
+        self.write(self.source / "macros/outer.s", '.include "inner.S"\n')
+        self.write(self.source / "macros/inner.S", '.macro RETURN\n ret\n.endm\n')
+        self.write(self.source / "macros/payload.bin", b"opaque assembler input\x00")
+        self.manifest["leaf_inputs"].append("asm/main.s")
+        self.manifest["commands"] = ["clang -target aarch64-linux-android -Imacros -c asm/main.s -o "
+                                      + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        for relative in ["macros/outer.s", "macros/inner.S", "macros/payload.bin"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), archive.getnames())
 
     def test_external_produced_objects_are_required_from_receipts(self):
         external = self.out / "upstream.o"

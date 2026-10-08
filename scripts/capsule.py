@@ -154,6 +154,7 @@ class Collector:
         self.used_generated = set()
         self.system_tools = set()
         self.required_interpreters = {}
+        self.assembler_scan_cache = set()
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -266,8 +267,10 @@ class Collector:
                 names = [Path(token).name for token in command_tokens(first_line[2:].decode(errors="replace").strip())]
                 if "python2" in names or "python2.7" in names:
                     self.require_python2(resolved)
+                elif "python" in names:
+                    self.require_python2(resolved, native_default=True)
 
-    def require_python2(self, source_script=None):
+    def require_python2(self, source_script=None, native_default=False):
         executable = self.source_root / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
         if "python2" not in self.required_interpreters:
             self.required_interpreters["python2"] = {"name": "python2", "aliases": ["python2", "python2.7"],
@@ -275,6 +278,13 @@ class Collector:
             self.add(executable, "hermetic-python2-interpreter")
         if source_script:
             self.required_interpreters["python2"]["source_scripts"].add(str(source_script))
+        if native_default:
+            wrapper = self.source_root / "prebuilts/build-tools/path/linux-x86/python"
+            if not wrapper.is_symlink() or wrapper.resolve() != executable:
+                raise CapsuleError("Native python wrapper does not bind the frozen Python 2 runtime: %s" % wrapper)
+            item = self.required_interpreters["python2"]
+            item["aliases"] = ["python", "python2", "python2.7"]
+            item["native_default_wrapper"] = str(wrapper)
 
     def scan_directory(self, directory, reason, headers_only=False):
         if self.produced(directory):
@@ -413,6 +423,25 @@ class Collector:
         if beneath(directory, self.source_root) or any(beneath(directory, root) for root in self.external_roots):
             self.add(directory, reason, required=False)
 
+    def assembler_inputs(self, value, include_paths):
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.assembler_scan_cache:
+            return
+        self.assembler_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for directive, name in re.findall(r'^\s*\.(include|incbin)\s+"([^"\n]+)"', text, re.MULTILINE):
+            candidates = [self.path(name)]
+            if not Path(name).is_absolute():
+                candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), candidates[0])
+            self.add(dependency, "assembler-" + directive + ":" + str(path))
+            if directive == "include":
+                self.assembler_inputs(dependency, include_paths)
+
     def command(self, command):
         tokens = command_tokens(command)
         literal_tokens = set()
@@ -438,6 +467,8 @@ class Collector:
         for position, token in enumerate(tokens):
             if Path(token).name in {"python2", "python2.7"}:
                 self.require_python2()
+            elif token == "python":
+                self.require_python2(native_default=True)
             if Path(token).name == "bpglob":
                 for option in range(position + 1, len(tokens) - 1):
                     if tokens[option] == "-p":
@@ -464,10 +495,13 @@ class Collector:
         runtime_flags = {"-B", "-L", "--gcc-toolchain", "-gcc-toolchain", "-resource-dir", "--resource-dir"}
         file_flags = {"-include", "-imacros"}
         include_paths = []
+        assembler_paths = []
         for index, token in enumerate(tokens):
             if token in include_flags and index + 1 < len(tokens):
                 directory = self.path(tokens[index + 1])
                 include_paths.append(directory)
+                if token == "-I":
+                    assembler_paths.append(directory)
                 if token in {"--sysroot", "-isysroot"}:
                     include_paths.extend([directory / "usr/include", directory / "include"])
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
@@ -475,6 +509,8 @@ class Collector:
                 if match:
                     directory = self.path(match[1])
                     include_paths.append(directory)
+                    if token.startswith("-I"):
+                        assembler_paths.append(directory)
                     if token.startswith(("--sysroot=", "-isysroot")):
                         include_paths.extend([directory / "usr/include", directory / "include"])
         index = 0
@@ -544,6 +580,8 @@ class Collector:
                     path = self.path(value)
                     if self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):
                         self.add(path, "command-file", required=False)
+                        if path.suffix in {".s", ".S", ".asm"}:
+                            self.assembler_inputs(path, assembler_paths)
                         self.tool_package(path)
                         self.python_package(path)
             index += 1
