@@ -153,11 +153,46 @@ class WorkerTests(unittest.TestCase):
         receipt = self.run_worker()
         self.assertEqual(receipt["status"], "success", receipt.get("error"))
         self.assertEqual(self.output.read_bytes(), b"python2 shebang resolved")
-        self.assertEqual([item["name"] for item in receipt["runtime_aliases"]], ["python2", "python2.7"])
+        self.assertEqual([item["name"] for item in receipt["runtime_aliases"]], ["python", "python2", "python2.7"])
         self.assertEqual(receipt["runtime_aliases"][0]["target_sha256"], worker.digest(interpreter))
         self.assertEqual(receipt["build_environment"]["PATH"].split(":")[0], str(self.source / ".crux-task/host-bin"))
         command = json.loads((self.root / "producer/command.json").read_text())
         self.assertEqual(command["runtime_aliases"], receipt["runtime_aliases"])
+
+    def test_native_python_shebang_uses_frozen_runtime_and_preserves_python3(self):
+        interpreter = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text(f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\np=Path('out/interpreter-calls.txt')\np.parent.mkdir(parents=True,exist_ok=True)\np.open('a').write('frozen runtime\\n')\nos.execv(sys.executable,[sys.executable,*sys.argv[1:]])\n")
+        interpreter.chmod(0o755)
+        script = self.source / "native-script.py"
+        script.write_text("#!/usr/bin/env python\nimport subprocess\nfrom pathlib import Path\nsubprocess.run(['python3','-c','print(\"python3 retained\")'],check=True)\nPath('out/result.bin').write_bytes(b'native python resolved')\n")
+        script.chmod(0o755)
+        self.ninja.write_text(f"#!{sys.executable}\nimport subprocess\nsubprocess.run(['./native-script.py'],check=True)\n")
+        self.write_manifests()
+        bundle = json.loads(self.bundle.read_text())
+        bundle["files"] += [worker.describe(interpreter), worker.describe(script)]
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        self.assertEqual(self.output.read_bytes(), b"native python resolved")
+        self.assertEqual((self.source / "out/interpreter-calls.txt").read_text(), "frozen runtime\n")
+        self.assertIn("python3 retained", (self.root / "producer/build.log").read_text())
+
+    def test_conflicting_native_python_alias_fails_before_compile(self):
+        interpreter = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text(f"#!{sys.executable}\nprint('declared frozen runtime')\n")
+        interpreter.chmod(0o755)
+        bundle = json.loads(self.bundle.read_text())
+        bundle["files"].append(worker.describe(interpreter))
+        self.bundle.write_text(json.dumps(bundle))
+        directory = self.source / ".crux-task/host-bin"
+        directory.mkdir()
+        (directory / "python").symlink_to(sys.executable)
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("conflicting Python 2 runtime alias", receipt["error"])
+        self.assertFalse(self.output.exists())
 
     def test_native_command_receives_verified_external_output_context(self):
         actual_out = self.root / "external-android-out"

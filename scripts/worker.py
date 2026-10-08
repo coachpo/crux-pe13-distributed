@@ -95,11 +95,12 @@ def prepare_python2_aliases(bundle, source_root):
     if spec["type"] != "file" or not spec["mode"] & 0o111:
         raise ValueError(f"frozen Python 2 runtime is not executable: {executable}")
     # verify_bundle has already checked this exact frozen executable. The
-    # aliases only adapt the source shebang names to that declared runtime.
+    # aliases adapt source shebang names to that declared runtime. PE's native
+    # build-tools/path/linux-x86/python also resolves to this py2-cmd executable.
     directory = Path(source_root) / ".crux-task/host-bin"
     directory.mkdir(parents=True, exist_ok=True)
     aliases = []
-    for name in ("python2", "python2.7"):
+    for name in ("python", "python2", "python2.7"):
         alias = directory / name
         if alias.exists() or alias.is_symlink():
             if not alias.is_symlink() or os.readlink(alias) != str(executable):

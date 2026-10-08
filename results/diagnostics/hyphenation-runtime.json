@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "script": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/frameworks/minikin/tools/mk_hyb_file.py",
+  "pattern": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/external/hyphenation-patterns/cu/hyph-cu.pat.txt",
+  "native_python_link": "../../linux-x86/bin/py2-cmd",
+  "runtimes": [
+    {
+      "version": "3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0]",
+      "unicode_version": "13.0.0",
+      "characters": [
+        {
+          "codepoint": "U+1C82",
+          "name": "CYRILLIC SMALL LETTER NARROW O",
+          "category": "Ll",
+          "islower": true,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+041E"
+          ]
+        },
+        {
+          "codepoint": "U+1C86",
+          "name": "CYRILLIC SMALL LETTER TALL HARD SIGN",
+          "category": "Ll",
+          "islower": true,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+042A"
+          ]
+        }
+      ],
+      "label": "system-python3",
+      "executable": "/usr/bin/python3",
+      "exit_code": 1,
+      "output_bytes": 52842,
+      "output_sha256": "2baee19d5024ff87dcf3a1b9d0da1b3ac5a1e506adeead3b96a4de5395d0290e"
+    },
+    {
+      "version": "3.10.3 (main, Dec 31 1969, 23:59:59) [Clang 14.0.3 (https://android.googlesource.com/toolchain/llvm-project 4c603efb0",
+      "unicode_version": "13.0.0",
+      "characters": [
+        {
+          "codepoint": "U+1C82",
+          "name": "CYRILLIC SMALL LETTER NARROW O",
+          "category": "Ll",
+          "islower": true,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+041E"
+          ]
+        },
+        {
+          "codepoint": "U+1C86",
+          "name": "CYRILLIC SMALL LETTER TALL HARD SIGN",
+          "category": "Ll",
+          "islower": true,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+042A"
+          ]
+        }
+      ],
+      "label": "hermetic-python3",
+      "executable": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/py3-cmd",
+      "exit_code": 1,
+      "output_bytes": 52842,
+      "output_sha256": "2baee19d5024ff87dcf3a1b9d0da1b3ac5a1e506adeead3b96a4de5395d0290e"
+    },
+    {
+      "version": "2.7.15+ (default, Dec 31 1969, 23:59:59) \n[GCC Android (8347023, based on r450784) Clang 14.0.3 (https://android.googleso",
+      "characters": [
+        {
+          "category": "Cn",
+          "codepoint": "U+1C82",
+          "name": "UNASSIGNED",
+          "islower": false,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+1C82"
+          ]
+        },
+        {
+          "category": "Cn",
+          "codepoint": "U+1C86",
+          "name": "UNASSIGNED",
+          "islower": false,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+1C86"
+          ]
+        }
+      ],
+      "unicode_version": "5.2.0",
+      "label": "hermetic-python2",
+      "executable": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/py2-cmd",
+      "exit_code": 0,
+      "output_bytes": 52842,
+      "output_sha256": "2baee19d5024ff87dcf3a1b9d0da1b3ac5a1e506adeead3b96a4de5395d0290e"
+    },
+    {
+      "version": "2.7.15+ (default, Dec 31 1969, 23:59:59) \n[GCC Android (8347023, based on r450784) Clang 14.0.3 (https://android.googleso",
+      "characters": [
+        {
+          "category": "Cn",
+          "codepoint": "U+1C82",
+          "name": "UNASSIGNED",
+          "islower": false,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+1C82"
+          ]
+        },
+        {
+          "category": "Cn",
+          "codepoint": "U+1C86",
+          "name": "UNASSIGNED",
+          "islower": false,
+          "isupper": false,
+          "uppercase_codepoints": [
+            "U+1C86"
+          ]
+        }
+      ],
+      "unicode_version": "5.2.0",
+      "label": "native-shebang",
+      "executable": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/path/linux-x86/python",
+      "exit_code": 0,
+      "output_bytes": 52842,
+      "output_sha256": "2baee19d5024ff87dcf3a1b9d0da1b3ac5a1e506adeead3b96a4de5395d0290e"
+    }
+  ]
+}
