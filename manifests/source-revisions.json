@@ -1,0 +1,159 @@
+{
+  "scope": "Published October 8 source freeze; integrated production build and installed regression acceptance remain pending",
+  "record_date": "2026-10-08 Asia/Shanghai",
+  "sources": [
+    {
+      "name": "device-xiaomi-crux",
+      "path": "device/xiaomi/crux",
+      "repository": "coachpo/device_xiaomi_crux",
+      "branch": "thirteen-plus",
+      "commit": "54acb8aabadf7c5649a7e421f2332d9213a9c019",
+      "baseline_parent": "dcc9a2b1084b0c412ab231bf9cf8927994c7af9f",
+      "functional_parent": "848cc14f79f494a831f4688a33e05035a11548c4",
+      "publication_parent": "aa4ae6b2e02284c641919a338f00922bfba9ef64",
+      "frozen_source_bytes_equal": true
+    },
+    {
+      "name": "vendor-xiaomi-crux",
+      "path": "vendor/xiaomi/crux",
+      "repository": "coachpo/vendor_xiaomi_crux",
+      "branch": "thirteen-plus",
+      "commit": "5b2bc3a0d3195b284321730a6527047da6671d02",
+      "baseline_parent": "6fea23df3023ab7f0496d95b4e5ea5d266a2a127",
+      "functional_parent": "5f0ef4544f8eeda0e337638cea49e195a5b94e14",
+      "publication_parent": "4364d99f2b63d08e7fb5b979e8a7f4b5743bea08",
+      "frozen_source_bytes_equal": true
+    },
+    {
+      "name": "vendor-aosp",
+      "path": "vendor/aosp",
+      "repository": "coachpo/crux-pe13-vendor-aosp",
+      "branch": "crux-pe13-baseline",
+      "commit": "4c290fc50009189397df519eea2f61a8167195f8",
+      "accepted_parent": "970eb58f0d3241f9e6749ce40585862a103c78fa"
+    },
+    {
+      "name": "system-core",
+      "path": "system/core",
+      "repository": "coachpo/crux-pe13-system-core",
+      "branch": "crux-pe13-baseline",
+      "commit": "ceabe19c2fa9239dfc39753db5c2db65ea464524",
+      "baseline_parent": "80a90704ea27b8b37933ac518580b03638b33b72"
+    },
+    {
+      "name": "packages-modules-adb",
+      "path": "packages/modules/adb",
+      "repository": "coachpo/crux-pe13-adb",
+      "branch": "crux-pe13-baseline",
+      "commit": "818b41c4d8e32f8da7580493be9ff0ff6efa2a7a",
+      "accepted_parent": "2b8029bdc5bc9a6508ad15172408cf449726fb71"
+    },
+    {
+      "name": "build-make",
+      "path": "build/make",
+      "repository": "coachpo/crux-pe13-build",
+      "branch": "crux-pe13-baseline",
+      "commit": "9711db73369bab80374b831d2e61d263e3085500",
+      "accepted_parent": "0189aa1e52e4461d6bfd9976f6d602e23738b34c"
+    },
+    {
+      "name": "build-tools",
+      "path": "prebuilts/build-tools",
+      "repository": "coachpo/crux-pe13-build-tools",
+      "branch": "crux-pe13-baseline",
+      "commit": "e4ce2f62e149361cebc7a00349d0600062cc6b07",
+      "accepted_parent": "7d311e630d48dcd46e6036e34e4d588bd9c064c9"
+    },
+    {
+      "name": "kernel-thirteen",
+      "path": "kernel/xiaomi/crux-pe-cepheus",
+      "repository": "coachpo/kernel_xiaomi_crux",
+      "branch": "thirteen",
+      "commit": "07426c499bef23cdeddfb198cf8c7d72b4b39103",
+      "baseline_parent": "d035d3881e3732bb8e56b5c251ca21f85cf4e404",
+      "functional_parent": "f0d780f8ce2c6612cb23f50758ac8d3f6b8e3e36"
+    },
+    {
+      "name": "bootable-recovery",
+      "path": "bootable/recovery",
+      "repository": "coachpo/crux-pe13-recovery",
+      "branch": "crux-pe13-functional",
+      "commit": "093614f88d0f5cd2405f88baf1293ab057c0e40b",
+      "upstream_parent": "8dcd80eb6dff87dd7306268b73b7cc1706a362b6"
+    },
+    {
+      "name": "crux-pe13-frameworks-base",
+      "path": "frameworks/base",
+      "repository": "coachpo/crux-pe13-frameworks-base",
+      "branch": "crux-pe13-baseline",
+      "commit": "494e97c8dbd84a135b1c91b9080a8bf703eba971",
+      "publication_parent": "26bc0a800a0f51ac443fac4feb40e8f9c9b58e59",
+      "frozen_source_bytes_equal": true
+    },
+    {
+      "name": "crux-pe13-caf-display",
+      "path": "hardware/qcom-caf/sm8150/display",
+      "repository": "coachpo/crux-pe13-caf-display",
+      "branch": "crux-pe13-baseline",
+      "commit": "81810db0ba598f3a0b1892e0bf82f38d23a20f7f",
+      "publication_parent": "cbed81bdac2c591f5e89c1bf47fc011085f8df50",
+      "frozen_source_bytes_equal": true
+    },
+    {
+      "name": "crux-pe13-art",
+      "path": "art",
+      "repository": "coachpo/crux-pe13-art",
+      "branch": "crux-pe13-baseline",
+      "commit": "5f0ae1d6034c103aa13de8f319e66950f114ad6f",
+      "publication_parent": "ab6265634de4ed09860b915e2bf379cb3fff208a",
+      "frozen_source_bytes_equal": true
+    }
+  ],
+  "integration_repositories": [
+    {
+      "name": "uboot-source",
+      "repository": "coachpo/crux-uboot",
+      "branch": "master",
+      "commit": "81f5681d1d25136159d1ee8280c12b6d0a5207bd"
+    },
+    {
+      "name": "twrp-device-tree",
+      "repository": "coachpo/android_device_xiaomi_crux_twrp",
+      "branch": "main",
+      "commit": "89507eb63894086f6ff285d2d829bf3fa7c52c63"
+    }
+  ],
+  "manifest_repository": "PixelExperience/manifest",
+  "manifest_branch": "thirteen-plus",
+  "manifest_commit": "530c3ed25188cea8d673f17836978c90783e953b",
+  "toolchain": {
+    "repository": "https://gitlab.com/jjpprrrr/prelude-clang.git",
+    "commit": "ac8fce34dc0f6918672100d7a6e867a66b8afa8f"
+  },
+  "accepted_baseline": "../baseline/source-revisions.json",
+  "artifact_pairing": {
+    "accepted_deployed_system_raw_SHA256": "73dcc0c4cf37bb359d968ed57dd06e740e33dd50830316a3e60f61bad7c35fb0",
+    "accepted_deployed_vendor_raw_SHA256": "acbd6fe55ebcb33a62fd584541a008f4bb4a9b95ba1d13f59adc9a308e5b24d6",
+    "external_FIT_Image_SHA256": "8588917df45845bc91f338e82c4836e6ba88f7cfcc110b3d3eb374fd76e6ee4b",
+    "Image_original_source": "f0d780f8ce2c plus frozen step-charge driver patch",
+    "Image_original_release": "4.14.305-Crux-PE-gf0d780f8ce2c-dirty",
+    "Image_original_symbols": "Original Image858 System.map/vmlinux/config and build objects remain paired",
+    "published_kernel": "07426c499bef23cdeddfb198cf8c7d72b4b39103",
+    "binary_rebuilt_from_published_kernel_commit": false,
+    "ROM_FIT_SHA256": "c3ce87e80d82764ac98f609e8a6421b48eebaa3c2d9406be667fa6e773199308",
+    "Recovery_FIT_SHA256": "5be0a36d463eaef290ad2bcd18e3b02b61b25b05b397cd7b0f7b0a54890940e1",
+    "ART_SystemUI_persistently_installed": false,
+    "warm_reset_FIT_runtime_accepted": false,
+    "older_pairings": "history/source-publication-20261008/source-revisions-before.json"
+  },
+  "acceptance": {
+    "formal_installed": "individually validated stages; overall in_progress",
+    "physical_functions": "Earlier Recovery named inputs and Image2d708/f494 ROM haptics and speaker clip passed; current Image858 and remaining functions stay separately scoped",
+    "artifact_release": "not_performed",
+    "current_stage_record": "acceptance/current-candidates-20261007.json",
+    "earlier_stage_record": "acceptance/component-stages-20261006.json"
+  },
+  "large_artifacts": "Original manifests, native ramdisks, sparse images, FITs, matching userland/kernel symbols and rollback inputs remain in the maintainer registry; they are not regenerated by these Git pins.",
+  "historical_source_record": "history/source-publication-20261008/source-revisions-before.json",
+  "publication": "stages/2026-10-08/source-publication.json"
+}

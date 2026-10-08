@@ -1,0 +1,66 @@
+name: Assemble PE13 image build archive
+on:
+  workflow_dispatch:
+    inputs:
+      producer_runs:
+        description: Exact producer artifacts as JSON array [{"run_id":123,"artifact":"shard-id"}]
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  assemble:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PRODUCER_RUNS: ${{ inputs.producer_runs }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Prepare assembly and record runner resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result" "$RUNNER_TEMP/producers"
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+          sudo mkdir -p /home/qingli
+          sudo chown "$(id -u):$(id -g)" /home/qingli
+          sudo apt-get update
+          sudo apt-get install -y zstd
+      - name: Download exact successful image producer artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/transport.log") 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          import assemble
+          producers = json.loads(os.environ['PRODUCER_RUNS'])
+          assemble.validate_producers(producers)
+          staging = Path(os.environ['RUNNER_TEMP'])
+          (staging / 'producer-runs.json').write_text(json.dumps(producers, indent=2) + '\n')
+          for index, producer in enumerate(producers):
+              subprocess.run(['gh', 'run', 'download', str(producer['run_id']),
+                              '--name', producer['artifact'], '--dir', str(staging / 'producers' / str(index))], check=True)
+          PY
+      - name: Verify and assemble all four required images
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble.py --producer-runs "$RUNNER_TEMP/producer-runs.json" \
+            --dependency-root "$RUNNER_TEMP/producers" --output-dir "$RUNNER_TEMP/result"
+      - name: Upload image archive and assembly records
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: crux-pe13-build-images
+          path: ${{ runner.temp }}/result/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

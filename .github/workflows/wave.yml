@@ -1,0 +1,154 @@
+name: Cold distributed PE13 wave
+run-name: PE13 ${{ inputs.tag }} wave ${{ inputs.wave }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release containing the cold input capsules
+        required: true
+        type: string
+      wave:
+        description: Wave identifier (downloads wave-<wave>.json)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Download and validate wave
+        id: matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          WAVE: ${{ inputs.wave }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          for name in ('RELEASE_TAG', 'WAVE'):
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', os.environ[name]):
+                  raise SystemExit('Invalid ' + name)
+          PY
+          gh release download "$RELEASE_TAG" --pattern "wave-$WAVE.json" --dir wave
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          wave = json.loads(Path('wave', 'wave-' + os.environ['WAVE'] + '.json').read_text())
+          matrix = wave.get('matrix', wave)
+          include = matrix['include']
+          if not include or len(include) > 256:
+              raise SystemExit('A wave must contain 1 to 256 tasks')
+          ids = set()
+          for task in include:
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', task['id']) or task['id'] in ids:
+                  raise SystemExit('Invalid or duplicate task ID')
+              ids.add(task['id'])
+              if not task['capsule_assets']:
+                  raise SystemExit('Task has no capsule')
+              for asset in task['capsule_assets']:
+                  if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', asset):
+                      raise SystemExit('Invalid capsule asset name')
+              for dependency in task.get('dependencies', []):
+                  if not str(dependency['run_id']).isdigit():
+                      raise SystemExit('Invalid dependency run ID')
+                  if not re.fullmatch(r'shard-[A-Za-z0-9][A-Za-z0-9_.-]*', dependency['artifact']):
+                      raise SystemExit('Invalid dependency artifact name')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': include}, separators=(',', ':')) + '\n')
+          PY
+
+  compile:
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      TASK_JSON: ${{ toJson(matrix) }}
+      SOURCE_ROOT: /home/qingli/crux-pe13-offline-2026-09-25/pe13
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Record actual runner resources
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          lscpu >> "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+      - name: Install native host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/host-dependencies.log") 2>&1
+          sudo apt-get update
+          sudo apt-get install -y libncurses5 python-is-python3 flex bison libssl-dev libelf-dev zstd \
+            ccache build-essential libxml2-utils zip unzip cpio lz4 xz-utils bc rsync
+      - name: Download cold capsule and exact producer artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/capsules" "$RUNNER_TEMP/dependencies" "$RUNNER_TEMP/result"
+          exec > >(tee "$RUNNER_TEMP/result/transport.log") 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          task = json.loads(os.environ['TASK_JSON'])
+          staging = Path(os.environ['RUNNER_TEMP'])
+          for asset in task['capsule_assets']:
+              subprocess.run(['gh', 'release', 'download', os.environ['RELEASE_TAG'],
+                              '--pattern', asset, '--dir', str(staging / 'capsules')], check=True)
+          for index, dependency in enumerate(task.get('dependencies', [])):
+              subprocess.run(['gh', 'run', 'download', str(dependency['run_id']),
+                              '--name', dependency['artifact'], '--dir', str(staging / 'dependencies' / str(index))], check=True)
+          with open(staging / 'capsule.tar.zst', 'wb') as capsule:
+              for asset in task['capsule_assets']:
+                  with open(staging / 'capsules' / asset, 'rb') as part:
+                      import shutil
+                      shutil.copyfileobj(part, capsule, 1024 * 1024)
+          PY
+          sudo tar --zstd --no-same-owner -xpf "$RUNNER_TEMP/capsule.tar.zst" -C /
+          sudo chown -R "$(id -u):$(id -g)" /home/qingli
+          rm -rf "$RUNNER_TEMP/capsules" "$RUNNER_TEMP/capsule.tar.zst"
+      - name: Compile selected native Ninja actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          task = json.loads(os.environ['TASK_JSON'])
+          staging = Path(os.environ['RUNNER_TEMP'])
+          source = Path(os.environ['SOURCE_ROOT'])
+          command = ['python3', 'scripts/worker.py', '--id', task['id'],
+                     '--manifest', str(source / '.crux-task/graph/manifest.json'),
+                     '--bundle', str(source / '.crux-task/graph/bundle.json'),
+                     '--output-dir', str(staging / 'result'), '--jobs', '4']
+          for index, dependency in enumerate(task.get('dependencies', [])):
+              command += ['--dependency-dir', str(staging / 'dependencies' / str(index))]
+          raise SystemExit(subprocess.run(command).returncode)
+          PY
+      - name: Upload task output and receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: shard-${{ matrix.id }}
+          path: ${{ runner.temp }}/result/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

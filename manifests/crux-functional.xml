@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<manifest>
+  <remote name="crux-functional" fetch="https://github.com/" />
+  <remove-project name="coachpo/device_xiaomi_crux" optional="true" />
+  <project name="coachpo/device_xiaomi_crux" path="device/xiaomi/crux" remote="crux-functional" revision="54acb8aabadf7c5649a7e421f2332d9213a9c019" dest-branch="thirteen-plus" />
+  <remove-project name="coachpo/vendor_xiaomi_crux" optional="true" />
+  <project name="coachpo/vendor_xiaomi_crux" path="vendor/xiaomi/crux" remote="crux-functional" revision="5b2bc3a0d3195b284321730a6527047da6671d02" dest-branch="thirteen-plus" />
+  <remove-project name="vendor_aosp" optional="true" />
+  <remove-project name="coachpo/crux-pe13-vendor-aosp" optional="true" />
+  <project name="coachpo/crux-pe13-vendor-aosp" path="vendor/aosp" remote="crux-functional" revision="4c290fc50009189397df519eea2f61a8167195f8" dest-branch="crux-pe13-baseline" />
+  <remove-project name="system_core" optional="true" />
+  <remove-project name="coachpo/crux-pe13-system-core" optional="true" />
+  <project name="coachpo/crux-pe13-system-core" path="system/core" remote="crux-functional" revision="ceabe19c2fa9239dfc39753db5c2db65ea464524" dest-branch="crux-pe13-baseline" />
+  <remove-project name="packages_modules_adb" optional="true" />
+  <remove-project name="coachpo/crux-pe13-adb" optional="true" />
+  <project name="coachpo/crux-pe13-adb" path="packages/modules/adb" remote="crux-functional" revision="818b41c4d8e32f8da7580493be9ff0ff6efa2a7a" dest-branch="crux-pe13-baseline" />
+  <remove-project name="build" optional="true" />
+  <remove-project name="coachpo/crux-pe13-build" optional="true" />
+  <project name="coachpo/crux-pe13-build" path="build/make" remote="crux-functional" revision="9711db73369bab80374b831d2e61d263e3085500" dest-branch="crux-pe13-baseline" />
+  <remove-project name="prebuilts_build-tools" optional="true" />
+  <remove-project name="coachpo/crux-pe13-build-tools" optional="true" />
+  <project name="coachpo/crux-pe13-build-tools" path="prebuilts/build-tools" remote="crux-functional" revision="e4ce2f62e149361cebc7a00349d0600062cc6b07" dest-branch="crux-pe13-baseline" />
+  <remove-project name="coachpo/kernel_xiaomi_crux" optional="true" />
+  <project name="coachpo/kernel_xiaomi_crux" path="kernel/xiaomi/crux-pe-cepheus" remote="crux-functional" revision="07426c499bef23cdeddfb198cf8c7d72b4b39103" dest-branch="thirteen" />
+  <remove-project name="bootable_recovery" optional="true" />
+  <remove-project name="coachpo/crux-pe13-recovery" optional="true" />
+  <project name="coachpo/crux-pe13-recovery" path="bootable/recovery" remote="crux-functional" revision="093614f88d0f5cd2405f88baf1293ab057c0e40b" dest-branch="crux-pe13-functional" />
+  <remove-project name="frameworks_base" optional="true" />
+  <remove-project name="coachpo/crux-pe13-frameworks-base" optional="true" />
+  <project name="coachpo/crux-pe13-frameworks-base" path="frameworks/base" remote="crux-functional" revision="494e97c8dbd84a135b1c91b9080a8bf703eba971" dest-branch="crux-pe13-baseline" />
+  <remove-project name="hardware_qcom-caf_sm8150_display" optional="true" />
+  <remove-project name="coachpo/crux-pe13-caf-display" optional="true" />
+  <project name="coachpo/crux-pe13-caf-display" path="hardware/qcom-caf/sm8150/display" remote="crux-functional" revision="81810db0ba598f3a0b1892e0bf82f38d23a20f7f" dest-branch="crux-pe13-baseline" />
+  <remove-project name="art" optional="true" />
+  <remove-project name="coachpo/crux-pe13-art" optional="true" />
+  <project name="coachpo/crux-pe13-art" path="art" remote="crux-functional" revision="5f0ae1d6034c103aa13de8f319e66950f114ad6f" dest-branch="crux-pe13-baseline" />
+</manifest>

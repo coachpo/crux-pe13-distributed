@@ -1,0 +1,2 @@
+ImageOS=ubuntu22
+ImageVersion=20261004.315.1
