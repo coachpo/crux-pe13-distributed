@@ -225,6 +225,13 @@ def main():
     for wave in plan['waves']:
         wave_id = str(wave['id'])
         existing = state['runs'].get(wave_id)
+        if existing and state.get('worker_sha'):
+            if not existing.get('headSha'):
+                existing['headSha'] = gh('run', 'view', existing['run_id'], '--repo', args.repo,
+                                         '--json', 'headSha', json_output=True)['headSha']
+                save(state_path, state)
+            if existing['headSha'] != state['worker_sha']:
+                raise ValueError('Saved run has a different worker commit: ' + existing['url'])
         if existing and existing.get('conclusion') == 'success':
             if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
                 return
@@ -265,7 +272,7 @@ def main():
         run = dispatch(args.repo, args.tag, wave_id, worker_ref)
         if existing:
             state.setdefault('failed_runs', {}).setdefault(wave_id, []).append(existing)
-        state['runs'][wave_id] = {'run_id': run['databaseId'], 'url': run['url']}
+        state['runs'][wave_id] = {'run_id': run['databaseId'], 'url': run['url'], 'headSha': run['headSha']}
         save(state_path, state)
         if run['headSha'] != state['worker_sha']:
             state['runs'][wave_id]['conclusion'] = 'worker_identity_mismatch'

@@ -47,6 +47,21 @@ class SchedulerTests(unittest.TestCase):
                 self.assertEqual(scheduler.pin_worker('owner/project', 'main', 'inputs', state, root / 'state.json'), 'fixed-worker')
             gh.assert_called_once_with('api', 'repos/owner/project/git/ref/tags/fixed-worker', '--jq', '.object.sha')
 
+    def test_successful_saved_run_with_wrong_worker_cannot_be_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            plan_path.write_text(json.dumps({'schema_version': 2, 'waves': [{'id': 0, 'tasks': []}]}))
+            state_path.write_text(json.dumps({'repo': 'owner/project', 'tag': 'inputs',
+                'plan_sha256': scheduler.digest(plan_path), 'worker_sha': 'a' * 40,
+                'runs': {'0': {'run_id': 123, 'url': 'https://github.com/run/123', 'conclusion': 'success', 'headSha': 'b' * 40}}}))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path), '--repo', 'owner/project', '--tag', 'inputs']
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh') as gh, patch.object(scheduler, 'wait') as wait:
+                with self.assertRaisesRegex(ValueError, 'different worker commit'):
+                    scheduler.main()
+            gh.assert_not_called()
+            wait.assert_not_called()
+
     def lazy_fixture(self, root):
         manifest = root / 'manifest.json'
         manifest.write_text(json.dumps({'runtime_dir': '.crux-task/graph'}))
