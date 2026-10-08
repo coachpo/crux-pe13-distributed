@@ -15,6 +15,175 @@ spec.loader.exec_module(scheduler)
 
 
 class SchedulerTests(unittest.TestCase):
+    def compile_job(self, identity, conclusion):
+        return {'name': f'compile ({identity}, remote-source-profile.json, capsule.tar.zst',
+                'status': 'completed', 'conclusion': conclusion}
+
+    def test_partial_wave_retry_preserves_successes_and_uses_each_producer_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            ids = ['one', 'two', 'three']
+            plan_path.write_text(json.dumps({'schema_version': 2, 'waves': [
+                {'id': 0, 'tasks': [{'id': identity, 'capsule_assets': [identity + '.tar.zst']}
+                                    for identity in ids]},
+                {'id': 1, 'tasks': [{'id': 'consumer', 'capsule_assets': ['consumer.tar.zst'],
+                                    'dependencies': [{'wave': 0, 'shard': identity} for identity in ids]}]}]}))
+            original_plan = plan_path.read_bytes()
+            revision = 'a' * 40
+            state_path.write_text(json.dumps({'repo': 'owner/project', 'tag': 'inputs',
+                'plan_sha256': scheduler.digest(plan_path), 'worker_sha': revision,
+                'worker_ref': 'fixed-worker', 'runs': {}}))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs']
+            captured = {}
+            run_ids = iter([101, 202, 303])
+            def dispatch(repo, tag, wave, ref):
+                run_id = next(run_ids)
+                captured[run_id] = json.loads((root / f'wave-{wave}.json').read_text())
+                return {'databaseId': run_id, 'url': f'https://github.com/run/{run_id}', 'headSha': revision}
+            results = [
+                {'conclusion': 'failure', 'url': 'https://github.com/run/101', 'jobs': [self.compile_job('one', 'success'),
+                    self.compile_job('two', 'success'), self.compile_job('three', 'failure')]},
+                {'conclusion': 'success', 'jobs': [self.compile_job('three', 'success')]},
+                {'conclusion': 'success', 'jobs': [self.compile_job('consumer', 'success')]}]
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh', return_value=revision), \
+                    patch.object(scheduler, 'dispatch', side_effect=dispatch), \
+                    patch.object(scheduler, 'wait', side_effect=results):
+                with self.assertRaisesRegex(RuntimeError, 'Wave 0 failed'):
+                    scheduler.main()
+                failed = json.loads(state_path.read_text())
+                self.assertEqual(set(failed['task_runs']), {'one', 'two'})
+                self.assertEqual(failed['runs']['0']['conclusion'], 'failure')
+                scheduler.main()
+            self.assertEqual([task['id'] for task in captured[202]['include']], ['three'])
+            self.assertEqual(captured[303]['include'][0]['dependencies'], [
+                {'id': 'one', 'run_id': 101, 'artifact': 'shard-one', 'expected_worker_commit': revision},
+                {'id': 'two', 'run_id': 101, 'artifact': 'shard-two', 'expected_worker_commit': revision},
+                {'id': 'three', 'run_id': 202, 'artifact': 'shard-three', 'expected_worker_commit': revision}])
+            state = json.loads(state_path.read_text())
+            self.assertEqual(state['failed_runs']['0'][0]['run_id'], 101)
+            self.assertEqual(state['failed_runs']['0'][0]['conclusion'], 'failure')
+            self.assertEqual(state['task_runs']['one']['run_id'], 101)
+            self.assertEqual(state['task_runs']['three']['run_id'], 202)
+            self.assertEqual(plan_path.read_bytes(), original_plan)
+
+    def test_explicit_worker_migration_reuses_old_success_and_dispatches_only_failed_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            old = '838635345395b7d09915c1ae74813bd20da6d84f'
+            current = '178b5441eddbbb05d638f69b08848c08c42e2ad1'
+            plan_path.write_text(json.dumps({'schema_version': 2, 'waves': [
+                {'id': 0, 'tasks': [{'id': identity, 'capsule_assets': [identity + '.tar.zst']}
+                                    for identity in ['old-good', 'retry']]},
+                {'id': 1, 'tasks': [{'id': 'consumer', 'capsule_assets': ['consumer.tar.zst'],
+                    'dependencies': [{'wave': 0, 'shard': 'old-good'}, {'wave': 0, 'shard': 'retry'}]}]}]}))
+            prior = {'run_id': 101, 'url': 'https://github.com/run/101', 'headSha': old,
+                     'conclusion': 'failure', 'jobs': [self.compile_job('old-good', 'success'),
+                                                     self.compile_job('retry', 'failure')]}
+            state_path.write_text(json.dumps({'repo': 'owner/project', 'tag': 'inputs',
+                'plan_sha256': scheduler.digest(plan_path), 'worker_sha': current, 'worker_ref': 'new-worker',
+                'accepted_worker_commits': [old, current], 'runs': {'0': prior}}))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs', '--ref', current]
+            captured = {}
+            run_ids = iter([202, 303])
+            def dispatch(repo, tag, wave, ref):
+                self.assertEqual(ref, 'new-worker')
+                run_id = next(run_ids)
+                captured[run_id] = json.loads((root / f'wave-{wave}.json').read_text())
+                return {'databaseId': run_id, 'url': f'https://github.com/run/{run_id}', 'headSha': current}
+            results = [{'conclusion': 'success', 'jobs': [self.compile_job('retry', 'success')]},
+                       {'conclusion': 'success', 'jobs': [self.compile_job('consumer', 'success')]}]
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh', return_value=current), \
+                    patch.object(scheduler, 'dispatch', side_effect=dispatch), \
+                    patch.object(scheduler, 'wait', side_effect=results):
+                scheduler.main()
+            state = json.loads(state_path.read_text())
+            self.assertEqual([task['id'] for task in captured[202]['include']], ['retry'])
+            self.assertEqual(captured[303]['include'][0]['dependencies'], [
+                {'id': 'old-good', 'run_id': 101, 'artifact': 'shard-old-good', 'expected_worker_commit': old},
+                {'id': 'retry', 'run_id': 202, 'artifact': 'shard-retry', 'expected_worker_commit': current}])
+            self.assertEqual(state['task_runs']['old-good']['headSha'], old)
+            self.assertEqual(state['task_runs']['retry']['headSha'], current)
+            self.assertEqual(state['failed_runs']['0'], [prior])
+            with self.assertRaisesRegex(ValueError, 'different worker commit'):
+                scheduler.validate_worker(state, 'c' * 40, 'Unapproved producer')
+
+    def test_approved_input_correction_preserves_primary_capsule_and_dependencies(self):
+        revision = 'a' * 40
+        task = {'id': 'task', 'capsule_assets': ['original.tar.zst'],
+                'dependencies': [{'run_id': 123, 'artifact': 'shard-producer'}],
+                'source_overlays': [{'assets': ['existing.tar.zst']}],
+                'source_archives': {'profile_asset': 'profile.json', 'bundle_assets': ['existing.json']}}
+        original = json.dumps(task)
+        correction = {'approved': True, 'expected_worker_sha': revision, 'expected_worker_ref': 'fixed-worker',
+                      'source_overlays': [{'assets': ['approved-source-only.tar.zst']}],
+                      'source_archives': {'bundle_assets': ['corrected.json']}}
+        state = {'worker_sha': revision, 'worker_ref': 'fixed-worker', 'input_corrections': {'task': correction}}
+        corrected = scheduler.apply_input_correction(state, task)
+        self.assertEqual(corrected['capsule_assets'], task['capsule_assets'])
+        self.assertEqual(corrected['dependencies'], task['dependencies'])
+        self.assertEqual(corrected['source_overlays'], [{'assets': ['existing.tar.zst']},
+                                                     {'assets': ['approved-source-only.tar.zst']}])
+        self.assertEqual(corrected['source_archives'], {'profile_asset': 'profile.json',
+                                                      'bundle_assets': ['corrected.json']})
+        self.assertEqual(json.dumps(task), original)
+        correction['approved'] = False
+        with self.assertRaisesRegex(ValueError, 'explicit approval'):
+            scheduler.apply_input_correction(state, task)
+        correction['approved'] = True
+        correction['expected_worker_sha'] = 'b' * 40
+        with self.assertRaisesRegex(ValueError, 'different worker'):
+            scheduler.apply_input_correction(state, task)
+
+    def test_failed_task_binding_is_not_a_producer_even_if_run_succeeded(self):
+        state = {'runs': {'0': {'run_id': 123, 'conclusion': 'success'}},
+                 'task_runs': {'producer': {'run_id': 123, 'conclusion': 'failure'}}}
+        with self.assertRaisesRegex(ValueError, 'Unsuccessful task dependency'):
+            scheduler.dependency_producer(state, {'wave': 0, 'shard': 'producer'})
+
+    def test_success_binding_carries_immutable_expected_manifest_for_assembly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, archive = self.lazy_fixture(root)
+            revision = 'a' * 40
+            state = {'worker_sha': revision}
+            run = {'run_id': 123, 'url': 'https://github.com/run/123', 'headSha': revision,
+                   'conclusion': 'success', 'jobs': [self.compile_job(task['id'], 'success')]}
+            scheduler.record_successful_tasks(state, {'id': 0, 'tasks': [task]}, run)
+            self.assertEqual(state['task_runs'][task['id']]['manifest_sha256'],
+                             scheduler.digest(root / 'manifest.json'))
+            self.assertEqual(scheduler.dependency_producer(state, {'wave': 0, 'shard': task['id']}), {
+                'id': task['id'], 'run_id': 123, 'artifact': 'shard-task',
+                'expected_worker_commit': revision, 'expected_manifest_sha256': scheduler.digest(root / 'manifest.json')})
+
+    def test_successful_subset_retry_cannot_close_wave_with_missing_original_producer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            revision = 'a' * 40
+            plan_path.write_text(json.dumps({'schema_version': 2, 'waves': [
+                {'id': 0, 'tasks': [{'id': identity, 'capsule_assets': [identity + '.tar.zst']}
+                                    for identity in ['one', 'two', 'three']]},
+                {'id': 1, 'tasks': [{'id': 'consumer', 'capsule_assets': ['consumer.tar.zst']}]}]}))
+            state_path.write_text(json.dumps({'repo': 'owner/project', 'tag': 'inputs',
+                'plan_sha256': scheduler.digest(plan_path), 'worker_sha': revision,
+                'task_runs': {'one': {'run_id': 101, 'headSha': revision, 'conclusion': 'success'}},
+                'runs': {'0': {'run_id': 202, 'url': 'https://github.com/run/202', 'headSha': revision,
+                              'conclusion': 'success', 'task_ids': ['three'],
+                              'jobs': [self.compile_job('three', 'success')]}}}))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs']
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh') as gh, \
+                    patch.object(scheduler, 'dispatch') as dispatch:
+                with self.assertRaisesRegex(ValueError, 'missing producer bindings: two'):
+                    scheduler.main()
+            gh.assert_not_called()
+            dispatch.assert_not_called()
+            self.assertNotIn('finished_at', json.loads(state_path.read_text()))
+
     def test_failed_wave_retry_preserves_previous_run_and_pins_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -27,7 +196,7 @@ class SchedulerTests(unittest.TestCase):
             argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path), '--repo', 'owner/project', '--tag', 'inputs']
             revision = 'a' * 40
             with patch.object(sys, 'argv', argv), \
-                    patch.object(scheduler, 'wait', return_value={'conclusion': 'success', 'jobs': []}), \
+                    patch.object(scheduler, 'wait', return_value={'conclusion': 'success', 'jobs': [self.compile_job('task', 'success')]}), \
                     patch.object(scheduler, 'dispatch', return_value={'databaseId': 456, 'url': 'https://github.com/run/456', 'headSha': revision}) as dispatch, \
                     patch.object(scheduler, 'gh', return_value=revision):
                 scheduler.main()

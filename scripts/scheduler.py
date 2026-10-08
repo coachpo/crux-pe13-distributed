@@ -2,9 +2,10 @@
 """Dispatch dependency-ordered waves on standard GitHub Actions runners.
 
 The scheduler archives source inputs on demand and compiles nothing locally.
-Each wave consumes only successful upstream run artifacts.
+Each wave consumes artifacts from successful upstream shards.
 """
 import argparse
+import copy
 import datetime
 import hashlib
 import json
@@ -37,6 +38,112 @@ def save(path, state):
 def validate_frozen_file(spec):
     if digest(spec['path']) != spec['sha256']:
         raise ValueError('Frozen input changed: ' + spec['path'])
+
+
+def validate_worker(state, sha, description):
+    expected = state.get('worker_sha')
+    if not expected:
+        return
+    accepted = state.get('accepted_worker_commits', [expected])
+    if not isinstance(accepted, list) or expected not in accepted or any(
+            not isinstance(item, str) or not re.fullmatch(r'[a-f0-9]{40}', item) for item in accepted):
+        raise ValueError('Invalid explicitly accepted worker commit list')
+    if sha not in accepted:
+        raise ValueError(description + ' has a different worker commit')
+
+
+def successful_task(state, identity):
+    producer = state.get('task_runs', {}).get(identity)
+    if not producer or producer.get('conclusion') != 'success':
+        return None
+    validate_worker(state, producer.get('headSha'), 'Task producer ' + identity)
+    return producer
+
+
+def record_successful_tasks(state, wave, run):
+    """Retain successful shards even when another job makes the run fail."""
+    known = {task['id']: task for task in wave['tasks']}
+    changed = False
+    for job in run.get('jobs', []):
+        match = re.match(r'^compile \(([^, )]+)', job['name'])
+        if not match or match[1] not in known or job.get('conclusion') != 'success':
+            continue
+        identity = match[1]
+        validate_worker(state, run.get('headSha'), 'Successful run ' + str(run['run_id']))
+        recipe = known[identity].get('preparation')
+        manifest_sha = next(spec['sha256'] for spec in recipe['slice_files']
+                            if spec['path'] == recipe['manifest']) if recipe else None
+        prior = successful_task(state, identity)
+        if prior:
+            if manifest_sha:
+                if prior.get('manifest_sha256', manifest_sha) != manifest_sha:
+                    raise ValueError('Task producer uses a different frozen manifest: ' + identity)
+                if 'manifest_sha256' not in prior:
+                    prior['manifest_sha256'] = manifest_sha
+                    changed = True
+            continue
+        producer = {'run_id': run['run_id'], 'url': run['url'], 'headSha': run.get('headSha'),
+                    'conclusion': 'success', 'wave': wave['id'], 'artifact': 'shard-' + identity}
+        if manifest_sha:
+            producer['manifest_sha256'] = manifest_sha
+        for source, target in [('databaseId', 'job_id'), ('url', 'job_url')]:
+            if source in job:
+                producer[target] = job[source]
+        if identity in run.get('input_corrections', {}):
+            producer['input_correction'] = copy.deepcopy(run['input_corrections'][identity])
+        state.setdefault('task_runs', {})[identity] = producer
+        changed = True
+    return changed
+
+
+def dependency_producer(state, dependency):
+    identity = dependency['shard']
+    producer = successful_task(state, identity)
+    if not producer:
+        if identity in state.get('task_runs', {}):
+            raise ValueError('Unsuccessful task dependency: ' + identity)
+        producer = state['runs'][str(dependency['wave'])]
+        if producer.get('conclusion') != 'success' or (
+                'task_ids' in producer and identity not in producer['task_ids']):
+            raise ValueError('Unsuccessful dependency: ' + str(dependency))
+        validate_worker(state, producer.get('headSha'), 'Dependency run ' + str(producer['run_id']))
+    result = {'id': identity, 'run_id': producer['run_id'], 'artifact': 'shard-' + identity}
+    if producer.get('headSha'):
+        result['expected_worker_commit'] = producer['headSha']
+    if producer.get('manifest_sha256'):
+        result['expected_manifest_sha256'] = producer['manifest_sha256']
+    return result
+
+
+def require_wave_producers(state, wave, run):
+    # Older full-wave records, including the accepted bootstrap import, can
+    # still supply their whole wave. A subset retry must retain every producer.
+    if 'task_ids' in run:
+        missing = [task['id'] for task in wave['tasks'] if not successful_task(state, task['id'])]
+        if missing:
+            raise ValueError('Successful wave attempt is missing producer bindings: ' + ', '.join(missing))
+
+
+def apply_input_correction(state, task):
+    correction = state.get('input_corrections', {}).get(task['id'])
+    if not correction:
+        return task
+    if correction.get('approved') is not True:
+        raise ValueError('Input correction has no explicit approval: ' + task['id'])
+    for field, actual in [('expected_worker_sha', state.get('worker_sha')),
+                          ('expected_worker_ref', state.get('worker_ref'))]:
+        if field in correction and correction[field] != actual:
+            raise ValueError('Input correction expects a different worker: ' + task['id'])
+    result = dict(task)
+    if 'source_overlays' in correction:
+        if not isinstance(correction['source_overlays'], list):
+            raise ValueError('Approved source overlays must be an array')
+        result['source_overlays'] = [*task.get('source_overlays', []), *correction['source_overlays']]
+    if 'source_archives' in correction:
+        if not isinstance(correction['source_archives'], dict):
+            raise ValueError('Approved source archive correction must be an object')
+        result['source_archives'] = {**task.get('source_archives', {}), **correction['source_archives']}
+    return result
 
 
 def pin_worker(repo, ref, tag, state, state_path):
@@ -212,6 +319,8 @@ def main():
         raise ValueError('Resume state belongs to a different worker revision')
     if plan.get('schema_version') == 2 and state['runs'] and not state.get('worker_sha'):
         raise ValueError('Lazy resume state does not identify its worker commit')
+    if state.get('worker_sha'):
+        validate_worker(state, state['worker_sha'], 'Current worker')
     state['workflow_ref'] = args.ref
     if plan.get('preparation'):
         validate_frozen_file(plan['preparation']['graph_plan'])
@@ -225,14 +334,21 @@ def main():
     for wave in plan['waves']:
         wave_id = str(wave['id'])
         existing = state['runs'].get(wave_id)
-        if existing and state.get('worker_sha'):
-            if not existing.get('headSha'):
-                existing['headSha'] = gh('run', 'view', existing['run_id'], '--repo', args.repo,
-                                         '--json', 'headSha', json_output=True)['headSha']
+        history = state.get('failed_runs', {}).get(wave_id, [])
+        for prior in [*history, *([existing] if existing else [])]:
+            changed = False
+            if state.get('worker_sha'):
+                if not prior.get('headSha'):
+                    prior['headSha'] = gh('run', 'view', prior['run_id'], '--repo', args.repo,
+                                          '--json', 'headSha', json_output=True)['headSha']
+                    changed = True
+                validate_worker(state, prior['headSha'], 'Saved run ' + prior['url'])
+            if prior.get('conclusion'):
+                changed = record_successful_tasks(state, wave, prior) or changed
+            if changed:
                 save(state_path, state)
-            if existing['headSha'] != state['worker_sha']:
-                raise ValueError('Saved run has a different worker commit: ' + existing['url'])
         if existing and existing.get('conclusion') == 'success':
+            require_wave_producers(state, wave, existing)
             if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
                 return
             continue
@@ -240,23 +356,28 @@ def main():
             say(f"Resuming wave {wave_id}: {existing['url']}")
             result = wait(args.repo, existing['run_id'])
             existing.update(conclusion=result['conclusion'], jobs=result['jobs'])
+            record_successful_tasks(state, wave, existing)
             save(state_path, state)
             if result['conclusion'] != 'success':
                 raise RuntimeError(f"Wave {wave_id} failed: {result['url']}")
+            require_wave_producers(state, wave, existing)
             if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
                 return
             continue
         tasks = []
         for task in wave['tasks']:
-            dependencies = []
-            for dep in task.get('dependencies', []):
-                upstream = state['runs'][str(dep['wave'])]
-                if upstream.get('conclusion') != 'success':
-                    raise ValueError(f'Unsuccessful dependency: {dep}')
-                dependencies.append({'run_id': upstream['run_id'],
-                                     'artifact': 'shard-' + dep['shard']})
+            if successful_task(state, task['id']):
+                continue
+            dependencies = [dependency_producer(state, dep) for dep in task.get('dependencies', [])]
             prepared = prepare_task(plan, task, state, state_path, args.repo, args.tag)
+            prepared = apply_input_correction(state, prepared)
             tasks.append({**prepared, 'dependencies': dependencies})
+        if not tasks and wave['tasks']:
+            state.setdefault('waves', {}).setdefault(wave_id, {})['status'] = 'success'
+            save(state_path, state)
+            if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
+                return
+            continue
         control = {'include': tasks}
         if not 1 <= len(tasks) <= 256:
             raise ValueError('Each wave must contain 1–256 tasks')
@@ -272,7 +393,12 @@ def main():
         run = dispatch(args.repo, args.tag, wave_id, worker_ref)
         if existing:
             state.setdefault('failed_runs', {}).setdefault(wave_id, []).append(existing)
-        state['runs'][wave_id] = {'run_id': run['databaseId'], 'url': run['url'], 'headSha': run['headSha']}
+        state['runs'][wave_id] = {'run_id': run['databaseId'], 'url': run['url'], 'headSha': run['headSha'],
+                                  'task_ids': [task['id'] for task in tasks]}
+        corrections = state.get('input_corrections', {})
+        used = {task['id']: copy.deepcopy(corrections[task['id']]) for task in tasks if task['id'] in corrections}
+        if used:
+            state['runs'][wave_id]['input_corrections'] = used
         save(state_path, state)
         if run['headSha'] != state['worker_sha']:
             state['runs'][wave_id]['conclusion'] = 'worker_identity_mismatch'
@@ -281,9 +407,11 @@ def main():
         say(f"Wave {wave_id}: {run['url']}")
         result = wait(args.repo, run['databaseId'])
         state['runs'][wave_id].update(conclusion=result['conclusion'], jobs=result['jobs'])
+        record_successful_tasks(state, wave, state['runs'][wave_id])
         save(state_path, state)
         if result['conclusion'] != 'success':
             raise RuntimeError(f"Wave {wave_id} failed: {result['url']}")
+        require_wave_producers(state, wave, state['runs'][wave_id])
         if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
             return
     state['finished_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
