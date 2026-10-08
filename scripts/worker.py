@@ -86,6 +86,30 @@ def verify_bundle(bundle_path, manifest_path):
     return bundle
 
 
+def prepare_python2_aliases(bundle, source_root):
+    """Expose the frozen hermetic Python 2 executable to source shebangs."""
+    executable = Path(source_root) / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+    spec = next((item for item in bundle["files"] if item["path"] == str(executable)), None)
+    if spec is None:
+        return []
+    if spec["type"] != "file" or not spec["mode"] & 0o111:
+        raise ValueError(f"frozen Python 2 runtime is not executable: {executable}")
+    # verify_bundle has already checked this exact frozen executable. The
+    # aliases only adapt the source shebang names to that declared runtime.
+    directory = Path(source_root) / ".crux-task/host-bin"
+    directory.mkdir(parents=True, exist_ok=True)
+    aliases = []
+    for name in ("python2", "python2.7"):
+        alias = directory / name
+        if alias.exists() or alias.is_symlink():
+            if not alias.is_symlink() or os.readlink(alias) != str(executable):
+                raise ValueError(f"conflicting Python 2 runtime alias: {alias}")
+        else:
+            alias.symlink_to(executable)
+        aliases.append({"name": name, "path": str(alias), "target": str(executable), "target_sha256": spec["sha256"]})
+    return aliases
+
+
 def archive_path(name):
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts or not path.parts:
@@ -265,12 +289,18 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                                                               for key, value in build_environment.items()):
                 raise ValueError("build_environment must contain string keys and values")
             build_environment = {**build_environment, "NINJA_STATUS": "[%f/%t %e sec] ", "CCACHE_DISABLE": "1"}
+            runtime_aliases = prepare_python2_aliases(bundle, source_root)
+            if runtime_aliases:
+                alias_dir = str(source_root / ".crux-task/host-bin")
+                build_environment["PATH"] = alias_dir + os.pathsep + build_environment.get("PATH", os.environ.get("PATH", os.defpath))
+            receipt["runtime_aliases"] = runtime_aliases
             command = [str(executable), "-f", str(manifest_path.parent / manifest["ninja"]),
                        "-j", str(jobs), *manifest["targets"]]
             receipt["command"] = command
             receipt["build_environment"] = build_environment
             (output_dir / "command.json").write_text(json.dumps({"cwd": str(source_root), "argv": command,
-                                                                 "environment": build_environment}, indent=2) + "\n")
+                                                                 "environment": build_environment,
+                                                                 "runtime_aliases": runtime_aliases}, indent=2) + "\n")
             print(json.dumps({"cwd": str(source_root), "argv": command}), file=log)
             result = subprocess.run(command, cwd=source_root, stdout=log, stderr=subprocess.STDOUT,
                                     env={**os.environ, **build_environment})

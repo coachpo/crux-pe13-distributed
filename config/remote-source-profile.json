@@ -1,0 +1,511 @@
+{
+  "archives": [
+    {
+      "archive_subdir": "linux-x86",
+      "id": "prebuilts-build-tools-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 152777752,
+        "project_path": "prebuilts/build-tools",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 63
+      },
+      "prefix": "prebuilts/build-tools/linux-x86",
+      "repository_url": "https://github.com/coachpo/crux-pe13-build-tools",
+      "revision": "e4ce2f62e149361cebc7a00349d0600062cc6b07",
+      "strip_components": 1,
+      "url": "https://codeload.github.com/coachpo/crux-pe13-build-tools/tar.gz/e4ce2f62e149361cebc7a00349d0600062cc6b07"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-clang-tools-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/clang-tools/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 151644525,
+        "project_path": "prebuilts/clang-tools",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86",
+        "symlink_count": 1,
+        "tracked_clean": true,
+        "tracked_count": 210
+      },
+      "prefix": "prebuilts/clang-tools/linux-x86",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/clang-tools",
+      "revision": "8be4a2386eef2e2337c654ace5ceeb1d4d9c4615",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/clang-tools/+archive/8be4a2386eef2e2337c654ace5ceeb1d4d9c4615/linux-x86.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-clang-host-linux-x86-clang-3289846",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/clang/host/linux-x86/clang-3289846",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 270131001,
+        "project_path": "prebuilts/clang/host/linux-x86",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "clang-3289846",
+        "symlink_count": 1,
+        "tracked_clean": true,
+        "tracked_count": 191
+      },
+      "prefix": "prebuilts/clang/host/linux-x86/clang-3289846",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
+      "revision": "c9c9d70ad5cb62dd761adccd87c34e8a35846a81",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/c9c9d70ad5cb62dd761adccd87c34e8a35846a81/clang-3289846.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-clang-host-linux-x86-clang-prelude",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/clang/host/linux-x86/clang-prelude",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 1933486692,
+        "project_path": "prebuilts/clang/host/linux-x86/clang-prelude",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "",
+        "symlink_count": 23,
+        "tracked_clean": true,
+        "tracked_count": 1036
+      },
+      "prefix": "prebuilts/clang/host/linux-x86/clang-prelude",
+      "repository_url": "https://gitlab.com/jjpprrrr/prelude-clang",
+      "revision": "ac8fce34dc0f6918672100d7a6e867a66b8afa8f",
+      "strip_components": 1,
+      "url": "https://gitlab.com/jjpprrrr/prelude-clang/-/archive/ac8fce34dc0f6918672100d7a6e867a66b8afa8f/prelude-clang-ac8fce34dc0f6918672100d7a6e867a66b8afa8f.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-clang-host-linux-x86-clang-r450784d",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/clang/host/linux-x86/clang-r450784d",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 1840402492,
+        "project_path": "prebuilts/clang/host/linux-x86",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "clang-r450784d",
+        "symlink_count": 32,
+        "tracked_clean": true,
+        "tracked_count": 6271
+      },
+      "prefix": "prebuilts/clang/host/linux-x86/clang-r450784d",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
+      "revision": "c9c9d70ad5cb62dd761adccd87c34e8a35846a81",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/c9c9d70ad5cb62dd761adccd87c34e8a35846a81/clang-r450784d.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-gcc-linux-x86-aarch64-aarch64-linux-android-4.9",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 76879626,
+        "project_path": "prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "",
+        "symlink_count": 31,
+        "tracked_clean": true,
+        "tracked_count": 272
+      },
+      "prefix": "prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9",
+      "repository_url": "https://github.com/PixelExperience/prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9",
+      "revision": "a0c13e0de2201201342fd5c87d77f25105e5c42e",
+      "strip_components": 1,
+      "url": "https://codeload.github.com/PixelExperience/prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/tar.gz/a0c13e0de2201201342fd5c87d77f25105e5c42e"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-gcc-linux-x86-arm-arm-linux-androideabi-4.9",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 119855545,
+        "project_path": "prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "",
+        "symlink_count": 30,
+        "tracked_clean": true,
+        "tracked_count": 193
+      },
+      "prefix": "prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9",
+      "repository_url": "https://github.com/PixelExperience/prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9",
+      "revision": "111258a10e017f067b27e6cfcea7619d753f3309",
+      "strip_components": 1,
+      "url": "https://codeload.github.com/PixelExperience/prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/tar.gz/111258a10e017f067b27e6cfcea7619d753f3309"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-go-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/go/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 581356595,
+        "project_path": "prebuilts/go/linux-x86",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 11975
+      },
+      "prefix": "prebuilts/go/linux-x86",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/go/linux-x86",
+      "revision": "54b24a8b0acb4627a3e352121f262a92fecdad24",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/go/linux-x86/+archive/54b24a8b0acb4627a3e352121f262a92fecdad24.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-jdk-jdk11-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/jdk/jdk11/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 314730423,
+        "project_path": "prebuilts/jdk/jdk11",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86",
+        "symlink_count": 211,
+        "tracked_clean": true,
+        "tracked_count": 436
+      },
+      "prefix": "prebuilts/jdk/jdk11/linux-x86",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/jdk/jdk11",
+      "revision": "3a4731d3c4e968419e008b7721b9704ccb40ddf2",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/jdk/jdk11/+archive/3a4731d3c4e968419e008b7721b9704ccb40ddf2/linux-x86.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-jdk-jdk8-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/jdk/jdk8/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 171025328,
+        "project_path": "prebuilts/jdk/jdk8",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 333
+      },
+      "prefix": "prebuilts/jdk/jdk8/linux-x86",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/jdk/jdk8",
+      "revision": "74e4f1844dfa9b8df9e0fe2ff34a2ecc24d52b07",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/jdk/jdk8/+archive/74e4f1844dfa9b8df9e0fe2ff34a2ecc24d52b07/linux-x86.tar.gz"
+    },
+    {
+      "archive_subdir": "linux-x86",
+      "id": "prebuilts-kernel-build-tools-linux-x86",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/kernel-build-tools/linux-x86",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 129989440,
+        "project_path": "prebuilts/kernel-build-tools",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86",
+        "symlink_count": 1,
+        "tracked_clean": true,
+        "tracked_count": 143
+      },
+      "prefix": "prebuilts/kernel-build-tools/linux-x86",
+      "repository_url": "https://github.com/PixelExperience/prebuilts_kernel-build-tools",
+      "revision": "083e34d8c2c4239be4967172427268c267585951",
+      "strip_components": 1,
+      "url": "https://codeload.github.com/PixelExperience/prebuilts_kernel-build-tools/tar.gz/083e34d8c2c4239be4967172427268c267585951"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-rust-linux-x86-1.59.0",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/rust/linux-x86/1.59.0",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 997557900,
+        "project_path": "prebuilts/rust",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "linux-x86/1.59.0",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 2178
+      },
+      "prefix": "prebuilts/rust/linux-x86/1.59.0",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/rust",
+      "revision": "3bd33ffd0f448c15acb98d576c9705d7e6244c9d",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/rust/+archive/3bd33ffd0f448c15acb98d576c9705d7e6244c9d/linux-x86/1.59.0.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-sdk-tools-jetifier",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/sdk/tools/jetifier",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 2039097,
+        "project_path": "prebuilts/sdk",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "tools/jetifier",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 16
+      },
+      "prefix": "prebuilts/sdk/tools/jetifier",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/sdk",
+      "revision": "fcd7b576822ae46dbd3b0ed169f8a802850d5957",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/sdk/+archive/fcd7b576822ae46dbd3b0ed169f8a802850d5957/tools/jetifier.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-sdk-tools-lib",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/sdk/tools/lib",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 25823229,
+        "project_path": "prebuilts/sdk",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "tools/lib",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 4
+      },
+      "prefix": "prebuilts/sdk/tools/lib",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/sdk",
+      "revision": "fcd7b576822ae46dbd3b0ed169f8a802850d5957",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/sdk/+archive/fcd7b576822ae46dbd3b0ed169f8a802850d5957/tools/lib.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-sdk-tools-linux",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/sdk/tools/linux",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 128516323,
+        "project_path": "prebuilts/sdk",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "tools/linux",
+        "symlink_count": 0,
+        "tracked_clean": true,
+        "tracked_count": 30
+      },
+      "prefix": "prebuilts/sdk/tools/linux",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/sdk",
+      "revision": "fcd7b576822ae46dbd3b0ed169f8a802850d5957",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/sdk/+archive/fcd7b576822ae46dbd3b0ed169f8a802850d5957/tools/linux.tar.gz"
+    },
+    {
+      "archive_subdir": "",
+      "id": "prebuilts-gcc-linux-x86-host-x86_64-linux-glibc2.17-4.8",
+      "install_path": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+      "local_source_audit": {
+        "archive_head_probe": {
+          "curl_exit": 0,
+          "error": "",
+          "final_http_code": "200",
+          "http_codes": [
+            "200"
+          ]
+        },
+        "broken_symlinks": [],
+        "external_symlinks": [],
+        "ignored_files": [],
+        "local_file_bytes": 195475448,
+        "local_tar_zstd3_bytes": 63574764,
+        "project_path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+        "resolved_manifest_revision_matches_head": true,
+        "status": "",
+        "subtree": "",
+        "symlink_count": 185,
+        "tracked_clean": true,
+        "tracked_count": 3584
+      },
+      "prefix": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+      "repository_url": "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+      "revision": "c2f3c6976a1b064810179e70351b67fa577fbc80",
+      "strip_components": 0,
+      "url": "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8/+archive/c2f3c6976a1b064810179e70351b67fa577fbc80.tar.gz"
+    }
+  ],
+  "local_overlay_notes": [
+    "core-lambda-stubs.jar is 16741 bytes and remains in local capsules.",
+    "NDK leaf inputs are headers/static libraries; no NDK host tool package selected.",
+    "Nested Prelude is its own clean GitLab checkout; no parent Clang archive includes it.",
+    "Build tools preserve the public maintained nsjail.old rename."
+  ],
+  "schema_version": 1,
+  "scope": "Clean package subtrees actually referenced by the full ROM Ninja plan; remote files must match frozen capsule identities.",
+  "selected_local_file_bytes": 7091691416,
+  "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13"
+}

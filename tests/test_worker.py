@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import unittest
 
@@ -134,6 +135,28 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(receipt["returncode"], 2)
         self.assertIn("compiler failure", (self.root / "producer/build.log").read_text())
         self.assertFalse((self.root / "producer/outputs.tar.zst").exists())
+
+    def test_source_python2_shebang_uses_verified_declared_runtime(self):
+        interpreter = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text(f"#!{sys.executable}\nimport os,sys\nos.execv(sys.executable,[sys.executable,*sys.argv[1:]])\n")
+        interpreter.chmod(0o755)
+        source_script = self.source / "generated.py"
+        source_script.write_text("#!/usr/bin/env python2\nfrom pathlib import Path\np=Path('out/result.bin')\np.parent.mkdir(parents=True,exist_ok=True)\np.write_bytes(b'python2 shebang resolved')\n")
+        source_script.chmod(0o755)
+        self.ninja.write_text(f"#!{sys.executable}\nimport subprocess\nsubprocess.run(['./generated.py'],check=True)\n")
+        self.write_manifests()
+        bundle = json.loads(self.bundle.read_text())
+        bundle["files"] += [worker.describe(interpreter), worker.describe(source_script)]
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        self.assertEqual(self.output.read_bytes(), b"python2 shebang resolved")
+        self.assertEqual([item["name"] for item in receipt["runtime_aliases"]], ["python2", "python2.7"])
+        self.assertEqual(receipt["runtime_aliases"][0]["target_sha256"], worker.digest(interpreter))
+        self.assertEqual(receipt["build_environment"]["PATH"].split(":")[0], str(self.source / ".crux-task/host-bin"))
+        command = json.loads((self.root / "producer/command.json").read_text())
+        self.assertEqual(command["runtime_aliases"], receipt["runtime_aliases"])
 
 
 if __name__ == "__main__":

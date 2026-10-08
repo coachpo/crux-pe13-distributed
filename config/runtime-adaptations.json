@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "command_adaptations": [
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/.config",
+      "replace": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/make  -j18",
+      "with": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/make -j4",
+      "expected_matches": 5,
+      "rationale": "Bound nested kernel make to the standard Linux runner CPU/memory allocation; outer Ninja jobs do not override explicit nested -j18.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk:296-349 make-kernel-target",
+        "rule65293 original generated command"
+      ]
+    },
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "replace": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/make  -j18",
+      "with": "/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/build-tools/linux-x86/bin/make -j4",
+      "expected_matches": 4,
+      "rationale": "Bound nested kernel make to the standard Linux runner CPU/memory allocation; outer Ninja jobs do not override explicit nested -j18.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk:296-349 make-kernel-target",
+        "rule65292 original generated command"
+      ]
+    },
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/custom.sbox.textproto",
+      "scope": "edge",
+      "replace": "-j18",
+      "with": "-j4",
+      "expected_matches": 1,
+      "rationale": "Regenerate the headers_install sbox manifest through its existing writeFile producer using the runner job count. The original generated textproto is not a seed.",
+      "evidence": [
+        "soong/build.ninja generated_kernel_includes/custom.sbox.textproto edge1641112 rule g.android.writeFile",
+        "vendor/aosp/build/soong/Android.bp:24"
+      ]
+    }
+  ]
+}

@@ -153,6 +153,7 @@ class Collector:
         self.external_roots = set()
         self.used_generated = set()
         self.system_tools = set()
+        self.required_interpreters = {}
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -258,6 +259,22 @@ class Collector:
                 return
             self.used_generated.add(resolved)
         self.register(resolved, reason)
+        if resolved.suffix in {".py", ".sh"} or reason in {"graph-leaf", "command-file"}:
+            with resolved.open("rb") as stream:
+                first_line = stream.readline(512)
+            if first_line.startswith(b"#!"):
+                names = [Path(token).name for token in command_tokens(first_line[2:].decode(errors="replace").strip())]
+                if "python2" in names or "python2.7" in names:
+                    self.require_python2(resolved)
+
+    def require_python2(self, source_script=None):
+        executable = self.source_root / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        if "python2" not in self.required_interpreters:
+            self.required_interpreters["python2"] = {"name": "python2", "aliases": ["python2", "python2.7"],
+                                                     "executable": str(executable), "source_scripts": set()}
+            self.add(executable, "hermetic-python2-interpreter")
+        if source_script:
+            self.required_interpreters["python2"]["source_scripts"].add(str(source_script))
 
     def scan_directory(self, directory, reason, headers_only=False):
         if self.produced(directory):
@@ -396,6 +413,8 @@ class Collector:
     def command(self, command):
         tokens = command_tokens(command)
         for position, token in enumerate(tokens):
+            if Path(token).name in {"python2", "python2.7"}:
+                self.require_python2()
             if Path(token).name == "gotestrunner":
                 for option in range(position + 1, len(tokens)):
                     if tokens[option] == "--":
@@ -556,6 +575,8 @@ class Collector:
                 "external_input_dirs": [str(path) for path in sorted(self.external_dirs)],
                 "allowed_generated_inputs": [{"path": str(path), "reason": self.allowed_generated[path]}
                                              for path in sorted(self.used_generated)],
+                "required_interpreters": [{**item, "source_scripts": sorted(item["source_scripts"])}
+                                          for _, item in sorted(self.required_interpreters.items())],
                 "graph_inputs": graph_inputs, "system_tools": sorted(self.system_tools)}
 
     def archive(self, stream, metadata, task_path, omitted=()):

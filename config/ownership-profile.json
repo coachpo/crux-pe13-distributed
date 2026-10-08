@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "side_output_dirs": [
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen/.dummy_dep",
+      "dirs": [
+        "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen"
+      ],
+      "rationale": "The custom_generator declares only .dummy_dep while headers_install produces the gen tree consumed via exported include directories.",
+      "evidence": [
+        "vendor/aosp/build/soong/Android.bp:20-44 generated_kernel_includes",
+        "vendor/aosp/build/soong/generator/generator.go:238-287 Module.GenerateAndroidBuildActions"
+      ]
+    }
+  ],
+  "groups": [
+    [
+      "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ",
+      "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/.config",
+      "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb"
+    ]
+  ],
+  "group_export_dirs": [
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "dirs": [
+        "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ"
+      ],
+      "rationale": "The existing mkdir producer owns KERNEL_OBJ in the original graph; the atomic mkdir/config/Image group completes the tree before transport. Export after Image completion without assigning a duplicate Ninja producer.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk:442-504",
+        "build-aosp_crux.ninja rules65292-65294"
+      ]
+    }
+  ],
+  "not_applicable_side_effects": [
+    {
+      "producer": "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "dirs": [
+        "/home/qingli/crux-pe13-install-regression-2026-10-08/android-out/target/product/crux/vendor/lib/modules"
+      ],
+      "reason": "The frozen KERNEL_OBJ/.config has zero =m lines, so kernel.mk modules_install branch does not execute; vendor/lib/modules is absent in the recorded build. Revisit ownership if actual fresh .config enables modules.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk:456 grep -q =m condition",
+        "recorded KERNEL_OBJ/.config module count 0",
+        "actual vendor/lib/modules absent"
+      ]
+    }
+  ]
+}

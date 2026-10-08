@@ -13,6 +13,7 @@ import heapq
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import sqlite3
 import sys
@@ -26,7 +27,10 @@ def expand(value, variables):
     i = 0
     while i < len(value):
         if value[i] != '$':
-            result.append(value[i]); i += 1; continue
+            end=value.find('$',i)
+            if end < 0:
+                result.append(value[i:]); break
+            result.append(value[i:end]); i=end; continue
         i += 1
         if i == len(value):
             raise ValueError('unterminated Ninja escape')
@@ -37,7 +41,7 @@ def expand(value, variables):
             if ch == '\r' and value[i:i + 2] == '\r\n':
                 i += 1
             i += 1
-            while i < len(value) and value[i] in ' \t':
+            while i < len(value) and value[i] == ' ':
                 i += 1
         elif ch == '{':
             end = value.find('}', i)
@@ -45,7 +49,7 @@ def expand(value, variables):
                 raise ValueError('unterminated Ninja variable')
             result.append(variables.get(value[i + 1:end], '')); i = end + 1
         else:
-            match = re.match(r'[A-Za-z0-9_.-]+', value[i:])
+            match = re.match(r'[A-Za-z0-9_]+', value[i:])
             if not match:
                 raise ValueError('invalid Ninja escape: $' + ch)
             name = match.group(0)
@@ -54,7 +58,7 @@ def expand(value, variables):
 
 
 def logical(raw):
-    return re.sub(r'\$\r?\n[ \t]*', '', raw)
+    return re.sub(r'\$\r?\n *', '', raw)
 
 
 def path_tokens(value, variables):
@@ -83,7 +87,7 @@ def path_tokens(value, variables):
             elif value[i + 1] in '$ :':
                 token.append(value[i:i + 2]); i += 2
             else:
-                match = re.match(r'\$[A-Za-z0-9_.-]+', value[i:])
+                match = re.match(r'\$[A-Za-z0-9_]+', value[i:])
                 if not match:
                     raise ValueError('invalid Ninja path escape')
                 token.append(match.group(0)); i += len(match.group(0))
@@ -118,6 +122,24 @@ def parse_build(line, variables):
         else:
             deps.append((token, kind))
     return rule, outputs, deps
+
+
+def bindings(raw):
+    values = {}
+    for line in logical(raw).splitlines()[1:]:
+        if line[:1].isspace() and '=' in line and not line.lstrip().startswith('#'):
+            key,value = line.lstrip().split('=',1)
+            values[key.strip()] = value.lstrip(' ')
+    return values
+
+
+def edge_environment(raw, parent):
+    # Build path EvalStrings are evaluated after the action's bindings are
+    # parsed. Soong uses this for tool dependencies such as `| ${cmd}`.
+    environment=collections.ChainMap({},parent)
+    for name,value in bindings(raw).items():
+        environment[name]=expand(value,environment)
+    return environment
 
 
 def statements(path):
@@ -188,11 +210,12 @@ class Indexer:
         self.db.execute('INSERT INTO files VALUES (?,?,?,?)', (file_id,path,scope,parent))
         for ordinal, (offset, length, raw) in enumerate(statements(path)):
             self.stmts += 1; stmt_id = self.stmts
-            first = logical(raw).splitlines()[0].strip()
+            first = logical(raw).splitlines()[0].lstrip()
             kind = 'other'; name = None; ref = None
             if first.startswith('build '):
                 kind = 'build'
-                rule, outputs, deps = parse_build(first, env)
+                path_env=edge_environment(raw,env) if '$' in first else env
+                rule, outputs, deps = parse_build(first,path_env)
                 if rule != 'phony' and rule not in rules:
                     raise ValueError(f'{path}:{offset}: unknown rule {rule}')
                 ref = rules.get(rule)
@@ -221,7 +244,7 @@ class Indexer:
             elif '=' in first and not first.startswith('#'):
                 kind = 'variable'
                 name, value = first.split('=', 1)
-                name = name.strip(); env[name] = expand(value.strip(), env)
+                name = name.strip(); env[name] = expand(value.lstrip(' '), env)
             self.db.execute('INSERT INTO statements VALUES (?,?,?,?,?,?,?,?)',
                 (stmt_id,file_id,ordinal,kind,name,offset,length,ref))
             if self.stmts % 10000 == 0:
@@ -261,16 +284,26 @@ def chunks(values, size=400):
         yield values[start:start + size]
 
 
-def augment_graph(database, profile):
+def augment_graph(database, profile, replace_profile=False):
     """Add reviewed undeclared output trees and atomic action groups to an index."""
     db = sqlite3.connect(database)
     try:
         meta = {key:json.loads(value) for key,value in db.execute('SELECT * FROM meta')}
         if meta.get('ownership_profile'):
             if meta['ownership_profile'] != profile:
-                raise ValueError('index already has a different ownership profile')
-            return profile
-        db.execute('CREATE TABLE side_output_dirs(path TEXT PRIMARY KEY,edge INTEGER)')
+                if not replace_profile:
+                    raise ValueError('index already has a different ownership profile')
+                for directory,edge in db.execute('SELECT path,edge FROM side_output_dirs').fetchall():
+                    outputs=json.loads(db.execute('SELECT outputs FROM edges WHERE id=?',(edge,)).fetchone()[0])
+                    outputs.remove(directory)
+                    db.execute('UPDATE edges SET outputs=? WHERE id=?',(json.dumps(outputs),edge))
+                    db.execute('DELETE FROM outputs WHERE path=? AND edge=?',(directory,edge))
+                db.execute('DELETE FROM side_output_dirs')
+                db.execute("DELETE FROM meta WHERE key IN ('ownership_profile','atomic_groups')")
+            else:
+                return profile
+        else:
+            db.execute('CREATE TABLE side_output_dirs(path TEXT PRIMARY KEY,edge INTEGER)')
         for declaration in profile.get('side_output_dirs',[]):
             if not declaration.get('rationale') or not declaration.get('evidence'):
                 raise ValueError('side output ownership needs rationale and source evidence')
@@ -281,8 +314,8 @@ def augment_graph(database, profile):
             outputs = json.loads(db.execute('SELECT outputs FROM edges WHERE id=?',(edge,)).fetchone()[0])
             for directory in declaration['dirs']:
                 existing = db.execute('SELECT edge FROM outputs WHERE path=?',(directory,)).fetchone()
-                if existing and existing[0] != edge:
-                    raise ValueError('side output already has another producer: '+directory)
+                if existing:
+                    raise ValueError('side output is already declared: '+directory)
                 db.execute('INSERT INTO side_output_dirs VALUES (?,?)',(directory,edge))
                 db.execute('INSERT OR IGNORE INTO outputs VALUES (?,?)',(directory,edge))
                 if directory not in outputs:
@@ -332,6 +365,35 @@ def append_implicit_outputs(raw, extra):
     return first+separator+rest
 
 
+def adapt_graph(database, profile, replace_profile=False):
+    graph=Graph(database)
+    for adaptation in profile.get('command_adaptations',[]):
+        if not adaptation.get('rationale') or not adaptation.get('evidence'):
+            raise ValueError('runtime adaptation needs rationale and source evidence')
+        producer=adaptation['producer'];owner=graph.producers([producer]).get(producer)
+        if owner is None:
+            raise ValueError('unknown adaptation producer: '+producer)
+        rule=graph.db.execute('SELECT * FROM statements WHERE id=?',(owner,)).fetchone() if adaptation.get('scope') == 'edge' else graph.db.execute('SELECT * FROM statements WHERE id=(SELECT ref FROM statements WHERE id=?)',(owner,)).fetchone()
+        handles={}
+        try:
+            count=graph.raw(rule,handles).count(adaptation['replace'])
+        finally:
+            for handle in handles.values():handle.close()
+        if count != adaptation['expected_matches']:
+            raise ValueError(f'adaptation matches {count}, expected {adaptation["expected_matches"]}: {producer}')
+    graph.db.close()
+    db=sqlite3.connect(database)
+    try:
+        existing=db.execute('SELECT value FROM meta WHERE key=?',('runtime_adaptations',)).fetchone()
+        if existing and json.loads(existing[0]) != profile and not replace_profile:
+            raise ValueError('index already has a different runtime adaptation profile')
+        db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',('runtime_adaptations',json.dumps(profile)))
+        db.commit()
+    finally:
+        db.close()
+    return profile
+
+
 class Graph:
     def __init__(self, database):
         self.db = sqlite3.connect(f'file:{Path(database).resolve()}?mode=ro', uri=True)
@@ -339,8 +401,22 @@ class Graph:
         self.meta = {r['key']:json.loads(r['value']) for r in self.db.execute('SELECT * FROM meta')}
         self.common_rows = None
         self.side_output_dirs = {}
+        self.group_export_dirs = {}
+        self.rule_adaptations = collections.defaultdict(list)
+        self.edge_adaptations = collections.defaultdict(list)
         if self.meta.get('ownership_profile'):
             self.side_output_dirs = {r['path']:r['edge'] for r in self.db.execute('SELECT * FROM side_output_dirs')}
+            for declaration in self.meta['ownership_profile'].get('group_export_dirs',[]):
+                owner=self.producers([declaration['producer']])[declaration['producer']]
+                for directory in declaration['dirs']:
+                    self.group_export_dirs[directory]=owner
+        for adaptation in self.meta.get('runtime_adaptations',{}).get('command_adaptations',[]):
+            owner=self.producers([adaptation['producer']])[adaptation['producer']]
+            if adaptation.get('scope') == 'edge':
+                self.edge_adaptations[owner].append(adaptation)
+            else:
+                rule=self.db.execute('SELECT ref FROM statements WHERE id=?',(owner,)).fetchone()['ref']
+                self.rule_adaptations[rule].append(adaptation)
 
     def producers(self, paths):
         found = {}
@@ -355,7 +431,7 @@ class Graph:
                     break
         return found
 
-    def closure(self, targets, external=()):
+    def closure(self, targets, external=(), include_validations=True):
         external = set(external)
         initial = self.producers(targets)
         missing = set(targets) - set(initial)
@@ -374,7 +450,8 @@ class Graph:
             for batch in chunks(frontier):
                 marks = ','.join('?' for _ in batch)
                 for row in self.db.execute(f'SELECT deps FROM edges WHERE id IN ({marks})',batch):
-                    dependencies.update(path for path,_ in json.loads(row['deps']))
+                    dependencies.update(path for path,kind in json.loads(row['deps'])
+                                        if include_validations or kind != 'validation')
             cut_paths = dependencies & external
             for directory in external & set(self.side_output_dirs):
                 cut_paths.update(path for path in dependencies if path.startswith(directory.rstrip('/')+'/'))
@@ -409,7 +486,7 @@ class Graph:
         closure = self.closure(targets,external)
         return self.export_edges(closure,targets,destination,runtime_dir)
 
-    def export_edges(self, closure, targets, destination, runtime_dir='.crux-task/graph'):
+    def export_edges(self, closure, targets, destination, runtime_dir='.crux-task/graph', defer_validations=False):
         destination = Path(destination); destination.mkdir(parents=True,exist_ok=True)
         selected = set(closure['edge_ids'])
         rules = set()
@@ -442,14 +519,17 @@ class Graph:
                 retained[row['file']].append(row)
         for rows in retained.values():
             rows.sort(key=lambda row:row['ordinal'])
-        handles = {}; commands = []; depfiles = []; rspfiles = []; edge_records = []
-        def bindings(raw):
-            values = {}
-            for line in logical(raw).splitlines()[1:]:
-                if line[:1].isspace() and '=' in line and not line.lstrip().startswith('#'):
-                    key,value = line.strip().split('=',1)
-                    values[key.strip()] = value.strip()
-            return values
+        handles = {}; commands = []; depfiles = []; rspfiles = []; edge_records = []; deferred=[]
+        synthetic_aliases={}
+        for batch in chunks(selected):
+            marks=','.join('?' for _ in batch)
+            for edge in self.db.execute(f'SELECT deps FROM edges WHERE id IN ({marks})',batch):
+                for path,_ in json.loads(edge['deps']):
+                    for directory in self.side_output_dirs:
+                        if path.startswith(directory.rstrip('/')+'/'):
+                            exact=self.db.execute('SELECT edge FROM outputs WHERE path=?',(path,)).fetchone()
+                            if exact is None:
+                                synthetic_aliases[path]=directory
         def visit(file_id, env, active_rules):
             name = 'build.ninja' if file_id == self.meta['entry_file'] else f'file-{file_id}.ninja'
             with open(destination/name,'w') as output:
@@ -469,27 +549,47 @@ class Graph:
                         continue
                     raw = self.raw(row,handles)
                     if kind == 'build':
+                        for adaptation in self.edge_adaptations.get(row['id'],[]):
+                            count=raw.count(adaptation['replace'])
+                            if count != adaptation['expected_matches']:
+                                raise ValueError('runtime action changed after adaptation review')
+                            raw=raw.replace(adaptation['replace'],adaptation['with'])
+                    if kind == 'rule':
+                        for adaptation in self.rule_adaptations.get(row['id'],[]):
+                            count=raw.count(adaptation['replace'])
+                            if count != adaptation['expected_matches']:
+                                raise ValueError('runtime action changed after adaptation review')
+                            raw=raw.replace(adaptation['replace'],adaptation['with'])
+                    if kind == 'build':
                         extra=[directory for directory,owner in self.side_output_dirs.items() if owner == row['id']]
                         raw=append_implicit_outputs(raw,extra)
-                    first = logical(raw).splitlines()[0].strip()
+                        if defer_validations:
+                            text=logical(raw); declaration,newline,rest=text.partition('\n')
+                            if '|@' in declaration:
+                                _,outs,deps=parse_build(declaration,edge_environment(raw,env))
+                                deferred.extend({'outputs':outs,'validation':path}
+                                                for path,relation in deps if relation == 'validation')
+                                raw=declaration.partition('|@')[0].rstrip()+newline+rest
+                    first = logical(raw).splitlines()[0].lstrip()
                     if kind == 'variable':
                         key,value = first.split('=',1)
-                        env[key.strip()] = expand(value.strip(),env)
+                        env[key.strip()] = expand(value.lstrip(' '),env)
                     elif kind == 'rule':
                         active_rules[row['name']] = bindings(raw)
                     elif kind == 'build':
-                        rule,outs,deps = parse_build(first,env)
-                        tokens = path_tokens(first[6:],env)
+                        edge_env=edge_environment(raw,env)
+                        rule,outs,deps = parse_build(first,edge_env)
+                        tokens = path_tokens(first[6:],edge_env)
                         output_tokens = tokens[:tokens.index(':')]
                         explicit_outs = output_tokens[:output_tokens.index('|')] if '|' in output_tokens else output_tokens
-                        values = dict(env)
+                        values = collections.ChainMap({},env)
                         # Ninja's command $in excludes order-only and validation
                         # dependencies, and shell-escapes spaces in command paths.
-                        import shlex
-                        explicit = [path for path,kind in deps if kind == 'explicit']
-                        values.update({'in':' '.join(shlex.quote(p) for p in explicit),
-                            'in_newline':'\n'.join(explicit),
-                            'out':' '.join(shlex.quote(p) for p in explicit_outs)})
+                        explicit = [canonical_path(path) for path,kind in deps if kind == 'explicit']
+                        explicit_outs=[canonical_path(path) for path in explicit_outs]
+                        values.update({'in':' '.join(shell_escape(p) for p in explicit),
+                            'in_newline':'\n'.join(shell_escape(p) for p in explicit),
+                            'out':' '.join(shell_escape(p) for p in explicit_outs)})
                         for key,value in bindings(raw).items():
                             values[key] = expand(value,values)
                         rule_values = active_rules.get(rule,{})
@@ -509,10 +609,17 @@ class Graph:
                         lookup = RuleEnv()
                         record = {'outputs':outs,'rule':rule}
                         for key in ('command','depfile','rspfile','rspfile_content'):
-                            value = lookup.get(key)
+                            if key in ('depfile','rspfile'):
+                                saved={name:values[name] for name in ('in','in_newline','out')}
+                                values.update({'in':' '.join(explicit),'in_newline':'\n'.join(explicit),
+                                               'out':' '.join(explicit_outs)})
+                                value=lookup.get(key)
+                                values.update(saved)
+                            else:
+                                value = lookup.get(key)
                             if value:
                                 record[key] = value
-                        if 'command' in record:
+                        if 'command' in record and rule != 'phony':
                             commands.append(record['command'])
                         if 'depfile' in record:
                             depfiles.append(record['depfile'])
@@ -523,13 +630,25 @@ class Graph:
                     output.write(raw); output.write('\n')
         try:
             visit(self.meta['entry_file'],{}, {})
+            if synthetic_aliases:
+                with open(destination/'build.ninja','a') as output:
+                    output.write('\n# Generated tree members follow their reviewed directory producer.\n')
+                    for path,directory in sorted(synthetic_aliases.items()):
+                        output.write(f'build {ninja_escape(path)}: phony {ninja_escape(directory)}\n')
+            external_owners=set(self.producers(closure['external_inputs']).values())
+            all_dirs={**self.side_output_dirs,**self.group_export_dirs}
             manifest = {'schema_version':1,'source_root':self.meta['source_root'],
                 'ninja':'build.ninja','runtime_dir':runtime_dir,'targets':list(targets),
                 'graph_inputs':[r['path'] for r in files.values()],
                 'commands':commands,'depfiles':sorted(set(depfiles)),
                 'rspfiles':sorted(set(rspfiles)),'edges':edge_records,
                 'declared_side_output_dirs':[directory for directory,owner in self.side_output_dirs.items() if owner in selected],
+                'output_dirs':[directory for directory,owner in all_dirs.items() if owner in selected],
+                'external_input_dirs':[directory for directory,owner in all_dirs.items() if owner in external_owners],
                 'ownership_profile':self.meta.get('ownership_profile'),
+                'runtime_adaptations':self.meta.get('runtime_adaptations'),
+                'deferred_validations':deferred,
+                'synthetic_aliases':synthetic_aliases,
                 **{k:v for k,v in closure.items() if k != 'edge_ids'}}
             (destination/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
             return manifest
@@ -556,6 +675,13 @@ class Graph:
                 records[row['id']] = record
                 for path in record['outputs']:
                     producers[path] = row['id']
+        for record in records.values():
+            for path,_ in record['deps']:
+                if path not in producers:
+                    for directory,owner in self.side_output_dirs.items():
+                        if path.startswith(directory.rstrip('/')+'/'):
+                            producers[path]=owner
+                            break
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
         visiting = set()
@@ -568,7 +694,9 @@ class Graph:
                 raise ValueError('cycle through phony aliases')
             visiting.add(edge)
             result = set()
-            for path,_ in records[edge]['deps']:
+            for path,relation in records[edge]['deps']:
+                if relation == 'validation':
+                    continue
                 if path in producers:
                     result.update(dependencies(producers[path]))
             visiting.remove(edge); aliases[edge] = result
@@ -588,7 +716,9 @@ class Graph:
         prerequisites = collections.defaultdict(set); successors = collections.defaultdict(set)
         for edge in sorted(actions):
             before = set()
-            for path,_ in records[edge]['deps']:
+            for path,relation in records[edge]['deps']:
+                if relation == 'validation':
+                    continue
                 producer = producers.get(path)
                 if producer is not None:
                     before.update(dependencies(producer))
@@ -605,7 +735,27 @@ class Graph:
         required_exports = collections.defaultdict(set)
         while len(done) < len(members):
             if not ready:
-                raise ValueError('Ninja action graph has a cycle')
+                unfinished=set(members)-done
+                visited=set(); cycle=[]
+                for start in sorted(unfinished):
+                    if start in visited:
+                        continue
+                    trail=[start]; positions={start:0}
+                    stack=[iter(sorted(prerequisites[start]&unfinished))]
+                    visited.add(start)
+                    while stack and not cycle:
+                        child=next(stack[-1],None)
+                        if child is None:
+                            stack.pop(); positions.pop(trail.pop()); continue
+                        if child in positions:
+                            cycle=trail[positions[child]:]+[child]; break
+                        if child not in visited:
+                            visited.add(child); positions[child]=len(trail); trail.append(child)
+                            stack.append(iter(sorted(prerequisites[child]&unfinished)))
+                    if cycle:
+                        break
+                paths=[records[min(members[unit])]['outputs'][0] for unit in cycle]
+                raise ValueError('Ninja action graph has a cycle: '+' -> '.join(paths))
             jobs = []
             for _ in range(max_parallel):
                 if not ready:
@@ -633,13 +783,13 @@ class Graph:
                 job_targets = [records[edge]['outputs'][0] for edge in sorted(chosen)]
                 own_outputs = {path for edge in chosen for path in records[edge]['outputs']}
                 cut = set(complete['outputs']) - own_outputs
-                selected = self.closure(job_targets,cut)
+                selected = self.closure(job_targets,cut,include_validations=False)
                 if set(selected['edge_ids']) & actions != chosen:
                     raise ValueError('shard closure differs from assigned actions')
                 upstream = sorted({assignments[producers[path]] for path in selected['external_inputs']})
                 for path in selected['external_inputs']:
                     required_exports[assignments[producers[path]]].add(path)
-                    for directory,owner in self.side_output_dirs.items():
+                    for directory,owner in {**self.side_output_dirs,**self.group_export_dirs}.items():
                         if owner == producers[path]:
                             required_exports[assignments[owner]].add(directory)
                 job = {'id':identity,'wave':wave_number,'action_count':len(chosen),
@@ -647,7 +797,7 @@ class Graph:
                        'external_inputs':selected['external_inputs']}
                 if export:
                     directory = Path(destination)/identity
-                    self.export_edges(selected,job_targets,directory)
+                    self.export_edges(selected,job_targets,directory,defer_validations=True)
                     job['manifest'] = f'{identity}/manifest.json'
                 wave_jobs.append(job)
             waves.append(wave_jobs)
@@ -671,6 +821,10 @@ class Graph:
         terminals = set()
         for target in targets:
             terminals.update(terminal_files(target))
+        validation_outputs={path for record in records.values()
+                            for path,relation in record['deps'] if relation == 'validation'}
+        for path in validation_outputs:
+            terminals.update(terminal_files(path))
         for path in terminals:
             required_exports[assignments[producers[path]]].add(path)
         for wave in waves:
@@ -686,6 +840,7 @@ class Graph:
                 'edge_count':complete['edge_count'],'max_actions':max_actions,
                 'max_parallel':max_parallel,'wave_count':len(waves),
                 'job_count':sum(len(wave) for wave in waves),'terminal_outputs':sorted(terminals),
+                'validation_outputs':sorted(validation_outputs),
                 'export_producers':{path:assignments[producers[path]]
                     for paths in required_exports.values() for path in sorted(paths)},
                 'waves':waves}
@@ -698,6 +853,19 @@ def ninja_escape(value):
     return value.replace('$','$$').replace(' ','$ ').replace(':','$:')
 
 
+def shell_escape(value):
+    # Ninja deliberately quotes a stricter character set than Python shlex.
+    # Match POSIX GetShellEscapedString in Ninja's util.cc.
+    if not re.search(r'[^A-Za-z0-9_+./-]',value):
+        return value
+    return "'"+value.replace("'","'\\''")+"'"
+
+
+def canonical_path(value):
+    value=posixpath.normpath(value)
+    return '/'+value.lstrip('/') if value.startswith('//') else value
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command',required=True)
@@ -707,6 +875,11 @@ def main():
     aug=sub.add_parser('augment')
     aug.add_argument('--database',required=True)
     aug.add_argument('--ownership',required=True)
+    aug.add_argument('--replace-profile',action='store_true')
+    ada=sub.add_parser('adapt')
+    ada.add_argument('--database',required=True)
+    ada.add_argument('--profile',required=True)
+    ada.add_argument('--replace-profile',action='store_true')
     for command in ('closure','slice'):
         cmd = sub.add_parser(command); cmd.add_argument('--database',required=True)
         cmd.add_argument('--target',action='append',required=True)
@@ -725,12 +898,15 @@ def main():
         result = index_graph(args.ninja,args.source_root,args.database)
         print(json.dumps(result,indent=2)); return
     if args.command == 'augment':
-        result=augment_graph(args.database,json.loads(Path(args.ownership).read_text()))
+        result=augment_graph(args.database,json.loads(Path(args.ownership).read_text()),args.replace_profile)
+        print(json.dumps(result,indent=2)); return
+    if args.command == 'adapt':
+        result=adapt_graph(args.database,json.loads(Path(args.profile).read_text()),args.replace_profile)
         print(json.dumps(result,indent=2)); return
     if args.command == 'shard':
         result = Graph(args.database).shard(args.target,args.output_dir,
                     args.max_actions,args.max_parallel,not args.plan_only)
-        print(json.dumps({k:v for k,v in result.items() if k != 'waves'},indent=2)); return
+        print(json.dumps({k:v for k,v in result.items() if isinstance(v,(str,int,float,bool))},indent=2)); return
     external = []
     if args.external:
         raw = Path(args.external).read_text()

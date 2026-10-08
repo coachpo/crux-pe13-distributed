@@ -249,6 +249,17 @@ class CapsuleTests(unittest.TestCase):
                      runtime / "libgcc.a", resource / "lib/libclang_rt.a"]:
             self.assertIn(str(path).lstrip("/"), archive.getnames())
 
+    def test_legacy_env_python2_script_requires_frozen_hermetic_interpreter(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        self.write(runtime, b"\x7fELFhermetic Python2 runtime", 0o755)
+        script = self.source / "build/generator.py"
+        self.write(script, "#!/usr/bin/env python2\nimport ConfigParser\n", 0o755)
+        self.manifest["leaf_inputs"].append(str(script))
+        _, metadata, archive = self.collect()
+        self.assertEqual(metadata["required_interpreters"], [{"name":"python2","aliases":["python2","python2.7"],
+                         "executable":str(runtime),"source_scripts":[str(script)]}])
+        self.assertIn(str(runtime).lstrip("/"), archive.getnames())
+
     def test_external_produced_objects_are_required_from_receipts(self):
         external = self.out / "upstream.o"
         self.write(external, b"\x7fELFold")

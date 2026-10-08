@@ -89,24 +89,131 @@ class GraphTests(unittest.TestCase):
     def test_command_metadata_matches_native_ninja(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            (root/'build.ninja').write_text('tool = printf\nrule action\n'
-                '  command = $tool %s "$arg $$PWD" $in > $out\n'
-                '  rspfile = ${out}.rsp\n  rspfile_content = $in\n'
-                'build first | second: action input | hidden || order\n  arg = hello\n')
+            (root/'build.ninja').write_text('tool = printf \nrule action\n'
+                '  command = ${tool}%s "$arg $$PWD" $in > $out && touch second\n'
+                '  rspfile = $out.rsp\n  rspfile_content = $in_newline\n'
+                'build first@path | second: action in@put input2 | hidden || order\n  arg = hello\n')
             db=root/'index.sqlite'
             graph.index_graph(root/'build.ninja',root,db)
-            manifest=graph.Graph(db).slice(['first'],root/'.crux-task/graph')
-            self.assertEqual(manifest['outputs'],['first','second'])
-            self.assertEqual(manifest['edges'][0]['rspfile'],'first.rsp')
-            self.assertEqual(manifest['edges'][0]['rspfile_content'],'input')
+            manifest=graph.Graph(db).slice(['first@path'],root/'.crux-task/graph')
+            self.assertEqual(manifest['outputs'],['first@path','second'])
+            self.assertEqual(manifest['edges'][0]['rspfile'],'first@path.rsp')
+            self.assertEqual(manifest['edges'][0]['rspfile_content'],"'in@put'\ninput2")
             if not shutil.which('ninja'):
                 self.skipTest('native Ninja executable is required for command validation')
-            native=subprocess.run(['ninja','-f','build.ninja','-t','commands','first'],
+            native=subprocess.run(['ninja','-f','build.ninja','-t','commands','first@path'],
                 cwd=root,check=True,capture_output=True,text=True)
-            sliced=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','commands','first'],
+            sliced=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','commands','first@path'],
                 cwd=root,check=True,capture_output=True,text=True)
             self.assertEqual(native.stdout,sliced.stdout)
             self.assertEqual(native.stdout.strip(),manifest['commands'][0])
+            for name in ('in@put','input2','hidden','order'):
+                (root/name).write_text('source')
+            actual=subprocess.run(['ninja','-f','build.ninja','-d','keeprsp','first@path'],
+                cwd=root,check=True,capture_output=True,text=True)
+            self.assertEqual((root/manifest['edges'][0]['rspfile']).read_text(),
+                             manifest['edges'][0]['rspfile_content'])
+
+    def test_reviewed_directory_owner_and_atomic_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule action\n  command = touch $out\n'
+                'rule generate\n  command = mkdir -p gen && printf payload > gen/header && touch $out\n'
+                'rule consume\n  command = cat gen/header > $out\n'
+                'build mkdir: action\nbuild config: action mkdir\nbuild image: action config\n'
+                'build stamp: generate input\nbuild final: consume gen/header image\n')
+            (root/'input').write_text('source')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            profile={'side_output_dirs':[{'producer':'stamp','dirs':['gen'],
+                      'rationale':'generator stamp owns headers','evidence':['generator source:12']}],
+                     'groups':[['mkdir','config','image']]}
+            graph.augment_graph(db,profile)
+            indexed=graph.Graph(db)
+            manifest=indexed.slice(['final'],root/'.crux-task/graph')
+            self.assertNotIn('gen/header',manifest['leaf_inputs'])
+            self.assertEqual(manifest['output_dirs'],['gen'])
+            self.assertIn('build stamp | gen: generate input',
+                          (root/'.crux-task/graph/build.ninja').read_text())
+            self.assertIn('mkdir -p gen && printf payload > gen/header && touch stamp',manifest['commands'])
+            self.assertEqual(manifest['synthetic_aliases'],{'gen/header':'gen'})
+            if shutil.which('ninja'):
+                cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','final'],
+                    cwd=root,capture_output=True,text=True)
+                self.assertEqual(cold.returncode,0,cold.stderr)
+                self.assertEqual((root/'final').read_text(),'payload')
+            plan=indexed.shard(['final'],root/'shards',max_actions=1,max_parallel=2)
+            groups=[j for wave in plan['waves'] for j in wave if j['action_count']==3]
+            self.assertEqual(len(groups),1)
+            self.assertEqual(set(groups[0]['targets']),{'mkdir','config','image'})
+            self.assertIn('gen',plan['export_producers'])
+
+    def test_ninja_validation_cycle_is_scheduled_and_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule action\n  command = touch $out\n'
+                'build result: action input |@ checked\nbuild checked: action result\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            indexed=graph.Graph(db)
+            self.assertEqual(indexed.closure(['result'])['edge_count'],2)
+            plan=indexed.shard(['result'],root/'shards',max_actions=1)
+            self.assertEqual(plan['validation_outputs'],['checked'])
+            self.assertEqual(plan['terminal_outputs'],['checked','result'])
+            self.assertEqual(plan['wave_count'],2)
+            first=plan['waves'][0][0]
+            manifest=json.loads((root/'shards'/first['manifest']).read_text())
+            self.assertEqual(manifest['deferred_validations'],[
+                {'outputs':['result'],'validation':'checked'}])
+            self.assertNotIn('|@',(root/'shards'/first['id']/'build.ninja').read_text())
+
+    def test_resource_adaptation_is_checked_and_changes_only_emitted_actions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);original='rule kernel\n  command = make -j18 image\nbuild image: kernel\n'
+            (root/'build.ninja').write_text(original)
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            adaptation={'command_adaptations':[{'producer':'image','replace':'-j18',
+                'with':'-j4','expected_matches':1,'rationale':'runner resource allocation',
+                'evidence':['kernel build rule:20']}]}
+            graph.adapt_graph(db,adaptation)
+            manifest=graph.Graph(db).slice(['image'],root/'.crux-task/graph')
+            self.assertEqual(manifest['commands'],['make -j4 image'])
+            self.assertEqual((root/'build.ninja').read_text(),original)
+            adaptation['command_adaptations'][0]['expected_matches']=2
+            with self.assertRaisesRegex(ValueError,'matches 1, expected 2'):
+                graph.adapt_graph(db,adaptation)
+
+    def test_generator_content_adaptation_is_limited_to_its_producer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule write\n  command = printf %s $content > $out\n'
+                "build manifest: write\n  content = 'make -j18'\n"
+                "build other: write\n  content = 'make -j18'\n")
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            graph.adapt_graph(db,{'command_adaptations':[{'producer':'manifest','scope':'edge',
+                'replace':'-j18','with':'-j4','expected_matches':1,
+                'rationale':'runner allocation','evidence':['generator producer:20']}]})
+            manifest=graph.Graph(db).slice(['manifest','other'],root/'.crux-task/graph')
+            self.assertEqual(manifest['commands'],[
+                "printf %s 'make -j4' > manifest","printf %s 'make -j18' > other"])
+
+    def test_action_local_tool_binding_is_an_actual_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule tool\n  command = printf payload > $out\n'
+                'rule generate\n  command = cat $cmd > $out\n'
+                'build host-tool: tool\nbuild generated: generate | ${cmd}\n  cmd = host-tool\n'
+                'build unrelated: phony ${cmd}\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            indexed=graph.Graph(db)
+            manifest=indexed.slice(['generated'],root/'.crux-task/graph')
+            self.assertEqual(manifest['edge_count'],2)
+            self.assertEqual(manifest['outputs'],['generated','host-tool'])
+            self.assertEqual(manifest['leaf_inputs'],[])
+            self.assertEqual(indexed.closure(['unrelated'])['edge_count'],1)
+            if shutil.which('ninja'):
+                cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','generated'],
+                    cwd=root,capture_output=True,text=True)
+                self.assertEqual(cold.returncode,0,cold.stderr)
+                self.assertEqual((root/'generated').read_text(),'payload')
 
 
 if __name__ == '__main__':
