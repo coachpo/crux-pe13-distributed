@@ -386,6 +386,13 @@ class Collector:
                 break
             ancestor = ancestor.parent
 
+    def runtime_directory(self, value, reason):
+        directory = self.path(value)
+        if not self.selected(directory) or beneath(directory, self.out_root):
+            return
+        if beneath(directory, self.source_root) or any(beneath(directory, root) for root in self.external_roots):
+            self.add(directory, reason, required=False)
+
     def command(self, command):
         tokens = command_tokens(command)
         for position, token in enumerate(tokens):
@@ -400,6 +407,7 @@ class Collector:
                         self.go_test_package(tokens[option][3:])
                         break
         include_flags = {"-I", "-isystem", "-iquote", "-idirafter", "--sysroot", "-isysroot"}
+        runtime_flags = {"-B", "-L", "--gcc-toolchain", "-gcc-toolchain", "-resource-dir", "--resource-dir"}
         file_flags = {"-include", "-imacros"}
         include_paths = []
         for index, token in enumerate(tokens):
@@ -426,11 +434,21 @@ class Collector:
                 path = self.path(tokens[index])
                 if beneath(path, self.source_root) or self.produced(path):
                     self.add(path, "command-directory:-C", required=False)
+            elif token in runtime_flags and index + 1 < len(tokens):
+                index += 1
+                self.runtime_directory(tokens[index], "command-runtime:" + token)
+            elif re.match(r"^(?:--?gcc-toolchain|--?resource-dir)=", token):
+                self.runtime_directory(token.split("=", 1)[1], "command-runtime")
+            elif token.startswith(("-B", "-L")) and len(token) > 2:
+                self.runtime_directory(token[2:], "command-runtime:" + token[:2])
             elif token in include_flags | file_flags and index + 1 < len(tokens):
                 index += 1
                 value = tokens[index]
                 if token in include_flags:
-                    self.include_directory(value, "command-include:" + token)
+                    if token in {"--sysroot", "-isysroot"}:
+                        self.runtime_directory(value, "command-sysroot")
+                    else:
+                        self.include_directory(value, "command-include:" + token)
                 else:
                     candidates = [self.path(value)]
                     if not Path(value).is_absolute():
@@ -440,7 +458,10 @@ class Collector:
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
-                    self.include_directory(match[1], "command-include")
+                    if token.startswith(("--sysroot=", "-isysroot")):
+                        self.runtime_directory(match[1], "command-sysroot")
+                    else:
+                        self.include_directory(match[1], "command-include")
             elif token.startswith("@"):
                 # Ninja writes declared rspfiles; their content is inspected separately.
                 path = self.path(token[1:])

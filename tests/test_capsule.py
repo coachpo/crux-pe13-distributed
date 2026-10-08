@@ -228,6 +228,27 @@ class CapsuleTests(unittest.TestCase):
             self.assertIn(str(path).lstrip("/"), names)
         self.assertFalse(any(name.startswith("usr/") for name in names))
 
+    def test_host_link_flags_preserve_startup_objects_and_sysroot_libraries(self):
+        gcc = self.source / "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        startup = gcc / "lib/gcc/x86_64-linux/4.8.3"
+        sysroot = gcc / "sysroot"
+        self.write(startup / "crtbeginS.o", b"\x7fELFstartup object")
+        self.write(sysroot / "usr/lib/crti.o", b"\x7fELFinit object")
+        self.write(sysroot / "usr/lib/libc.so", "GROUP (libc.so.6 libc_nonshared.a)")
+        self.write(sysroot / "usr/lib/libc.so.6", b"\x7fELFlibc")
+        runtime = self.source / "prebuilts/custom-runtime"
+        self.write(runtime / "libgcc.a", b"!<arch>\nruntime")
+        resource = self.source / "prebuilts/custom-resource"
+        self.write(resource / "lib/libclang_rt.a", b"!<arch>\nclang runtime")
+        self.manifest["commands"] = ["clang++ --gcc-toolchain=" + str(gcc)
+                                      + " -B" + str(startup) + " -L " + str(runtime)
+                                      + " --sysroot " + str(sysroot) + " -resource-dir=" + str(resource)
+                                      + " -shared -o " + str(self.out / "lib.so")]
+        _, _, archive = self.collect()
+        for path in [startup / "crtbeginS.o", sysroot / "usr/lib/crti.o", sysroot / "usr/lib/libc.so.6",
+                     runtime / "libgcc.a", resource / "lib/libclang_rt.a"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+
     def test_external_produced_objects_are_required_from_receipts(self):
         external = self.out / "upstream.o"
         self.write(external, b"\x7fELFold")
