@@ -261,6 +261,393 @@ def rsp_callers(command, response):
     return list(dict.fromkeys(callers))
 
 
+class ShellSubstitutionParseError(CapsuleError):
+    pass
+
+
+class ShellSubstitutionAnalysis:
+    def __init__(self, native_command, analysis_command, evaluated_shell,
+                 substitutions=None, arithmetic_carriers=None, limitations=None):
+        self.native_command = native_command
+        self.analysis_command = analysis_command
+        self.evaluated_shell = evaluated_shell
+        self.substitutions = substitutions or {}
+        self.arithmetic_carriers = arithmetic_carriers or {}
+        self.limitations = limitations or []
+
+
+class ShellSubstitutionScanner:
+    def __init__(self, text):
+        self.text = text
+        self.nodes = {}
+        self.arithmetic = {}
+        self.limitations = []
+        self.counter = 0
+
+    def marker(self, kind):
+        while True:
+            marker = '__CRUX_ANALYSIS_%s_%06d__' % (kind, self.counter)
+            self.counter += 1
+            if marker not in self.text:
+                return marker
+
+    def comment_start(self, index):
+        return index == 0 or self.text[index - 1].isspace() or self.text[index - 1] in ';|&()<> '
+
+    def scan(self, start=0, closing=None):
+        text, result, index, quote, depth = self.text, [], start, None, 0
+        while index < len(text):
+            char = text[index]
+            if quote == "'":
+                result.append(char)
+                index += 1
+                if char == "'":
+                    quote = None
+                continue
+            if char == '\\':
+                # In double quotes only these escapes suppress shell meaning.
+                if quote != '"' or (index + 1 < len(text) and text[index + 1] in '$`"\\\n'):
+                    result.append(text[index:index + 2])
+                    index += 2
+                    continue
+            if char == "'" and quote is None:
+                quote = "'"
+                result.append(char)
+                index += 1
+                continue
+            if char == '"':
+                quote = None if quote == '"' else '"'
+                result.append(char)
+                index += 1
+                continue
+            if char == '#' and quote is None and self.comment_start(index):
+                end = text.find('\n', index)
+                end = len(text) if end < 0 else end
+                result.append(text[index:end])
+                index = end
+                continue
+            if char == '`':
+                marker, end = self.scan_backtick(index, quote == '"')
+                result.append(marker)
+                index = end
+                continue
+            if quote is None and text.startswith('<<', index):
+                self.limitations.append({'offset': index, 'kind': 'here-document/here-string grammar not certified'})
+            if text.startswith('$$', index):
+                result.append('$$')
+                index += 2
+                continue
+            if text.startswith('$((', index):
+                marker, end = self.scan_arithmetic(index)
+                result.append(self.arithmetic[marker]['analysis_carrier'])
+                index = end
+                continue
+            if text.startswith('$(', index):
+                marker, end = self.scan_substitution(index)
+                result.append(marker)
+                index = end
+                continue
+            if quote is None and closing is not None:
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    if depth == 0:
+                        return ''.join(result), index
+                    depth -= 1
+            result.append(char)
+            index += 1
+        if quote is not None:
+            raise ShellSubstitutionParseError('Unclosed quote at offset %d' % start)
+        if closing is not None:
+            raise ShellSubstitutionParseError('Unclosed command substitution at offset %d' % (start - 2))
+        return ''.join(result), index
+
+    def scan_backtick(self, start, outer_double):
+        """Decode one proven legacy substitution layer without running it.
+
+        Legacy backquotes remove backslash before $, backquote and backslash
+        before the body is evaluated. Outer double quotes also remove escaped
+        double quotes. A nested modern substitution is then parsed by the
+        child Collector invocation, with its own isolated temporary state.
+        """
+        body, index = [], start + 1
+        while index < len(self.text):
+            char = self.text[index]
+            if char == '\\' and index + 1 < len(self.text):
+                following = self.text[index + 1]
+                if following in '$`\\\n' or (outer_double and following == '"'):
+                    if following != '\n':
+                        body.append(following)
+                    index += 2
+                    continue
+            if char == '`':
+                marker = self.marker('SUB')
+                self.nodes[marker] = {'marker': marker, 'native_body': ''.join(body),
+                                      'analysis_body': ''.join(body), 'start': start,
+                                      'end': index + 1, 'children': [],
+                                      'legacy_backtick': True}
+                return marker, index + 1
+            body.append(char)
+            index += 1
+        raise ShellSubstitutionParseError('Unclosed backtick substitution at offset %d' % start)
+
+    def scan_substitution(self, start):
+        marker = self.marker('SUB')
+        previous = set(self.nodes)
+        body, end = self.scan(start + 2, closing=')')
+        native_body = self.text[start + 2:end]
+        # Balanced punctuation cannot distinguish shell case pattern closers.
+        if native_body.lstrip().startswith('case '):
+            raise ShellSubstitutionParseError('case grammar inside command substitution is unsupported')
+        self.nodes[marker] = {'marker': marker, 'native_body': native_body,
+                              'analysis_body': body, 'start': start, 'end': end + 1,
+                              'children': [key for key in self.nodes if key not in previous]}
+        return marker, end + 1
+
+    def scan_arithmetic(self, start):
+        text, index, depth, quote, active = self.text, start + 3, 0, None, []
+        while index < len(text):
+            char = text[index]
+            if char == '\\':
+                index += 2
+                continue
+            # Arithmetic content is not an ordinary shell word: singlequote
+            # characters do not suppress an explicit nested $(...) expansion.
+            if char == '"':
+                quote = None if quote == '"' else '"'
+                index += 1
+                continue
+            if char == '`':
+                marker, index = self.scan_backtick(index, quote == '"')
+                active.append(marker)
+                continue
+            if text.startswith('$$', index):
+                index += 2
+                continue
+            if text.startswith('$((', index):
+                nested, index = self.scan_arithmetic(index)
+                active.extend(self.arithmetic[nested]['active_markers'])
+                continue
+            if text.startswith('$(', index):
+                marker, index = self.scan_substitution(index)
+                active.append(marker)
+                continue
+            if quote is None:
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    if depth == 0 and text.startswith('))', index):
+                        end = index + 2
+                        carrier = self.marker('ARITH')
+                        # Arithmetic expansion yields a scalar word. Keep it
+                        # opaque to the shell-token model while retaining its
+                        # active children at the same parent argument position.
+                        analysis = carrier + ''.join(active)
+                        self.arithmetic[carrier] = {'native_text': text[start:end],
+                                                    'start': start, 'end': end,
+                                                    'active_markers': active,
+                                                    'analysis_carrier': analysis}
+                        return carrier, end
+                    depth -= 1
+            index += 1
+        raise ShellSubstitutionParseError('Unclosed arithmetic expansion at offset %d' % start)
+
+
+def analyze_shell_substitutions(command, *, evaluated=False):
+    if not evaluated:
+        return ShellSubstitutionAnalysis(command, command, False)
+    scanner = ShellSubstitutionScanner(command)
+    rewritten, _ = scanner.scan()
+    return ShellSubstitutionAnalysis(command, rewritten, True, scanner.nodes, scanner.arithmetic, scanner.limitations)
+
+
+def active_shell_marker_positions(analysis, tokens):
+    """Only children present in this parent, including embedded quoted words."""
+    for position, token in enumerate(tokens):
+        for marker, node in analysis.substitutions.items():
+            if marker in token:
+                yield position, marker, node
+
+
+def shell_child_snapshot(temporaries, tokens, position, command_invocations):
+    """Inherit completed prior writes; exclude the invoking command's writes.
+
+    Shell expansions precede that command's redirections even when the
+    redirection token occurs before the substitution's argument in source.
+    Nothing written within the child is merged back into this snapshot.
+    """
+    start = next((program for program, end in command_invocations(tokens)
+                  if program <= position < end), position)
+    temporaries.position = position
+    files, directories = temporaries.snapshot()
+    files = {path for path in files if path in temporaries.inherited_files
+             or temporaries.files.get(path, float('inf')) < start}
+    directories = {path for path in directories if path in temporaries.inherited_directories
+                   or temporaries.directories.get(path, float('inf')) < start}
+    return files, directories
+
+
+def literal_shell_words(command):
+    """Keep quote/escape provenance needed for a static shell -c payload."""
+    words, start, index, quote = [], None, 0, None
+    while index < len(command):
+        char = command[index]
+        if start is None:
+            if char == '#' and (index == 0 or command[index - 1].isspace() or command[index - 1] in ';&|()<>'):
+                end = command.find('\n', index)
+                index = len(command) if end < 0 else end
+                continue
+            if char == '\n' or char in ';&|()<>':
+                end = index + 1
+                while end < len(command) and command[end] == char and char != '\n':
+                    end += 1
+                words.append({'raw': command[index:end], 'start': index, 'end': end, 'kind': 'operator'})
+                index = end
+                continue
+            if char.isspace():
+                index += 1
+                continue
+            start = index
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == '\\':
+            if quote != '"' or (index + 1 < len(command) and command[index + 1] in '$`"\\\n'):
+                index += 2
+                continue
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        elif quote is None and (char.isspace() or char in ';&|()<>'):
+            words.append({'raw': command[start:index], 'start': start, 'end': index, 'kind': 'word'})
+            start = None
+            continue
+        index += 1
+    if start is not None:
+        words.append({'raw': command[start:], 'start': start, 'end': len(command), 'kind': 'word'})
+    return words
+
+
+def decode_literal_shell_word(raw):
+    """Decode one shell word without expanding/evaluating it.
+
+    Unlike Python shlex, a backslash before $ inside double quotes disappears
+    when the outer shell constructs argv. The resulting $ may be active when
+    the proven inner shell later evaluates this literal -c argument.
+    """
+    result, index, quote, static = [], 0, None, True
+    while index < len(raw):
+        char = raw[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                result.append(char)
+            index += 1
+            continue
+        if char == '\\' and index + 1 < len(raw):
+            following = raw[index + 1]
+            if quote != '"' or following in '$`"\\\n':
+                if following != '\n':
+                    result.append(following)
+                index += 2
+                continue
+        if char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        else:
+            if char in '$`':
+                static = False
+            result.append(char)
+        index += 1
+    if quote is not None:
+        raise ShellSubstitutionParseError('Unclosed quote in shell word')
+    return ''.join(result), static
+
+
+def evaluated_shell_payloads(command, *, analysis_markers=()):
+    words = literal_shell_words(command)
+    boundaries = {';', '&&', '||', '|', '&', '(', ')', '\n'}
+    start = 0
+    for end in range(len(words) + 1):
+        if end < len(words) and not (words[end]['kind'] == 'operator' and words[end]['raw'] in boundaries):
+            continue
+        index = start
+        start = end + 1
+        while index < end and re.match(r'^[A-Za-z_][A-Za-z_0-9]*=', words[index]['raw']):
+            index += 1
+        if index >= end:
+            continue
+        program, static_program = decode_literal_shell_word(words[index]['raw'])
+        if Path(program).name == 'env':
+            index += 1
+            while index < end and (words[index]['raw'].startswith('-') or re.match(r'^[A-Za-z_][A-Za-z_0-9]*=', words[index]['raw'])):
+                index += 1
+            if index >= end:
+                continue
+            program, static_program = decode_literal_shell_word(words[index]['raw'])
+        if not static_program or Path(program).name not in {'bash', 'sh', 'dash'}:
+            continue
+        program_start = words[index]['start']
+        option_index = index + 1
+        while option_index < end:
+            option, static_option = decode_literal_shell_word(words[option_index]['raw'])
+            if not static_option or option == '--' or not option.startswith(('-', '+')):
+                break  # A script operand ends option parsing.
+            if option in {'-o', '+o', '-O', '+O', '--rcfile', '--init-file'}:
+                option_index += 2
+                continue
+            if option.startswith('-') and not option.startswith('--') and 'c' in option[1:]:
+                if option_index + 1 >= end:
+                    break
+                payload_word = words[option_index + 1]
+                payload, static = decode_literal_shell_word(payload_word['raw'])
+                static = static and not any(marker in payload for marker in analysis_markers)
+                yield {**payload_word, 'native_body': payload, 'static_literal_argv': static,
+                       'program': program, 'program_start': program_start, 'option': option}
+                break
+            option_index += 1
+
+
+class ShellAnalysisToken(str):
+    """A native shell word's analysis children, never assigned to RSP data."""
+    def __new__(cls, value, children):
+        instance = super().__new__(cls, value)
+        instance.shell_children = tuple(marker for marker in children if marker in value)
+        return instance
+
+    def partition(self, separator):
+        return tuple(ShellAnalysisToken(part, self.shell_children) if any(marker in part for marker in self.shell_children)
+                     else part for part in super().partition(separator))
+
+    def __getitem__(self, key):
+        result = super().__getitem__(key)
+        return ShellAnalysisToken(result, self.shell_children) if any(marker in result for marker in self.shell_children) else result
+
+
+def shell_analysis_words(command, evaluated):
+    analysis = analyze_shell_substitutions(command, evaluated=evaluated)
+    children = {marker: {**node, 'kind': 'substitution'} for marker, node in analysis.substitutions.items()}
+    rewritten = analysis.analysis_command
+    if evaluated:
+        payloads = list(evaluated_shell_payloads(rewritten,
+                         analysis_markers=set(children) | set(analysis.arithmetic_carriers)))
+        for ordinal, payload in reversed(list(enumerate(payloads))):
+            if not payload['static_literal_argv']:
+                continue
+            marker = '__CRUX_ANALYSIS_SHELL_%06d__' % ordinal
+            while marker in rewritten or marker in command:
+                marker += '_'
+            children[marker] = {'marker': marker, 'native_body': payload['native_body'], 'kind': 'shell'}
+            rewritten = rewritten[:payload['start']] + marker + rewritten[payload['end']:]
+    tokens = command_tokens(rewritten)
+    tokens = [ShellAnalysisToken(token, tuple(children)) if any(marker in token for marker in children) else token
+              for token in tokens]
+    return rewritten, tokens, children
+
+
 class ActionTemporaries:
     """Literal outputs that become fresh at a specific point of one action."""
     def __init__(self, files=(), directories=(), inherited=None, barriers=()):
@@ -615,7 +1002,7 @@ class Collector:
                     self.add(path, "command-environment:" + name, required=False)
         elif name in {"CC", "CXX", "LD", "AR", "NM", "STRIP", "OBJCOPY", "OBJDUMP", "AS",
                       "HOSTCC", "HOSTCXX", "HOSTLD", "RUSTC", "CLANG"}:
-            self.command(value)
+            self.command(value, evaluated_shell=False)
         elif name.startswith("CROSS_COMPILE"):
             self.tool_package(self.path(value).parent)
         else:
@@ -984,6 +1371,8 @@ class Collector:
         return [token for token, _ in marked], {index for index, (_, literal) in enumerate(marked) if literal}
 
     def literal_path(self, value):
+        if getattr(value, "shell_children", ()):
+            return None  # Substitution output is not a resolved literal path.
         if not value or value.startswith("-") or any(character in value for character in "$*?[\n"):
             return None
         return self.path(value)
@@ -1108,22 +1497,42 @@ class Collector:
         barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
         return ActionTemporaries(files, directories, inherited, barriers)
 
-    def command(self, command, context=None, cpp_reader=None):
-        tokens = command_tokens(command)
-        if context:
+    def command(self, command, context=None, cpp_reader=None, evaluated_shell=None):
+        if evaluated_shell is None:
+            evaluated_shell = context is None or context == "shell-source"
+        analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
+        if context and not evaluated_shell:
             tokens = command_tokens(context) + tokens
         previous = self.command_temporaries
         previous_reader = self.cpp_reader
         previous_binding = self.cpp_binding
+        previous_children = getattr(self, "active_shell_children", {})
+        previous_evaluation = getattr(self, "evaluated_shell", False)
+        self.active_shell_children = children
+        self.evaluated_shell = evaluated_shell
         self.cpp_binding = previous_binding if cpp_reader is None else cpp_reader
         temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
         self.command_temporaries = temporary_outputs
         try:
-            self.inspect_command(command, tokens, temporary_outputs)
+            self.inspect_command(analyzed, tokens, temporary_outputs)
         finally:
             self.command_temporaries = previous
             self.cpp_reader = previous_reader
             self.cpp_binding = previous_binding
+            self.active_shell_children = previous_children
+            self.evaluated_shell = previous_evaluation
+
+    def inspect_shell_child(self, marker, tokens, position, temporaries):
+        child = self.active_shell_children[marker]
+        snapshot = shell_child_snapshot(temporaries, tokens, position, command_invocations)
+        previous = self.command_temporaries
+        inherited = ActionTemporaries(inherited=snapshot)
+        inherited.position = 0
+        self.command_temporaries = inherited
+        try:
+            self.command(child["native_body"], evaluated_shell=True)
+        finally:
+            self.command_temporaries = previous
 
     def inspect_command(self, command, tokens, temporary_outputs):
         tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
@@ -1135,7 +1544,7 @@ class Collector:
         _, literal_tokens = self.tool_output_operands(tokens)
         literal_tokens.update(self.semantic_operands(tokens, response_literals))
         source_invocations = {position for position, _ in command_invocations(tokens)
-                              if tokens[position] in {".", "source"}}
+                              if self.evaluated_shell and tokens[position] in {".", "source"}}
         compiler_positions = set()
         for program, end in cpp_invocations(tokens):
             start = program
@@ -1208,6 +1617,12 @@ class Collector:
             temporary_outputs.position = index
             self.cpp_reader = self.cpp_binding and index in compiler_positions
             token = tokens[index]
+            children = getattr(token, "shell_children", ())
+            for marker in children:
+                self.inspect_shell_child(marker, tokens, index, temporary_outputs)
+            if children:
+                index += 1
+                continue
             operand = command_operand(token)
             if operand and not operand.startswith("-") and self.path(operand) in temporary_outputs:
                 index += 1
@@ -1215,14 +1630,7 @@ class Collector:
             if index in literal_tokens:
                 index += 1
                 continue
-            shell_payload = (token.startswith("-") and "c" in token[1:]
-                             and not token.startswith("--")
-                             and any(Path(item).name in {"bash", "sh", "dash"}
-                                     for item in tokens[max(0, index - 4):index]))
-            if shell_payload and index + 1 < len(tokens):
-                index += 1
-                self.command(tokens[index])
-            elif self.environment(token):
+            if self.environment(token):
                 pass
             elif index in source_invocations and index + 1 < len(tokens):
                 index += 1
@@ -1232,14 +1640,14 @@ class Collector:
                 if content is None and not self.produced(path) and optional_probe(path):
                     content = path.read_text()
                 if content is not None:
-                    self.command(content)
+                    self.command(content, evaluated_shell=True)
             elif token == "-C" and index + 1 < len(tokens):
                 index += 1
                 option = tokens[index]
                 if option.startswith("link-args="):
-                    self.command(option.partition("=")[2])
+                    self.command(option.partition("=")[2], evaluated_shell=False)
                 elif option.startswith("linker="):
-                    self.command(option.partition("=")[2])
+                    self.command(option.partition("=")[2], evaluated_shell=False)
                 else:
                     path = self.path(option)
                     if optional_probe(path, "is_dir") and (beneath(path, self.source_root) or self.produced(path)):
@@ -1299,11 +1707,11 @@ class Collector:
                 self.include_directory(path.parent, "source-local-headers")
             self.python_package(path)
             self.tool_package(path)
-        commands = [(command, None, command in self.compiler_commands) for command in self.manifest.get("commands", [])]
-        commands.extend((command, None, False) for command in self.embedded_commands())
+        commands = [(command, None, command in self.compiler_commands, True) for command in self.manifest.get("commands", [])]
+        commands.extend((command, None, False, True) for command in self.embedded_commands())
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
-                commands.append((edge["command"], None, edge["command"] in self.compiler_commands))
+                commands.append((edge["command"], None, edge["command"] in self.compiler_commands, True))
             if edge.get("rspfile_content"):
                 context = response_context(edge.get("command", ""), edge.get("rspfile"))
                 callers = rsp_callers(edge.get("command", ""), edge.get("rspfile", ""))
@@ -1315,9 +1723,10 @@ class Collector:
                     if reader in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"}:
                         continue
                     commands.append((edge["rspfile_content"], reader,
-                                     cpp_rsp and edge.get("command") in self.compiler_commands))
-        for command, context, cpp_reader in dict.fromkeys(commands):
-            self.command(command, context, cpp_reader)
+                                     cpp_rsp and edge.get("command") in self.compiler_commands,
+                                     reader == "shell-source"))
+        for command, context, cpp_reader, evaluated_shell in dict.fromkeys(commands):
+            self.command(command, context, cpp_reader, evaluated_shell)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         for value in dict.fromkeys(depfiles):

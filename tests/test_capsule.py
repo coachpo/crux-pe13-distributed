@@ -1079,6 +1079,198 @@ class CapsuleTests(unittest.TestCase):
             capsule.pack(manifest_path, self.source, self.base / "task.tar.zst", self.out,
                           shared_manifest=layer_path)
 
+    def test_active_quoted_cat_is_transported_and_runs_cold(self):
+        self.write(self.source / "settings/config", "PE_CONFIG=active\n")
+        native = 'printf "%s\\n" "meta=$(cat settings/config)"'
+        self.manifest["commands"] = [native]
+        collector, metadata, archive = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+        cold = self.base / "cold"
+        cold.mkdir()
+        archive.extractall(cold)
+        result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "meta=PE_CONFIG=active\n")
+
+    def test_active_substitution_rejects_old_compiled_out_input(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "$(cat %s)"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_singlequotes_escaped_dollar_and_pid_do_not_read_old_out(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        path = self.out / "old.jar"
+        self.manifest["commands"] = ["echo '$(cat %s)'" % path,
+                                     'echo "\\$(cat %s)"' % path,
+                                     'echo "$$(cat %s)"' % path]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_declared_cpp_rsp_is_argument_data_not_evaluated_shell(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        rsp = str(self.out / "compile.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")],
+                                  "command": 'clang @%s -c lib/unit.c -o %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp,
+                                  "rspfile_content": '-DVALUE="$(cat %s)"' % (self.out / "old.jar")}]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_real_shell_source_file_enables_active_substitutions(self):
+        self.write(self.source / "settings/config", "active")
+        self.write(self.source / "shell.rsp", 'VALUE="$(cat settings/config)"\n')
+        self.manifest["commands"] = [". shell.rsp"]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_literal_bash_payload_decodes_outer_escaped_dollar(self):
+        self.write(self.source / "settings/config", "active")
+        self.manifest["commands"] = [r'bash --norc -c "echo \"\$(cat settings/config)\""']
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_bash_argument_carrier_is_not_an_invocation(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ["printf '%%s\\n' bash -c 'echo \"$(cat %s)\"'" % (self.out / "old.jar")]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_active_child_inherits_completed_prior_write(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo fresh > %s && echo "$(cat %s)"' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_active_read_before_writer_keeps_old_out_gate(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "$(cat %s)" && echo fresh > %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_current_invocation_redirection_is_not_prior_child_write(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo > %s "$(cat %s)"' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_child_write_does_not_establish_parent_freshness(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "$(echo fresh > %s)" && cat %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_inline_protoc_rsp_marker_text_cannot_activate_parent_child(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        literal_schema = "__CRUX_ANALYSIS_SUB_000000__"
+        self.write(self.source / literal_schema, 'syntax = "proto2"; message LiteralData {}\n')
+        rsp = str(self.out / "schemas.rsp")
+        native = 'aprotoc @%s --descriptor_set_out=%s && echo fresh > %s && echo "$(cat %s)"' % (
+            rsp, self.out / "descriptor.pb", path, path)
+        self.manifest["edges"] = [{"outputs": [str(self.out / "descriptor.pb")], "command": native,
+                                  "rspfile": rsp, "rspfile_content": literal_schema + "\n"}]
+        _, metadata, _ = self.collect()
+        paths = {x["path"] for x in metadata["files"]}
+        self.assertIn(str(self.source / literal_schema), paths)
+        self.assertNotIn(str(path), paths)
+
+    def test_arithmetic_quotes_do_not_suppress_explicit_active_child(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "$((1 + \'$(cat %s)\'))"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_second_bash_payload_uses_its_own_prefix_snapshot(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['bash -c true && echo fresh > %s && bash -c \'echo "$(cat %s)"\'' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_evaluated_backtick_transports_nested_modern_date_read_cold(self):
+        self.write(self.source / "settings/date", "1791434831")
+        native = 'printf "%s\\n" "`date -u -d @$(cat settings/date) +%s`"'
+        self.manifest["commands"] = [native]
+        _, metadata, archive = self.collect()
+        self.assertIn(str(self.source / "settings/date"), {x["path"] for x in metadata["files"]})
+        if subprocess.run(["date", "-u", "-d", "@1791434831", "+%s"], capture_output=True).returncode == 0:
+            cold = self.base / "cold"
+            cold.mkdir()
+            archive.extractall(cold)
+            result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "1791434831\n")
+
+    def test_backtick_outer_quoted_escaped_dollar_activates_nested_child(self):
+        self.write(self.source / "settings/config", "active")
+        native = r'echo "`printf \'%s\' "\$(cat settings/config)"`"'
+        self.manifest["commands"] = [native]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_backtick_singlequoted_and_escaped_literals_do_not_read_old_out(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        path = self.out / "old.jar"
+        self.manifest["commands"] = ["echo '`cat %s`'" % path,
+                                     'echo "\\`cat %s\\`"' % path]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_backtick_in_declared_cpp_rsp_remains_argument_data(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        rsp = str(self.out / "compile.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")],
+                                  "command": 'clang @%s -c lib/unit.c -o %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp, "rspfile_content": '-DVALUE="`cat %s`"' % (self.out / "old.jar")}]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_real_backtick_rejects_old_compiled_out_read(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "`cat %s`"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_backtick_child_inherits_prior_and_not_current_redirection(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo fresh > %s && echo "`cat %s`"' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+        self.manifest["commands"] = ['echo > %s "`cat %s`"' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_backtick_child_writer_does_not_leak_parent_freshness(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "`echo fresh > %s`" && cat %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_rust_copy_backtick_rsp_reader_uses_declared_graph_input_contract(self):
+        rsp = str(self.out / "rust/out.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")], "command": 'cp `cat %s` %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp, "rspfile_content": str(self.out / "actual.rlib")}]
+        self.manifest["external_inputs"] = [str(self.out / "actual.rlib")]
+        self.write(self.out / "actual.rlib", b"!<arch>\nstale")
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "actual.rlib"), {x["path"] for x in metadata["files"]})
+
+    def test_arithmetic_backtick_read_transports_its_source(self):
+        self.write(self.source / "settings/number", "2")
+        self.manifest["commands"] = ['echo $((1 + `cat settings/number`))']
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/number"), {x["path"] for x in metadata["files"]})
+
+
 
 if __name__ == "__main__":
     unittest.main()
