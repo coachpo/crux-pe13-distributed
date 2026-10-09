@@ -230,6 +230,38 @@ def native_generated_include_roots(edge, source_root, out_root):
     return {'include_roots': sorted(include_roots), 'forced_files': sorted(forced_files)}
 
 
+def native_abi_exported_roots(edge, source_root, out_root):
+    """Read -I namespaces of the supported native ABI linker invocation.
+
+    These directories supply filenames/status for exported-symbol filtering;
+    they are separate from C/C++ frontend include searches. Current native
+    link actions invoke this tool directly, without a cwd-changing wrapper.
+    """
+    command=edge.get('command','')
+    if 'header-abi-linker' not in command:
+        return []
+    args=shlex.split(command)
+    if not args or posixpath.basename(args[0]) != 'header-abi-linker':
+        return []
+    if any(token in ('&&','||',';','|') for token in args):
+        raise ValueError('unsupported compound ABI namespace invocation')
+    roots=set();index=1
+    while index < len(args):
+        argument=args[index]
+        if argument == '-I':
+            index+=1
+            if index == len(args):raise ValueError('missing ABI exported directory operand')
+            value=args[index]
+        elif argument.startswith('-I'):
+            value=argument[2:]
+        else:
+            index+=1;continue
+        path=canonical_path(value if value.startswith('/') else posixpath.join(source_root,value))
+        if path.startswith(out_root.rstrip('/')+'/'):roots.add(path)
+        index+=1
+    return sorted(roots)
+
+
 def expand(value, variables):
     """Expand a Ninja EvalString, including escaped separators and continuations."""
     if '$' not in value:
@@ -714,11 +746,14 @@ class Graph:
         metadata=self.native_metadata(records)
         rust=self.rust_runtime_contracts(records,producers,metadata)
         includes=self.generated_include_contracts(records,producers,out_root,metadata)
+        abi=self.abi_header_namespace_contracts(records,producers,out_root,metadata)
         embedded=self.embedded_tool_contracts(records,producers,metadata)
         contracts={edge:sorted(set(rust.get(edge,[])) |
                     set(includes.get(edge,{}).get('required_headers',[])) |
-                    set(includes.get(edge,{}).get('owned_dirs',[])))
-                   for edge in set(rust) | set(includes)}
+                    set(includes.get(edge,{}).get('owned_dirs',[])) |
+                    set(abi.get(edge,{}).get('required_files',[])) |
+                    set(abi.get(edge,{}).get('owned_dirs',[])))
+                   for edge in set(rust) | set(includes) | set(abi)}
         selected=set(closure['edge_ids']); own_outputs=set(closure['outputs'])
         closure['external_inputs']=sorted(set(closure['external_inputs']) | {
             path for edge in selected for path in contracts.get(edge,[]) if path not in own_outputs})
@@ -728,6 +763,8 @@ class Graph:
             manifest['edges'],includes,producers)
         manifest['embedded_tool_contexts']=self.embedded_tool_manifest_contexts(
             manifest['edges'],embedded,producers)
+        manifest['abi_header_namespace_contract']=self.abi_header_namespace_manifest_contract(
+            manifest['edges'],abi,producers)
         (Path(destination)/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
         return manifest
 
@@ -782,27 +819,7 @@ class Graph:
         trees={directory:owner for directory,owner in self.side_output_dirs.items()
                if owner in records}
         providers=sorted({owner for _,owner in catalog.values()} | set(trees.values()))
-        bits={owner:1 << index for index,owner in enumerate(providers)}
-        parents={edge:{producers[path] for path,kind in record['deps']
-                       if kind != 'validation' and path in producers and producers[path] != edge}
-                 for edge,record in records.items()}
-        successors=collections.defaultdict(set)
-        remaining={edge:len(before) for edge,before in parents.items()}
-        for edge,before in parents.items():
-            for owner in before:
-                successors[owner].add(edge)
-        ready=collections.deque(edge for edge,count in remaining.items() if not count)
-        ancestors={}
-        while ready:
-            edge=ready.popleft();mask=0
-            for owner in parents[edge]:
-                mask |= ancestors[owner] | bits.get(owner,0)
-            ancestors[edge]=mask
-            for child in successors[edge]:
-                remaining[child]-=1
-                if not remaining[child]:ready.append(child)
-        if len(ancestors) != len(records):
-            raise ValueError('generated include contract requires an acyclic original prerequisite graph')
+        bits,ancestors=self.ancestor_provider_masks(records,producers,providers)
         metadata=self.native_metadata(records) if metadata is None else metadata
         directories={};contracts={}
         for edge,record in metadata.items():
@@ -830,6 +847,94 @@ class Graph:
             contracts[edge]={'search_roots':roots,'forced_files':forced,
                              'required_headers':sorted(required),'owned_dirs':sorted(owned)}
         return contracts
+
+    def ancestor_provider_masks(self, records, producers, providers):
+        """Share original prerequisite ancestry across generated input roles."""
+        bits={owner:1 << index for index,owner in enumerate(providers)}
+        parents={edge:{producers[path] for path,kind in record['deps']
+                       if kind != 'validation' and path in producers and producers[path] != edge}
+                 for edge,record in records.items()}
+        successors=collections.defaultdict(set)
+        remaining={edge:len(before) for edge,before in parents.items()}
+        for edge,before in parents.items():
+            for owner in before:
+                successors[owner].add(edge)
+        ready=collections.deque(edge for edge,count in remaining.items() if not count)
+        ancestors={}
+        while ready:
+            edge=ready.popleft();mask=0
+            for owner in parents[edge]:
+                mask |= ancestors[owner] | bits.get(owner,0)
+            ancestors[edge]=mask
+            for child in successors[edge]:
+                remaining[child]-=1
+                if not remaining[child]:ready.append(child)
+        if len(ancestors) != len(records):
+            raise ValueError('generated input contract requires an acyclic original prerequisite graph')
+        return bits,ancestors
+
+    def abi_header_namespace_contracts(self, records, producers, out_root=None, metadata=None):
+        """Bind filename/status enumeration to real ancestor output receipts.
+
+        Missing namespaces alter ABI filtering even when no header bytes are
+        read. Do not infer namespace members from an existing OUT directory,
+        nor silently add ordering for a selected non-ancestor producer.
+        """
+        source_root=self.meta['source_root']
+        out_root=canonical_path(str(out_root or Path(self.meta['ninja']).parent))
+        metadata=self.native_metadata(records) if metadata is None else metadata
+        parsed={edge:roots for edge,record in metadata.items()
+                if (roots:=native_abi_exported_roots(record,source_root,out_root))}
+        if not parsed:return {}
+        roots={root for paths in parsed.values() for root in paths}
+        directories={root:[] for root in roots}
+        all_dirs={**self.side_output_dirs,**self.group_export_dirs}
+        for edge,record in records.items():
+            if record['rule'] == 'phony':continue
+            for path in record['outputs']:
+                if path in all_dirs:continue
+                absolute=canonical_path(path if path.startswith('/') else posixpath.join(source_root,path))
+                for root in roots:
+                    prefix=root.rstrip('/')+'/'
+                    if not absolute.startswith(prefix):continue
+                    names=absolute[len(prefix):].split('/')
+                    if any(not name or name.startswith('.') or name.endswith(
+                            ('.swp','.swo','#','.cpp','.cc','.c')) for name in names):continue
+                    directories[root].append((path,edge))
+        trees={directory:owner for directory,owner in self.side_output_dirs.items() if owner in records}
+        providers=sorted({owner for files in directories.values() for _,owner in files}|set(trees.values()))
+        bits,ancestors=self.ancestor_provider_masks(records,producers,providers)
+        contracts={}
+        for edge,paths in parsed.items():
+            required=set();owned=set()
+            for root in paths:
+                for path,owner in directories[root]:
+                    if not ancestors[edge] & bits[owner]:
+                        raise ValueError('ABI namespace member lacks original prerequisite ordering: '+path)
+                    required.add(path)
+                for tree,owner in trees.items():
+                    absolute_tree=canonical_path(tree if tree.startswith('/') else posixpath.join(source_root,tree))
+                    if root == absolute_tree or root.startswith(absolute_tree.rstrip('/')+'/') or absolute_tree.startswith(root.rstrip('/')+'/'):
+                        if not ancestors[edge] & bits[owner]:
+                            raise ValueError('ABI namespace tree lacks original prerequisite ordering: '+tree)
+                        owned.add(tree)
+            contracts[edge]={'exported_roots':paths,'required_files':sorted(required),'owned_dirs':sorted(owned)}
+        return contracts
+
+    def abi_header_namespace_manifest_contract(self, metadata, contracts, producers):
+        contexts=[];roots=set();files=set();trees=set()
+        for index,record in enumerate(metadata):
+            contract=contracts.get(producers[record['outputs'][0]])
+            if contract is None:continue
+            roots.update(contract['exported_roots']);files.update(contract['required_files']);trees.update(contract['owned_dirs'])
+            contexts.append({'edge_index':index,'primary_output':record['outputs'][0],**contract,
+                             'reader':'header_abi_linker_namespace'})
+        return {'schema_version':1,'exported_roots':sorted(roots),'required_files':sorted(files),
+                'owned_dirs':sorted(trees),'contexts':contexts,
+                'provenance':{'original_ninja':self.meta['ninja'],'native_flags_unchanged':True,
+                    'selected_original_ancestor_declared_files_only':True,
+                    'old_OUT_namespace_entries_never_establish_providers':True,
+                    'header_contents_not_read_by_namespace_enumeration':True}}
 
     def generated_include_manifest_contract(self, metadata, contracts, producers):
         contexts=[];roots=set();headers=set();trees=set()
@@ -1278,11 +1383,14 @@ class Graph:
         metadata=self.native_metadata(records)
         rust_contracts = self.rust_runtime_contracts(records,producers,metadata)
         include_contracts=self.generated_include_contracts(records,producers,out_root,metadata)
+        abi_contracts=self.abi_header_namespace_contracts(records,producers,out_root,metadata)
         embedded_contracts=self.embedded_tool_contracts(records,producers,metadata)
         runtime_contracts={edge:sorted(set(rust_contracts.get(edge,[])) |
                             set(include_contracts.get(edge,{}).get('required_headers',[])) |
-                            set(include_contracts.get(edge,{}).get('owned_dirs',[])))
-                           for edge in set(rust_contracts) | set(include_contracts)}
+                            set(include_contracts.get(edge,{}).get('owned_dirs',[])) |
+                            set(abi_contracts.get(edge,{}).get('required_files',[])) |
+                            set(abi_contracts.get(edge,{}).get('owned_dirs',[])))
+                           for edge in set(rust_contracts) | set(include_contracts) | set(abi_contracts)}
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
         visiting = set()
@@ -1419,6 +1527,8 @@ class Graph:
                 job['generated_include_contract']=include_contract
                 embedded_contexts=self.embedded_tool_manifest_contexts(planned_metadata,embedded_contracts,producers)
                 job['embedded_tool_contexts']=embedded_contexts
+                abi_contract=self.abi_header_namespace_manifest_contract(planned_metadata,abi_contracts,producers)
+                job['abi_header_namespace_contract']=abi_contract
                 if export:
                     directory = Path(destination)/identity
                     orders=self.local_runtime_order_inputs(selected,runtime_contracts,records,producers)
@@ -1432,6 +1542,10 @@ class Graph:
                     if actual_embedded != embedded_contexts:
                         raise ValueError('embedded tool metadata differs from its original native actions')
                     manifest['embedded_tool_contexts']=actual_embedded
+                    actual_abi=self.abi_header_namespace_manifest_contract(manifest['edges'],abi_contracts,producers)
+                    if actual_abi != abi_contract:
+                        raise ValueError('ABI namespace metadata differs from its planned native actions')
+                    manifest['abi_header_namespace_contract']=actual_abi
                     if runtime_inputs:
                         manifest['rust_runtime_inputs'] = runtime_inputs
                     (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

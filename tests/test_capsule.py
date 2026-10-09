@@ -1379,6 +1379,95 @@ class CapsuleTests(unittest.TestCase):
         with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
             self.collect()
 
+    def abi_contract(self, command, roots, files=(), rsp=None):
+        edge = {"command": command, "outputs": self.manifest["outputs"]}
+        if rsp:
+            edge.update(rspfile=str(self.out / "abi.rsp"), rspfile_content=rsp)
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [edge]
+        self.manifest["abi_header_namespace_contract"] = {
+            "schema_version": 1, "exported_roots": [str(path) for path in roots], "required_files": [str(path) for path in files],
+            "owned_dirs": [], "contexts": [{"edge_index": 0, "primary_output": self.manifest["outputs"][0],
+                                             "exported_roots": [str(path) for path in roots], "required_files": [str(path) for path in files],
+                                             "owned_dirs": [], "reader": "header_abi_linker_namespace"}],
+            "provenance": {"native_flags_unchanged": True}}
+
+    def test_abi_namespace_uses_real_receipt_files_and_omits_unselected_old_headers(self):
+        root = self.out / "generated/include"
+        needed, stale = root / "public.h", root / "old-unrelated.h"
+        self.write(needed, "old header bytes never transported\n")
+        self.write(stale, "old unrelated header\n")
+        self.write(self.source / "source-include/plain.h", "source public header\n")
+        self.manifest["external_inputs"].append(str(needed))
+        command = "header-abi-linker -I" + str(root) + " -Isource-include input.lsdump -o " + str(self.out / "linked.lsdump")
+        self.abi_contract(command, [root], [needed])
+        _, _, archive = self.collect()
+        self.assertNotIn(str(needed).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "source-include/plain.h").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(needed, "FRESH PRODUCER BYTES\n")
+        self.assertEqual([path.name for path in root.rglob("*.h")], ["public.h"])
+
+    def test_abi_namespace_and_cpp_shared_rsp_are_checked_per_actual_reader(self):
+        root = self.out / "include"
+        stale = root / "unowned.h"
+        self.write(stale, "unowned old generated header\n")
+        rsp = str(self.out / "abi.rsp")
+        command = "header-abi-linker @" + rsp + " input.lsdump && cc @" + rsp + " -c lib/unit.c"
+        self.abi_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_rsp_and_shared_cpp_rsp_bind_real_caller_positions(self):
+        root = self.out / "include"
+        needed, stale = root / "public.h", root / "old-unselected.h"
+        self.write(needed, "old producer bytes\n")
+        self.write(stale, "old unrelated header\n")
+        self.manifest["external_inputs"].append(str(needed))
+        rsp = str(self.out / "abi.rsp")
+        command = "header-abi-linker @" + rsp + " input.lsdump"
+        self.abi_contract(command, [root], [needed], rsp="-I" + str(root))
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        command += " && cc @" + rsp + " -c lib/unit.c"
+        self.abi_contract(command, [root], [needed], rsp="-I" + str(root))
+        self.compiler_contract(command, [root], [needed], rsp="-I" + str(root))
+        self.manifest["edges"][0]["rspfile"] = rsp
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.manifest.pop("generated_include_contract")
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_contract_does_not_leak_to_unrelated_reader_or_hide_literal_input(self):
+        root = self.out / "include"
+        stale = root / "unowned.h"
+        self.write(stale, "unowned old generated header\n")
+        command = "header-abi-linker -I" + str(root) + " input.lsdump && unknown-reader -I" + str(root)
+        self.abi_contract(command, [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.abi_contract("header-abi-linker -I" + str(root) + " " + str(stale), [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_namespace_requires_exact_real_producer_and_typed_consumer(self):
+        root = self.out / "include"
+        unknown = root / "unowned.h"
+        self.write(unknown, "old unowned header\n")
+        self.abi_contract("header-abi-linker -I" + str(root), [root], [unknown])
+        with self.assertRaisesRegex(capsule.CapsuleError, "no selected producer or receipt"):
+            self.collect()
+        self.abi_contract("cc -I" + str(root) + " lib/unit.c", [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "not header-abi-linker"):
+            self.collect()
+        self.abi_contract("header-abi-linker -I" + str(root), [])
+        with self.assertRaisesRegex(capsule.CapsuleError, "absent from its contract"):
+            self.collect()
+
 
 
 if __name__ == "__main__":

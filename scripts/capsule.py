@@ -236,6 +236,19 @@ def cpp_frontend(command, response=None):
     return False
 
 
+def abi_namespace_frontend(command):
+    tokens = command_tokens(command)
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name == "header-abi-linker":
+            return True
+        if name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and not tokens[index].startswith("--") and "c" in tokens[index][1:] and abi_namespace_frontend(tokens[index + 1]):
+                    return True
+    return False
+
+
 def rsp_callers(command, response):
     tokens = command_tokens(command)
     cpp_programs = {program for program, _ in cpp_invocations(tokens)}
@@ -782,6 +795,38 @@ class Collector:
                 if not cpp_frontend(edges[index]["command"]):
                     raise CapsuleError("Compiler context is not a supported C/C++ frontend")
                 self.compiler_commands.add(edges[index]["command"])
+        self.abi_reader = self.abi_binding = False
+        self.abi_commands = set()
+        self.abi_roots = set()
+        self.abi_files = set()
+        self.abi_processed_roots = set()
+        contract = manifest.get("abi_header_namespace_contract")
+        if contract is not None:
+            if contract.get("schema_version") != 1:
+                raise CapsuleError("Unsupported ABI header namespace contract schema")
+            self.abi_roots = {self.path(value) for value in contract.get("exported_roots", [])}
+            self.abi_files = {self.path(value) for value in contract.get("required_files", [])}
+            if any(not beneath(path, self.out_root) for path in self.abi_roots | self.abi_files):
+                raise CapsuleError("ABI generated header namespaces must stay under OUT")
+            for path in self.abi_files:
+                if not self.produced(path):
+                    raise CapsuleError("ABI namespace file has no selected producer or receipt import: %s" % path)
+            for value in contract.get("owned_dirs", []):
+                if self.path(value) not in self.output_dirs | self.external_dirs:
+                    raise CapsuleError("ABI namespace owned directory is not declared for transport")
+            for context in contract.get("contexts", []):
+                index = context.get("edge_index")
+                edges = manifest.get("edges", [])
+                if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                        or context.get("reader") != "header_abi_linker_namespace"
+                        or self.path(context.get("primary_output", "")) not in {self.path(path) for path in edges[index].get("outputs", [])}):
+                    raise CapsuleError("Invalid ABI namespace consumer edge binding")
+                if (any(self.path(root) not in self.abi_roots for root in context.get("exported_roots", []))
+                        or any(self.path(path) not in self.abi_files for path in context.get("required_files", []))):
+                    raise CapsuleError("ABI namespace context contains an unlisted root or file")
+                if not abi_namespace_frontend(edges[index].get("command", "")):
+                    raise CapsuleError("ABI namespace consumer is not header-abi-linker")
+                self.abi_commands.add(edges[index]["command"])
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -960,6 +1005,15 @@ class Collector:
 
     def include_directory(self, value, reason):
         path = self.path(value)
+        if self.abi_reader and beneath(path, self.out_root):
+            if path not in self.abi_roots:
+                self.errors.add("ABI generated header namespace is absent from its contract: %s" % path)
+            elif path not in self.abi_processed_roots:
+                self.abi_processed_roots.add(path)
+                for header in self.abi_files:
+                    if beneath(header, path):
+                        self.add(header, "abi-header-namespace-contract")
+            return
         if self.generated_include_contract is not None and self.cpp_reader and beneath(path, self.out_root):
             if path not in self.generated_include_roots:
                 self.errors.add("Compiler generated include root is absent from its contract: %s" % path)
@@ -1552,7 +1606,7 @@ class Collector:
         barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
         return ActionTemporaries(files, directories, inherited, barriers, guarded_for_body_barriers(tokens))
 
-    def command(self, command, context=None, cpp_reader=None, evaluated_shell=None):
+    def command(self, command, context=None, cpp_reader=None, evaluated_shell=None, abi_reader=None):
         if evaluated_shell is None:
             evaluated_shell = context is None or context == "shell-source"
         analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
@@ -1561,11 +1615,13 @@ class Collector:
         previous = self.command_temporaries
         previous_reader = self.cpp_reader
         previous_binding = self.cpp_binding
+        previous_abi_reader, previous_abi_binding = self.abi_reader, self.abi_binding
         previous_children = getattr(self, "active_shell_children", {})
         previous_evaluation = getattr(self, "evaluated_shell", False)
         self.active_shell_children = children
         self.evaluated_shell = evaluated_shell
         self.cpp_binding = previous_binding if cpp_reader is None else cpp_reader
+        self.abi_binding = previous_abi_binding if abi_reader is None else abi_reader
         temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
         self.command_temporaries = temporary_outputs
         try:
@@ -1574,6 +1630,7 @@ class Collector:
             self.command_temporaries = previous
             self.cpp_reader = previous_reader
             self.cpp_binding = previous_binding
+            self.abi_reader, self.abi_binding = previous_abi_reader, previous_abi_binding
             self.active_shell_children = previous_children
             self.evaluated_shell = previous_evaluation
 
@@ -1607,6 +1664,8 @@ class Collector:
             if Path(tokens[tool]).name in {"header-abi-dumper", "clang-tidy"}:
                 start = next((index + 1 for index in range(program + 1, end) if tokens[index] == "--"), end)
             compiler_positions.update(range(start, end))
+        abi_positions = {index for program, end in command_invocations(tokens)
+                         if Path(tokens[program]).name == "header-abi-linker" for index in range(program, end)}
         for position, token in enumerate(tokens):
             if Path(token).name == "ln":
                 end = position + 1
@@ -1671,6 +1730,7 @@ class Collector:
         while index < len(tokens):
             temporary_outputs.position = index
             self.cpp_reader = self.cpp_binding and index in compiler_positions
+            self.abi_reader = self.abi_binding and index in abi_positions
             token = tokens[index]
             children = getattr(token, "shell_children", ())
             for marker in children:
@@ -1762,11 +1822,11 @@ class Collector:
                 self.include_directory(path.parent, "source-local-headers")
             self.python_package(path)
             self.tool_package(path)
-        commands = [(command, None, command in self.compiler_commands, True) for command in self.manifest.get("commands", [])]
-        commands.extend((command, None, False, True) for command in self.embedded_commands())
+        commands = [(command, None, command in self.compiler_commands, True, command in self.abi_commands) for command in self.manifest.get("commands", [])]
+        commands.extend((command, None, False, True, False) for command in self.embedded_commands())
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
-                commands.append((edge["command"], None, edge["command"] in self.compiler_commands, True))
+                commands.append((edge["command"], None, edge["command"] in self.compiler_commands, True, edge["command"] in self.abi_commands))
             if edge.get("rspfile_content"):
                 context = response_context(edge.get("command", ""), edge.get("rspfile"))
                 callers = rsp_callers(edge.get("command", ""), edge.get("rspfile", ""))
@@ -1779,9 +1839,9 @@ class Collector:
                         continue
                     commands.append((edge["rspfile_content"], reader,
                                      cpp_rsp and edge.get("command") in self.compiler_commands,
-                                     reader == "shell-source"))
-        for command, context, cpp_reader, evaluated_shell in dict.fromkeys(commands):
-            self.command(command, context, cpp_reader, evaluated_shell)
+                                     reader == "shell-source", reader == "header-abi-linker" and edge.get("command") in self.abi_commands))
+        for command, context, cpp_reader, evaluated_shell, abi_reader in dict.fromkeys(commands):
+            self.command(command, context, cpp_reader, evaluated_shell, abi_reader)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         depfile_owners = {}

@@ -828,6 +828,99 @@ Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
                 self.assertEqual(selected['embedded_tool_contexts'],[])
                 self.assertEqual(selected['external_inputs'],[manifest])
 
+    def test_abi_namespace_flags_are_not_cpp_or_unrelated_include_operands(self):
+        root='/source';out='/source/out'
+        self.assertEqual(graph.native_abi_exported_roots({'command':
+            'header-abi-linker -Iout/exports -I source/include -o out/api.lsdump input.sdump'},root,out),
+            ['/source/out/exports'])
+        for command in ('clang -c main.c -Iout/exports -o out/main.o',
+                        'header-abi-dumper main.c -- -Iout/exports',
+                        'echo "header-abi-linker -Iout/exports"'):
+            self.assertEqual(graph.native_abi_exported_roots({'command':command},root,out),[])
+
+    def test_abi_namespace_does_not_invent_a_stale_or_unordered_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();(root/'out/exports').mkdir(parents=True)
+            (root/'out/exports/stale.h').write_text('old ambient header')
+            (root/'build.ninja').write_text('rule generate\n  command = touch $out\n'
+                'rule link\n  command = header-abi-linker -Iout/exports -o $out input.sdump\n'
+                'build out/exports/future.h: generate\nbuild out/api.lsdump: link input.sdump\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db);indexed=graph.Graph(db)
+            selected=indexed.slice(['out/api.lsdump'],root/'slice',out_root=root/'out')
+            self.assertEqual(selected['abi_header_namespace_contract']['exported_roots'],
+                             [str(root/'out/exports')])
+            self.assertEqual(selected['abi_header_namespace_contract']['required_files'],[])
+            self.assertEqual(selected['external_inputs'],[])
+            with self.assertRaisesRegex(ValueError,'lacks original prerequisite ordering'):
+                indexed.slice(['out/api.lsdump','out/exports/future.h'],root/'unordered',out_root=root/'out')
+
+    def test_retained_abi_dump_keeps_a_locally_rebuilt_namespace_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            (root/'build.ninja').write_text('rule generate\n  command = mkdir -p out/exports && touch $out\n'
+                'rule dump\n  command = touch $out\n'
+                'rule link\n  command = header-abi-linker -Iout/exports -o $out out/input.sdump\n'
+                'build out/exports/public.h: generate\nbuild out/input.sdump: dump out/exports/public.h\n'
+                'build out/api.lsdump: link out/input.sdump\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db);indexed=graph.Graph(db)
+            selected=indexed.slice(['out/api.lsdump','out/exports/public.h'],root/'slice',
+                external=['out/input.sdump'],out_root=root/'out')
+            self.assertEqual(selected['abi_header_namespace_contract']['required_files'],['out/exports/public.h'])
+            self.assertEqual(list(selected['runtime_order_inputs'].values()),[['out/exports/public.h']])
+            self.assertEqual(next(e['command'] for e in selected['edges'] if e['rule']=='link'),
+                'header-abi-linker -Iout/exports -o out/api.lsdump out/input.sdump')
+
+    def test_cold_native_abi_namespace_uses_real_declared_header_transport(self):
+        tools=Path('/home/qingli/crux-pe13-offline-2026-09-25/pe13/prebuilts/clang-tools/linux-x86/bin')
+        if not shutil.which('ninja') or not shutil.which('cc') or not (tools/'header-abi-linker').is_file():
+            self.skipTest('native Ninja, C compiler and pinned ABI tools are required for cold validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();(root/'private').mkdir()
+            (root/'private/private.h').write_text('int private_function(int x) { return x + 2; }\n')
+            (root/'main.c').write_text('#include "public.h"\n#include "private.h"\n')
+            (root/'build.ninja').write_text('rule header\n'
+                '  command = mkdir -p out/exports && printf "int exported_function(int x) { return x + 1; }\\n" > $out\n'
+                'rule compile\n  command = cc -shared -fPIC main.c -Iout/exports -Iprivate -o out/libfixture.so && '
+                f'{tools}/header-abi-dumper main.c -o out/input.sdump --root-dir {root} -- -Iout/exports -Iprivate\n'
+                'rule link\n  command = '
+                f'{tools}/header-abi-linker --root-dir {root} -so out/libfixture.so -arch x86_64 '
+                '-Iout/exports out/input.sdump -o $out\n'
+                'build out/exports/public.h: header\n'
+                'build out/libfixture.so | out/input.sdump: compile main.c out/exports/public.h\n'
+                'build out/api.lsdump: link out/libfixture.so out/input.sdump\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db);indexed=graph.Graph(db)
+            plan=indexed.shard(['out/api.lsdump'],root/'shards',max_actions=1,out_root=root/'out')
+            consumer=plan['waves'][2][0];producer=plan['waves'][0][0]
+            selected=json.loads((root/'shards'/consumer['manifest']).read_text())
+            self.assertIn('out/exports/public.h',consumer['external_inputs'])
+            self.assertIn('out/exports/public.h',producer['export_outputs'])
+            self.assertEqual(selected['abi_header_namespace_contract']['required_files'],['out/exports/public.h'])
+            planned=indexed.shard(['out/api.lsdump'],root/'planned',max_actions=1,export=False,out_root=root/'out')
+            self.assertEqual(consumer['abi_header_namespace_contract'],planned['waves'][2][0]['abi_header_namespace_contract'])
+            subprocess.run(['ninja','-f','build.ninja','out/api.lsdump'],cwd=root,check=True,capture_output=True)
+            expected=(root/'out/api.lsdump').read_bytes();archive=root/'outputs.tar'
+            with tarfile.open(archive,'w') as output:
+                for wave in plan['waves'][:2]:
+                    for job in wave:
+                        for path in job['export_outputs']:output.add(root/path,arcname=path)
+            shutil.rmtree(root/'out');(root/'.ninja_log').unlink(missing_ok=True)
+            with tarfile.open(archive) as output:output.extractall(root)
+            shutil.copytree(root/'shards'/consumer['id'],root/'.crux-task/graph')
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','out/api.lsdump'],
+                                cwd=root,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertEqual((root/'out/api.lsdump').read_bytes(),expected)
+            # A retained dump/library removes the original compile-to-header
+            # chain. Rebuilding that header locally still precedes enumeration.
+            (root/'out/exports/public.h').unlink();(root/'out/api.lsdump').unlink()
+            local=indexed.slice(['out/api.lsdump','out/exports/public.h'],root/'.crux-task/graph',
+                external=['out/libfixture.so','out/input.sdump'],out_root=root/'out')
+            self.assertEqual(list(local['runtime_order_inputs'].values()),[['out/exports/public.h']])
+            rebuilt=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-j4',
+                'out/api.lsdump','out/exports/public.h'],cwd=root,capture_output=True,text=True)
+            self.assertEqual(rebuilt.returncode,0,rebuilt.stdout+rebuilt.stderr)
+            self.assertEqual((root/'out/api.lsdump').read_bytes(),expected)
+
 
 if __name__ == '__main__':
     unittest.main()
