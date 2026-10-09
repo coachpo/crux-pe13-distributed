@@ -29,10 +29,18 @@ after an imported `std` library cuts the dependency path to a locally rebuilt
 `core` library. Evidence is in
 [`rust-transitive-runtime.json`](results/diagnostics/rust-transitive-runtime.json).
 
-Frontend version metadata also needs explicit cold generation: the original
-Ninja `touch` rule created an empty build-number file, which left one exported
-property file with an empty incremental version. Its repair and final image
-property checks are still in progress. A successful task status alone does not
+The [cold frontend metadata repair](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37883012817)
+also succeeded with zero annotations. Three frozen scalar writers and the
+unchanged native build-property command produced four verified outputs,
+including build number `1791434921` and the corrected incremental version.
+Future consumers must explicitly import those outputs and replace the two
+older metadata files while retaining the other verified producer outputs.
+Final image property checks remain required before packaging.
+
+The remaining task in the second wave then exposed a missing transitive
+FlatBuffers source include. Its [current retry](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37887234891)
+adds that source file to the cold capsule without changing the native graph or
+the previously verified source inputs. A successful task status alone does not
 certify complete ROM images.
 
 After updating Actions dependencies to Node.js 24, the repeated resource probe
