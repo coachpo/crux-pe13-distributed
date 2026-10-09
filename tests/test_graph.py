@@ -305,6 +305,160 @@ class GraphTests(unittest.TestCase):
             self.assertEqual(cold.returncode,0,cold.stderr)
             self.assertEqual((consumer/'result').read_text(),'payload')
 
+    def test_rust_transitive_search_inputs_survive_a_cold_shard_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);producer=root/'producer';consumer=root/'consumer'
+            producer.mkdir();consumer.mkdir()
+            fake_rust='''import argparse
+from pathlib import Path
+import shlex
+import sys
+
+expanded=[]
+for arg in sys.argv[1:]:
+    expanded.extend(shlex.split(Path(arg[1:]).read_text()) if arg.startswith('@') else [arg])
+parser=argparse.ArgumentParser()
+parser.add_argument('--crate-type')
+parser.add_argument('-o', required=True)
+parser.add_argument('--extern', action='append', default=[])
+parser.add_argument('-L', action='append', default=[])
+parser.add_argument('--source', required=True)
+parser.add_argument('sources', nargs='*')
+args=parser.parse_args(expanded)
+externs=dict(value.split('=',1) for value in args.extern)
+payload=Path(args.source).read_text()
+if 'std' in externs:
+    if not Path(externs['std']).read_text().startswith('requires=core\\n'):
+        raise RuntimeError('invalid std crate metadata')
+    core=next((Path(directory)/'libcore.rlib' for directory in args.L
+               if (Path(directory)/'libcore.rlib').is_file()), None)
+    if core is None:
+        raise RuntimeError("cannot find core which std depends on")
+    payload=core.read_text()
+elif 'core' in externs:
+    Path(externs['core']).read_text()
+    payload='requires=core\\n'+payload
+output=Path(args.o)
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text(payload)
+Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
+'''
+            (producer/'fake_rust.py').write_text(fake_rust)
+            for name in ('core','std','consumer'):
+                (producer/(name+'.rs')).write_text(name+' payload')
+            (producer/'build.ninja').write_text('rule g.rust.rustc\n'
+                '  command = python3 fake_rust.py --crate-type=rlib -o $out $in $libraries @$out.rsp\n'
+                '  depfile = $out.d\n  deps = gcc\n'
+                '  rspfile = $out.rsp\n  rspfile_content = --source $in_newline\n'
+                'build out/core/libcore.rlib: g.rust.rustc core.rs\n'
+                'build out/std/libstd.rlib: g.rust.rustc std.rs | out/core/libcore.rlib\n'
+                '  libraries = --extern core=out/core/libcore.rlib\n'
+                'build out/consumer.rlib: g.rust.rustc consumer.rs | out/std/libstd.rlib\n'
+                '  libraries = --extern std=out/std/libstd.rlib -L out/core\n')
+            db=root/'index.sqlite';graph.index_graph(producer/'build.ninja',producer,db)
+            indexed=graph.Graph(db)
+            plan=indexed.shard(['out/consumer.rlib'],root/'shards',max_actions=1)
+            jobs=[job for wave in plan['waves'] for job in wave]
+            self.assertEqual(len(jobs),3)
+            final=jobs[-1]
+            self.assertEqual(final['external_inputs'],['out/core/libcore.rlib','out/std/libstd.rlib'])
+            self.assertEqual(set(final['depends_on']),{jobs[0]['id'],jobs[1]['id']})
+            self.assertIn('out/core/libcore.rlib',jobs[0]['export_outputs'])
+            manifest=json.loads((root/'shards'/final['manifest']).read_text())
+            self.assertEqual(manifest['external_phony_inputs'],final['external_inputs'])
+            self.assertEqual(manifest['edges'][0]['depfile'],'out/consumer.rlib.d')
+            self.assertEqual(manifest['edges'][0]['rspfile'],'out/consumer.rlib.rsp')
+            self.assertEqual(manifest['edges'][0]['rspfile_content'],'--source consumer.rs')
+            plan_only=indexed.shard(['out/consumer.rlib'],root/'plan-only',max_actions=1,export=False)
+            normalize=lambda value:[{key:job[key] for key in
+                ('id','depends_on','external_inputs','export_outputs')}
+                for wave in value['waves'] for job in wave]
+            self.assertEqual(normalize(plan_only),normalize(plan))
+            local=indexed.shard(['out/consumer.rlib'],root/'local',max_actions=3,max_parallel=1)
+            self.assertEqual(local['job_count'],1)
+            self.assertEqual(local['waves'][0][0]['external_inputs'],[])
+            if not shutil.which('ninja'):
+                self.skipTest('native Ninja executable is required for cold Rust transport validation')
+            native=subprocess.run(['ninja','-f','build.ninja','-t','commands','out/consumer.rlib'],
+                cwd=producer,check=True,capture_output=True,text=True)
+            exported_commands=[command for job in jobs
+                for command in json.loads((root/'shards'/job['manifest']).read_text())['commands']]
+            self.assertEqual(native.stdout.splitlines(),exported_commands)
+            subprocess.run(['ninja','-f','build.ninja','out/std/libstd.rlib'],cwd=producer,
+                check=True,capture_output=True,text=True)
+            archive=root/'rust-outputs.tar'
+            with tarfile.open(archive,'w') as output:
+                for path in final['external_inputs']:
+                    output.add(producer/path,arcname=path)
+            with tarfile.open(archive) as output:output.extractall(consumer)
+            for name in ('fake_rust.py','consumer.rs'):
+                shutil.copy2(producer/name,consumer/name)
+            shutil.copytree(root/'shards'/final['id'],consumer/'.crux-task/graph')
+            sliced=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','commands',
+                'out/consumer.rlib'],cwd=consumer,check=True,capture_output=True,text=True)
+            self.assertEqual(sliced.stdout.splitlines(),manifest['commands'])
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','out/consumer.rlib'],
+                cwd=consumer,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertEqual((consumer/'out/consumer.rlib').read_text(),'core payload')
+
+    def test_rust_search_contract_selects_crate_outputs_for_each_rust_consumer(self):
+        for consumer_rule in ('g.rust.rustc','g.rust.clippy','g.rust.rustdoc'):
+            with self.subTest(rule=consumer_rule), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                rules=''.join('rule '+rule+'\n'
+                    '  command = rust-tool --crate-type=$crate_type -o $out $in $libraries\n'
+                    for rule in ('g.rust.rustc','g.rust.clippy','g.rust.rustdoc'))
+                (root/'build.ninja').write_text(rules+
+                    'rule metadata\n  command = touch $out\n'
+                    'rule native\n  command = cxx -shared $in -o $out\n'
+                    'build out/search/libcore.rlib: g.rust.rustc core.rs\n  crate_type = rlib\n'
+                    'build out/search/libdependency.dylib.so: g.rust.rustc dependency.rs\n  crate_type = dylib\n'
+                    'build out/search/libmacro.so: g.rust.rustc macro.rs\n  crate_type = proc-macro\n'
+                    'build out/search/libcore.rmeta: g.rust.rustc core.rs\n  crate_type = rlib\n'
+                    'build out/search/libcore.rlib.bloaty.csv: metadata\n'
+                    'build out/search/meta_lic: metadata\n'
+                    'build out/search/libnative.so: native native.cc\n'
+                    'build out/search/libffi.so: g.rust.rustc ffi.rs\n  crate_type = cdylib\n'
+                    'build out/std/libstd.rlib: g.rust.rustc std.rs | out/search/libcore.rlib '
+                    'out/search/libdependency.dylib.so out/search/libmacro.so out/search/libcore.rmeta\n'
+                    '  crate_type = rlib\n'
+                    'build out/consumer.rlib: '+consumer_rule+' consumer.rs | out/std/libstd.rlib\n'
+                    '  crate_type = rlib\n  libraries = -L out/search\n'
+                    'build final: phony out/consumer.rlib out/search/libcore.rlib.bloaty.csv '
+                    'out/search/meta_lic out/search/libnative.so out/search/libffi.so\n')
+                db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+                indexed=graph.Graph(db)
+                plan=indexed.shard(['final'],root/'shards',max_actions=1,max_parallel=1)
+                consumer=next(job for wave in plan['waves'] for job in wave
+                    if 'out/consumer.rlib' in job['targets'])
+                expected={'out/std/libstd.rlib','out/search/libcore.rlib',
+                    'out/search/libdependency.dylib.so','out/search/libmacro.so','out/search/libcore.rmeta'}
+                self.assertEqual(set(consumer['external_inputs']),expected)
+                manifest=json.loads((root/'shards'/consumer['manifest']).read_text())
+                self.assertEqual(set(manifest['external_phony_inputs']),expected)
+                for path in expected:
+                    owner=plan['export_producers'][path]
+                    self.assertIn(owner,consumer['depends_on'])
+                    producer=next(job for wave in plan['waves'] for job in wave if job['id']==owner)
+                    self.assertIn(path,producer['export_outputs'])
+
+    def test_rust_search_rejects_a_local_crate_without_prerequisite_ordering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'build.ninja').write_text('rule g.rust.rustc\n'
+                '  command = rust-tool --crate-type=rlib -o $out $libraries\n'
+                'build out/std/libstd.rlib: g.rust.rustc\n'
+                'build out/consumer.rlib: g.rust.rustc out/std/libstd.rlib\n'
+                '  libraries = -L out/search\n'
+                'build out/search/liborphan.rlib: g.rust.rustc\n'
+                'build final: phony out/consumer.rlib out/search/liborphan.rlib\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            for export in (True,False):
+                with self.subTest(export=export), self.assertRaisesRegex(ValueError,'ordering|ancestor|prerequisite'):
+                    graph.Graph(db).shard(['final'],root/('export' if export else 'plan-only'),
+                        max_actions=10,max_parallel=1,export=export)
+
 
 if __name__ == '__main__':
     unittest.main()

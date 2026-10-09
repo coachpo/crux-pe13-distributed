@@ -15,8 +15,10 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import shlex
 import sqlite3
 import sys
+import tempfile
 
 
 def expand(value, variables):
@@ -668,6 +670,89 @@ class Graph:
             for handle in handles.values():
                 handle.close()
 
+    def rust_runtime_contracts(self, records, producers):
+        """Resolve Rust crate searches from commands and declared producers.
+
+        Soong exports transitive crate directories through ``-L`` while Ninja
+        names only direct crates. Cutting those direct edges must retain the
+        exact transitive crates; inspecting an existing OUT directory would
+        mistake old build products for source inputs.
+        """
+        known_rules = {'g.rust.rustc','g.rust.clippy','g.rust.rustdoc'}
+        rust_edges = {edge for edge,record in records.items() if record['rule'] in known_rules}
+        if not rust_edges:
+            return {}
+        closure = {'edge_ids':sorted(rust_edges),'edge_count':len(rust_edges),
+                   'outputs':sorted(path for edge in rust_edges for path in records[edge]['outputs']),
+                   'phony_outputs':[],'leaf_inputs':[],'external_inputs':[]}
+        with tempfile.TemporaryDirectory(prefix='ninja-rust-contracts-') as temporary:
+            metadata = self.export_edges(closure,[],temporary)
+        commands = {producers[edge['outputs'][0]]:edge['command']
+                    for edge in metadata['edges'] if edge.get('command')}
+        tokens = {edge:shlex.split(command) for edge,command in commands.items()}
+        crate_types = {edge:{kind for token in arguments if token.startswith('--crate-type=')
+                              for kind in token.partition('=')[2].split(',')}
+                       for edge,arguments in tokens.items()}
+        directories = {}
+        def libraries(directory):
+            if directory not in directories:
+                prefix = directory.rstrip('/')+'/'
+                found = {}
+                for row in self.db.execute(
+                        'SELECT o.path,o.edge,e.rule FROM outputs o JOIN edges e ON e.id=o.edge '
+                        'WHERE o.path>=? AND o.path<?',(prefix,prefix+'\uffff')):
+                    path,owner = row['path'],row['edge']
+                    if posixpath.dirname(path) != directory or row['rule'] not in known_rules:
+                        continue
+                    eligible = path.endswith(('.rlib','.rmeta')) or (
+                        path.endswith('.so') and crate_types.get(owner,set()) & {'dylib','proc-macro'})
+                    if eligible:
+                        if owner not in records:
+                            raise ValueError('Rust runtime producer is outside the requested closure: '+path)
+                        found[path] = owner
+                directories[directory] = found
+            return directories[directory]
+        ancestry = {}
+        def is_ancestor(owner, consumer):
+            key = (owner,consumer)
+            if key not in ancestry:
+                pending = [consumer]; visited = set(); found = False
+                while pending and not found:
+                    edge = pending.pop()
+                    if edge in visited:
+                        continue
+                    visited.add(edge)
+                    for path,kind in records[edge]['deps']:
+                        if kind == 'validation':
+                            continue
+                        before = producers.get(path)
+                        if before == owner:
+                            found = True; break
+                        if before is not None and before not in visited:
+                            pending.append(before)
+                ancestry[key] = found
+            return ancestry[key]
+        contracts = {}
+        for edge,arguments in tokens.items():
+            required = {}
+            for index,argument in enumerate(arguments):
+                operand = arguments[index+1] if argument == '-L' and index+1 < len(arguments) else (
+                    argument[2:] if argument.startswith('-L') and len(argument) > 2 else None)
+                if not operand:
+                    continue
+                if '=' in operand:
+                    kind,operand = operand.split('=',1)
+                    if kind not in ('all','crate','dependency'):
+                        continue
+                directory = canonical_path(operand.rstrip('/'))
+                required.update(libraries(directory))
+            for path,owner in required.items():
+                if not is_ancestor(owner,edge):
+                    raise ValueError('Rust runtime input lacks original producer ordering: '+path)
+            if required:
+                contracts[edge] = sorted(required)
+        return contracts
+
     def shard(self, targets, destination, max_actions=4000, max_parallel=20, export=True):
         """Pack DAG frontiers into waves; dependencies inside a job stay local.
 
@@ -694,6 +779,7 @@ class Graph:
                         if path.startswith(directory.rstrip('/')+'/'):
                             producers[path]=owner
                             break
+        rust_contracts = self.rust_runtime_contracts(records,producers)
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
         visiting = set()
@@ -802,6 +888,9 @@ class Graph:
                 # consumes the producer's other declared outputs. Import the
                 # same complete contract that the predecessor exports.
                 imported=set(selected['external_inputs'])
+                runtime_inputs=sorted({path for edge in chosen for path in rust_contracts.get(edge,[])
+                                       if path not in own_outputs})
+                imported.update(runtime_inputs)
                 for path in list(imported):
                     imported.update(records[producers[path]]['outputs'])
                 selected['external_inputs']=sorted(imported)
@@ -818,9 +907,14 @@ class Graph:
                 job = {'id':identity,'wave':wave_number,'action_count':len(chosen),
                        'targets':job_targets,'depends_on':upstream,
                        'external_inputs':selected['external_inputs']}
+                if runtime_inputs:
+                    job['rust_runtime_inputs'] = runtime_inputs
                 if export:
                     directory = Path(destination)/identity
-                    self.export_edges(selected,job_targets,directory,defer_validations=True)
+                    manifest = self.export_edges(selected,job_targets,directory,defer_validations=True)
+                    if runtime_inputs:
+                        manifest['rust_runtime_inputs'] = runtime_inputs
+                        (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
                     job['manifest'] = f'{identity}/manifest.json'
                 wave_jobs.append(job)
             waves.append(wave_jobs)

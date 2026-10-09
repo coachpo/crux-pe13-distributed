@@ -371,6 +371,117 @@ class SchedulerTests(unittest.TestCase):
                     scheduler.main()
             prepare.assert_not_called()
 
+    def graph_overlay_fixture(self, root):
+        task, plan, _ = self.lazy_fixture(root)
+        base_path = root / 'task.json'
+        base = json.loads(base_path.read_text())
+        base.update(schema_version=1, slice_path='/source/.crux-task/graph')
+        base['files'].append({'path': '/source/source.c', 'type': 'file', 'mode': 0o644,
+                              'size': 10, 'sha256': 'f' * 64, 'reasons': ['graph-leaf']})
+        base_path.write_text(json.dumps(base))
+        original_sha = scheduler.frozen_manifest(task)
+        inline = {key: value for key, value in base.items() if key not in {'archive', 'digest_cache'}}
+        inline_bytes = (json.dumps(inline, indent=2, sort_keys=True) + '\n').encode()
+        final = json.loads(json.dumps(inline))
+        variant_sha = 'd' * 64
+        final['manifest_sha256'] = variant_sha
+        final['files'][0].update(sha256=variant_sha, size=100)
+        final_path = root / 'final-bundle.json'
+        final_bytes = (json.dumps(final, indent=2, sort_keys=True) + '\n').encode()
+        final_path.write_bytes(final_bytes)
+        final_sha = scheduler.digest(final_path)
+        archive_sha = 'b' * 64
+        envelope = {'schema_version': 1, 'kind': 'graph-bundle-overlay', 'source_root': '/source',
+                    'slice_path': base['slice_path'], 'base_source_specs_preserved': 1,
+                    'new_source_spec_count': 0,
+                    'source_identity': {'new_source_paths': [], 'changed_source_paths': [],
+                                        'baseline_source_specs': 1, 'required_source_specs': 1,
+                                        'all_required_sources_equal_baseline': True, 'baseline_archive_verified': True,
+                                        'baseline_inline_bundle_verified': True, 'source_gate_errors': [],
+                                        'allowed_generated_inputs': []},
+                    'archive': {'name': 'graph-overlay.tar.zst', 'size': 5, 'sha256': archive_sha},
+                    'baseline': {'archive_name': base['archive']['name'], 'archive_size': base['archive']['size'],
+                                 'archive_sha256': base['archive']['sha256'], 'metadata_path': str(base_path),
+                                 'metadata_sha256': scheduler.digest(base_path), 'manifest_sha256': original_sha,
+                                 'bundle_sha256': hashlib.sha256(inline_bytes).hexdigest()},
+                    'final': {'manifest_sha256': variant_sha, 'bundle_sha256': final_sha,
+                              'metadata_path': str(final_path), 'metadata_sha256': final_sha},
+                    'changed_members': [
+                        {'path': '/source/.crux-task/graph/manifest.json', 'type': 'file', 'mode': 0o644,
+                         'size': 100, 'baseline_sha256': original_sha, 'final_sha256': variant_sha},
+                        {'path': '/source/.crux-task/graph/bundle.json', 'type': 'file', 'mode': 0o644,
+                         'size': len(final_bytes), 'baseline_sha256': hashlib.sha256(inline_bytes).hexdigest(),
+                         'final_sha256': final_sha}]}
+        envelope_path = root / 'overlay-envelope.json'
+        envelope_path.write_text(json.dumps(envelope))
+        proof = root / 'proof.json'
+        proof.write_text('Root-reviewed native commands preserved')
+        primary_part = {'name': base['archive']['name'], 'path': str(root / base['archive']['name']),
+                        'size': base['archive']['size'], 'sha256': base['archive']['sha256'], 'uploaded': True,
+                        'api_size': base['archive']['size'], 'api_digest': 'sha256:' + base['archive']['sha256']}
+        overlay_part = {'name': 'graph-overlay.tar.zst', 'size': 5, 'sha256': archive_sha, 'uploaded': True,
+                        'api_size': 5, 'api_digest': 'sha256:' + archive_sha}
+        correction = {'approved': True, 'original_manifest_sha256': original_sha,
+                      'variant_manifest_sha256': variant_sha,
+                      'variant_provenance': {'verified': True, 'proof': {'path': str(proof),
+                                                                      'sha256': scheduler.digest(proof)}},
+                      'primary_input': {'metadata': {'path': str(base_path), 'sha256': scheduler.digest(base_path)},
+                                        'parts': [primary_part], 'archive_sha256': base['archive']['sha256'],
+                                        'manifest_sha256': original_sha},
+                      'source_overlays': [{'assets': ['earlier-source-overlay.tar.zst']}],
+                      'graph_bundle_overlay': {'envelope': {'path': str(envelope_path),
+                                                           'sha256': scheduler.digest(envelope_path)},
+                                               'parts': [overlay_part]}}
+        return task, plan, base, final, envelope, correction
+
+    def test_graph_overlay_keeps_base_primary_and_binds_final_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, base, final, envelope, correction = self.graph_overlay_fixture(root)
+            primary_before = (root / 'task.json').read_bytes()
+            state = {'input_corrections': {'task': correction}, 'worker_sha': 'a' * 40}
+            prepared = scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            control = scheduler.apply_input_correction(state, prepared, task)
+            self.assertEqual(control['capsule_assets'], [base['archive']['name']])
+            self.assertEqual(control['source_overlays'], [{'assets': ['earlier-source-overlay.tar.zst']},
+                                                        {'assets': ['graph-overlay.tar.zst']}])
+            self.assertEqual(state['inputs']['task']['primary_manifest_sha256'], base['manifest_sha256'])
+            self.assertEqual(state['inputs']['task']['manifest_sha256'], final['manifest_sha256'])
+            self.assertEqual(state['inputs']['task']['archive_sha256'], base['archive']['sha256'])
+            self.assertEqual((root / 'task.json').read_bytes(), primary_before)
+            run = {'run_id': 456, 'url': 'https://github.com/run/456', 'headSha': 'a' * 40,
+                   'jobs': [self.compile_job('task', 'success')], 'input_corrections': {'task': correction}}
+            scheduler.record_successful_tasks(state, {'id': 0, 'tasks': [task]}, run)
+            self.assertEqual(state['task_runs']['task']['manifest_sha256'], final['manifest_sha256'])
+
+    def test_graph_overlay_rejects_source_changes_unverified_asset_and_unprepared_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, base, final, envelope, correction = self.graph_overlay_fixture(root)
+            state = {'input_corrections': {'task': correction}}
+            prepared = {'id': 'task', 'capsule_assets': [base['archive']['name']]}
+            with self.assertRaisesRegex(ValueError, 'has not been prepared'):
+                scheduler.apply_input_correction(state, prepared, task)
+            correction['graph_bundle_overlay']['parts'][0]['uploaded'] = False
+            with self.assertRaisesRegex(ValueError, 'not API verified'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            correction['graph_bundle_overlay']['parts'][0]['uploaded'] = True
+            envelope_path = Path(correction['graph_bundle_overlay']['envelope']['path'])
+            envelope['source_identity']['source_gate_errors'] = ['Missing input: /source/missing.h']
+            envelope_path.write_text(json.dumps(envelope))
+            correction['graph_bundle_overlay']['envelope']['sha256'] = scheduler.digest(envelope_path)
+            with self.assertRaisesRegex(ValueError, 'source proof did not verify'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            envelope['source_identity']['source_gate_errors'] = []
+            final['files'][1]['sha256'] = 'c' * 64
+            final_path = Path(envelope['final']['metadata_path'])
+            final_path.write_text(json.dumps(final))
+            envelope['final'].update(bundle_sha256=scheduler.digest(final_path), metadata_sha256=scheduler.digest(final_path))
+            envelope_path.write_text(json.dumps(envelope))
+            correction['graph_bundle_overlay']['envelope']['sha256'] = scheduler.digest(envelope_path)
+            with self.assertRaisesRegex(ValueError, 'non-graph source specifications'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+
     def test_failed_wave_retry_preserves_previous_run_and_pins_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

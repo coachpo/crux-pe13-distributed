@@ -224,6 +224,18 @@ def apply_input_correction(state, task, original_task=None, verify_proof=True):
             dependencies.append(dict(dependency))
             bound[identity] = dependency
         result['dependencies'] = dependencies
+    if 'graph_bundle_overlay' in correction:
+        record = state.get('inputs', {}).get(task['id'], {})
+        primary = correction.get('primary_input', {})
+        if record.get('graph_bundle_overlay') != correction['graph_bundle_overlay'] \
+                or record.get('primary_manifest_sha256') != primary.get('manifest_sha256') \
+                or record.get('manifest_sha256') != correction.get('variant_manifest_sha256') \
+                or record.get('metadata_sha256') != primary.get('metadata', {}).get('sha256') \
+                or record.get('uploaded') is not True \
+                or task.get('capsule_assets') != [part['name'] for part in record.get('parts', [])]:
+            raise ValueError('Graph bundle overlay has not been prepared against this primary input: ' + task['id'])
+        layer = {'assets': [part['name'] for part in correction['graph_bundle_overlay']['parts']]}
+        result['source_overlays'] = [*result.get('source_overlays', []), layer]
     return result
 
 
@@ -264,6 +276,113 @@ def checked_source_inputs(state, metadata):
     return current
 
 
+def verified_parts(archive, parts, description):
+    if not isinstance(parts, list) or not parts or sum(part['size'] for part in parts) != archive['size']:
+        raise ValueError(description + ' has invalid asset parts')
+    names = [archive['name']] if len(parts) == 1 else [
+        archive['name'] + f'.part-{index:04d}' for index in range(len(parts))]
+    if [part['name'] for part in parts] != names or (len(parts) == 1 and parts[0]['sha256'] != archive['sha256']):
+        raise ValueError(description + ' has different asset names/identity')
+    for part in parts:
+        if part.get('uploaded') is not True or part.get('api_size') != part['size'] \
+                or part.get('api_digest') != 'sha256:' + part['sha256'] \
+                or not re.fullmatch(r'[a-f0-9]{64}', part['sha256']):
+            raise ValueError(description + ' asset is not API verified: ' + part['name'])
+
+
+def graph_bundle_overlay(plan, task, correction, base, primary, variant):
+    descriptor = correction['graph_bundle_overlay']
+    spec = descriptor['envelope']
+    validate_frozen_file(spec)
+    envelope = json.loads(Path(spec['path']).read_text())
+    runtime = Path(base['slice_path'])
+    repo = Path(__file__).resolve().parents[1]
+    def local_path(value):
+        path = Path(value)
+        return (path if path.is_absolute() else repo / path).resolve()
+    baseline = envelope['baseline']
+    expected = {'archive_name': base['archive']['name'], 'archive_size': base['archive']['size'],
+                'archive_sha256': primary['archive_sha256'], 'metadata_sha256': primary['metadata']['sha256'],
+                'manifest_sha256': base['manifest_sha256']}
+    inline = {key: value for key, value in base.items() if key not in {'archive', 'digest_cache'}}
+    inline_bytes = (json.dumps(inline, indent=2, sort_keys=True) + '\n').encode()
+    baseline_bundle = hashlib.sha256(inline_bytes).hexdigest()
+    if envelope.get('schema_version') != 1 or envelope.get('kind') != 'graph-bundle-overlay' \
+            or envelope['source_root'] != plan['source_root'] or envelope['slice_path'] != str(runtime) \
+            or any(baseline.get(key) != value for key, value in expected.items()) \
+            or local_path(baseline['metadata_path']) != local_path(primary['metadata']['path']) \
+            or baseline['bundle_sha256'] != baseline_bundle:
+        raise ValueError('Graph overlay baseline differs from the immutable primary input: ' + task['id'])
+    final = envelope['final']
+    final_path = local_path(final['metadata_path'])
+    final_bytes = final_path.read_bytes()
+    final_sha = hashlib.sha256(final_bytes).hexdigest()
+    metadata = json.loads(final_bytes)
+    if final_sha != final['metadata_sha256'] or final_sha != final['bundle_sha256'] \
+            or final['manifest_sha256'] != variant or metadata['manifest_sha256'] != variant \
+            or metadata.get('schema_version') != 1 or metadata['source_root'] != base['source_root'] \
+            or metadata['out_root'] != base['out_root'] or metadata['slice_path'] != str(runtime):
+        raise ValueError('Graph overlay final bundle/manifest identity differs: ' + task['id'])
+    def split(metadata):
+        graph, sources = {}, {}
+        for item in metadata['files']:
+            path = Path(item['path'])
+            if not path.is_absolute() or '..' in path.parts:
+                raise ValueError('Invalid graph overlay input path: ' + str(path))
+            within = path.is_relative_to(runtime)
+            if 'task-graph' in item.get('reasons', []) and not within:
+                raise ValueError('Task graph input lies outside its runtime graph: ' + str(path))
+            group = graph if within else sources
+            if item['path'] in group or path == runtime / 'bundle.json':
+                raise ValueError('Duplicate or self-referencing graph bundle input: ' + str(path))
+            if within and item['type'] != 'file':
+                raise ValueError('Graph overlay runtime inputs must be regular files')
+            group[item['path']] = item
+        return graph, sources
+    old_graph, old_sources = split(base)
+    new_graph, new_sources = split(metadata)
+    source_proof = envelope['source_identity']
+    if source_proof.get('all_required_sources_equal_baseline') is not True \
+            or source_proof.get('baseline_archive_verified') is not True \
+            or source_proof.get('baseline_inline_bundle_verified') is not True \
+            or source_proof.get('source_gate_errors') != [] or source_proof.get('allowed_generated_inputs') != [] \
+            or type(source_proof.get('baseline_source_specs')) is not int \
+            or source_proof['baseline_source_specs'] != len(old_sources) \
+            or type(source_proof.get('required_source_specs')) is not int \
+            or not 0 <= source_proof['required_source_specs'] <= len(old_sources):
+        raise ValueError('Graph overlay source proof did not verify the baseline subset: ' + task['id'])
+    if new_sources != old_sources or type(envelope['base_source_specs_preserved']) is not int \
+            or envelope['base_source_specs_preserved'] != len(old_sources) \
+            or envelope['new_source_spec_count'] != 0 or source_proof['new_source_paths'] \
+            or source_proof['changed_source_paths']:
+        raise ValueError('Graph overlay changes non-graph source specifications: ' + task['id'])
+    if set(old_graph) - set(new_graph):
+        raise ValueError('Graph overlay cannot remove existing runtime graph files')
+    def graph_identity(item):
+        return {key: item[key] for key in ('type', 'mode', 'size', 'sha256')}
+    changed = {path for path, item in new_graph.items()
+               if path not in old_graph or graph_identity(item) != graph_identity(old_graph[path])}
+    bundle_path = str(runtime / 'bundle.json')
+    members = {item['path']: item for item in envelope['changed_members']}
+    if len(members) != len(envelope['changed_members']) or set(members) != changed | {bundle_path} \
+            or new_graph.get(str(runtime / 'manifest.json'), {}).get('sha256') != variant:
+        raise ValueError('Graph overlay changed members differ from the final graph specifications')
+    for path, member in members.items():
+        if not Path(path).is_relative_to(runtime) or member['type'] != 'file':
+            raise ValueError('Graph overlay member lies outside its runtime graph')
+        if path == bundle_path:
+            old_sha, new_sha, size, mode = baseline_bundle, final_sha, len(final_bytes), 0o644
+        else:
+            item = new_graph[path]
+            old_sha = old_graph.get(path, {}).get('sha256')
+            new_sha, size, mode = item['sha256'], item['size'], item['mode']
+        if member['baseline_sha256'] != old_sha or member['final_sha256'] != new_sha \
+                or member['size'] != size or member['mode'] != mode:
+            raise ValueError('Graph overlay member identity differs: ' + path)
+    verified_parts(envelope['archive'], descriptor['parts'], 'Graph overlay')
+    return metadata, {'path': str(final_path), 'sha256': final_sha}
+
+
 def prepare_primary_variant(plan, task, correction, state, state_path):
     variant, original = correction_manifest(task, correction, verify_proof=True)
     if not original:
@@ -280,34 +399,33 @@ def prepare_primary_variant(plan, task, correction, state, state_path):
     metadata = json.loads(metadata_bytes)
     if metadata.get('schema_version') != 1 or metadata['source_root'] != plan['source_root'] \
             or metadata['out_root'] != plan['preparation']['out_root'] \
-            or primary['manifest_sha256'] != variant or metadata['manifest_sha256'] != variant \
+            or metadata['manifest_sha256'] != primary['manifest_sha256'] \
             or primary['archive_sha256'] != metadata['archive']['sha256']:
         raise ValueError('Approved primary input has a different manifest/source/archive identity: ' + task['id'])
     manifest = json.loads(Path(task['preparation']['manifest']).read_text())
     runtime = Path(plan['source_root']) / manifest.get('runtime_dir', '.crux-task/graph')
     bundled = {item['path']: item for item in metadata['files']}
-    if metadata.get('slice_path') != str(runtime) or bundled.get(str(runtime / 'manifest.json'), {}).get('sha256') != variant:
+    if metadata.get('slice_path') != str(runtime) or bundled.get(str(runtime / 'manifest.json'), {}).get('sha256') != primary['manifest_sha256']:
         raise ValueError('Approved primary input omits its variant manifest: ' + task['id'])
     archive = metadata['archive']
     parts = primary['parts']
-    if not isinstance(parts, list) or not parts or sum(part['size'] for part in parts) != archive['size']:
-        raise ValueError('Approved primary input has invalid asset parts: ' + task['id'])
-    expected_names = [archive['name']] if len(parts) == 1 else [
-        archive['name'] + f'.part-{index:04d}' for index in range(len(parts))]
-    if [part['name'] for part in parts] != expected_names or (
-            len(parts) == 1 and parts[0]['sha256'] != primary['archive_sha256']):
-        raise ValueError('Approved primary input has different asset names/identity: ' + task['id'])
-    for part in parts:
-        if part.get('uploaded') is not True or part.get('api_size') != part['size'] \
-                or part.get('api_digest') != 'sha256:' + part['sha256'] \
-                or not re.fullmatch(r'[a-f0-9]{64}', part['sha256']):
-            raise ValueError('Approved primary input asset is not API verified: ' + part['name'])
-    current = checked_source_inputs(state, metadata)
+    verified_parts(archive, parts, 'Approved primary input')
+    effective = metadata
+    effective_spec = None
+    if 'graph_bundle_overlay' in correction:
+        effective, effective_spec = graph_bundle_overlay(plan, task, correction, metadata, primary, variant)
+    elif primary['manifest_sha256'] != variant:
+        raise ValueError('Approved primary input has a different final manifest identity: ' + task['id'])
+    current = checked_source_inputs(state, effective)
     record = {'status': 'ready', 'uploaded': True, 'primary_variant': True,
               'archive_sha256': primary['archive_sha256'], 'metadata': spec['path'],
               'metadata_sha256': spec['sha256'], 'manifest_sha256': variant,
               'original_manifest_sha256': original, 'variant_provenance': copy.deepcopy(correction['variant_provenance']),
               'parts': copy.deepcopy(parts)}
+    if effective_spec:
+        record.update(primary_manifest_sha256=primary['manifest_sha256'], effective_metadata=effective_spec,
+                      effective_bundle_sha256=effective_spec['sha256'],
+                      graph_bundle_overlay=copy.deepcopy(correction['graph_bundle_overlay']))
     frozen = state.setdefault('frozen_inputs', {})
     changed = any(path not in frozen for path in current)
     frozen.update(current)
