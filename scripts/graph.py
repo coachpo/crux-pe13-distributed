@@ -367,6 +367,15 @@ def append_implicit_outputs(raw, extra):
     return first+separator+rest
 
 
+def append_order_only_inputs(raw, extra):
+    if not extra:
+        return raw
+    first,separator,rest=logical(raw).partition('\n')
+    before,validation_separator,validation=first.partition(' |@ ')
+    before += (' ' if ' || ' in before else ' || ')+' '.join(ninja_escape(path) for path in extra)
+    return before+validation_separator+validation+separator+rest
+
+
 def adapt_graph(database, profile, replace_profile=False):
     graph=Graph(database)
     for adaptation in profile.get('command_adaptations',[]):
@@ -491,10 +500,80 @@ class Graph:
 
     def slice(self, targets, destination, external=(), runtime_dir='.crux-task/graph'):
         closure = self.closure(targets,external)
-        return self.export_edges(closure,targets,destination,runtime_dir)
+        selected_records,_=self.edge_records(closure['edge_ids'])
+        orders={}
+        if any(record['rule'] in {'g.rust.rustc','g.rust.clippy','g.rust.rustdoc'}
+               for record in selected_records.values()):
+            original=self.closure(targets)
+            records,producers=self.edge_records(original['edge_ids'])
+            contracts=self.rust_runtime_contracts(records,producers)
+            selected=set(closure['edge_ids']); own_outputs=set(closure['outputs'])
+            closure['external_inputs']=sorted(set(closure['external_inputs']) | {
+                path for edge in selected for path in contracts.get(edge,[]) if path not in own_outputs})
+            orders=self.local_runtime_order_inputs(closure,contracts,records,producers)
+        return self.export_edges(closure,targets,destination,runtime_dir,runtime_order_inputs=orders)
 
-    def export_edges(self, closure, targets, destination, runtime_dir='.crux-task/graph', defer_validations=False):
+    def edge_records(self, edge_ids):
+        records={};producers={}
+        for batch in chunks(edge_ids):
+            marks=','.join('?' for _ in batch)
+            for row in self.db.execute(f'SELECT * FROM edges WHERE id IN ({marks})',batch):
+                record={'rule':row['rule'],'outputs':json.loads(row['outputs']),
+                        'deps':json.loads(row['deps'])}
+                records[row['id']]=record
+                for path in record['outputs']:
+                    producers[path]=row['id']
+        for record in records.values():
+            for path,_ in record['deps']:
+                if path not in producers:
+                    for directory,owner in self.side_output_dirs.items():
+                        if path.startswith(directory.rstrip('/')+'/'):
+                            producers[path]=owner
+                            break
+        return records,producers
+
+    def local_runtime_order_inputs(self, closure, contracts, records, producers):
+        """Preserve runtime readiness when an external cut removes an ancestor.
+
+        A retained std archive can be a valid input before a locally rebuilt
+        core archive exists. The original std-to-core edge is absent after the
+        cut, so consumers need that same local ordering stated explicitly.
+        """
+        selected=set(closure['edge_ids']); external=set(closure['external_inputs'])
+        ancestry={}
+        def ready_before(owner,consumer):
+            key=(owner,consumer)
+            if key not in ancestry:
+                pending=[consumer];visited=set();found=False
+                while pending and not found:
+                    edge=pending.pop()
+                    if edge in visited:
+                        continue
+                    visited.add(edge)
+                    for path,kind in records[edge]['deps']:
+                        if kind=='validation' or path in external:
+                            continue
+                        before=producers.get(path)
+                        if before==owner:
+                            found=True;break
+                        if before in selected and before not in visited:
+                            pending.append(before)
+                ancestry[key]=found
+            return ancestry[key]
+        orders={}
+        for edge,required in contracts.items():
+            if edge not in selected:
+                continue
+            missing=[path for path in required if producers[path] in selected
+                     and not ready_before(producers[path],edge)]
+            if missing:
+                orders[edge]=sorted(missing)
+        return orders
+
+    def export_edges(self, closure, targets, destination, runtime_dir='.crux-task/graph', defer_validations=False,
+                     runtime_order_inputs=None):
         destination = Path(destination); destination.mkdir(parents=True,exist_ok=True)
+        runtime_order_inputs=runtime_order_inputs or {}
         selected = set(closure['edge_ids'])
         rules = set()
         for batch in chunks(selected):
@@ -570,6 +649,7 @@ class Graph:
                     if kind == 'build':
                         extra=[directory for directory,owner in self.side_output_dirs.items() if owner == row['id']]
                         raw=append_implicit_outputs(raw,extra)
+                        raw=append_order_only_inputs(raw,runtime_order_inputs.get(row['id'],[]))
                         if defer_validations:
                             text=logical(raw); declaration,newline,rest=text.partition('\n')
                             if '|@' in declaration:
@@ -664,6 +744,8 @@ class Graph:
                 'synthetic_aliases':synthetic_aliases,
                 'external_phony_inputs':external_phonies,
                 **{k:v for k,v in closure.items() if k != 'edge_ids'}}
+            if runtime_order_inputs:
+                manifest['runtime_order_inputs']={str(edge):paths for edge,paths in sorted(runtime_order_inputs.items())}
             (destination/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
             return manifest
         finally:
@@ -762,23 +844,7 @@ class Graph:
         if max_actions < 1 or max_parallel < 1:
             raise ValueError('shard capacities must be positive')
         complete = self.closure(targets)
-        records = {}
-        producers = {}
-        for batch in chunks(complete['edge_ids']):
-            marks = ','.join('?' for _ in batch)
-            for row in self.db.execute(f'SELECT * FROM edges WHERE id IN ({marks})',batch):
-                record = {'rule':row['rule'],'outputs':json.loads(row['outputs']),
-                          'deps':json.loads(row['deps'])}
-                records[row['id']] = record
-                for path in record['outputs']:
-                    producers[path] = row['id']
-        for record in records.values():
-            for path,_ in record['deps']:
-                if path not in producers:
-                    for directory,owner in self.side_output_dirs.items():
-                        if path.startswith(directory.rstrip('/')+'/'):
-                            producers[path]=owner
-                            break
+        records,producers = self.edge_records(complete['edge_ids'])
         rust_contracts = self.rust_runtime_contracts(records,producers)
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
@@ -911,7 +977,9 @@ class Graph:
                     job['rust_runtime_inputs'] = runtime_inputs
                 if export:
                     directory = Path(destination)/identity
-                    manifest = self.export_edges(selected,job_targets,directory,defer_validations=True)
+                    orders=self.local_runtime_order_inputs(selected,rust_contracts,records,producers)
+                    manifest = self.export_edges(selected,job_targets,directory,defer_validations=True,
+                                                 runtime_order_inputs=orders)
                     if runtime_inputs:
                         manifest['rust_runtime_inputs'] = runtime_inputs
                         (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

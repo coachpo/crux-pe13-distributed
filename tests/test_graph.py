@@ -443,6 +443,100 @@ Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
                     producer=next(job for wave in plan['waves'] for job in wave if job['id']==owner)
                     self.assertIn(path,producer['export_outputs'])
 
+    def test_retained_rust_std_keeps_local_core_ready_after_an_external_cut(self):
+        if not shutil.which('ninja'):
+            self.skipTest('native Ninja executable is required for cold Rust ordering validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);producer=root/'producer';consumer=root/'consumer'
+            producer.mkdir();consumer.mkdir()
+            (producer/'fake_rust.py').write_text('''import argparse
+from pathlib import Path
+import shlex
+import sys
+
+expanded=[]
+for arg in sys.argv[1:]:
+    expanded.extend(shlex.split(Path(arg[1:]).read_text()) if arg.startswith('@') else [arg])
+parser=argparse.ArgumentParser()
+parser.add_argument('--crate-type')
+parser.add_argument('--sysroot')
+parser.add_argument('-o', required=True)
+parser.add_argument('--extern', action='append', default=[])
+parser.add_argument('-L', action='append', default=[])
+parser.add_argument('--source', required=True)
+parser.add_argument('sources', nargs='*')
+args=parser.parse_args(expanded)
+if args.source == 'std.rs':
+    raise RuntimeError('the retained std action must not run again')
+payload=Path(args.source).read_text()
+externs=dict(value.split('=',1) for value in args.extern)
+if 'std' in externs:
+    if Path(externs['std']).read_text() != 'requires=core\\nretained std':
+        raise RuntimeError('invalid retained std metadata')
+    core=next((Path(directory)/'libcore.rlib' for directory in args.L
+               if (Path(directory)/'libcore.rlib').is_file()), None)
+    if core is None:
+        raise RuntimeError('cannot find local core which retained std depends on')
+    payload=core.read_text()
+output=Path(args.o)
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text(payload)
+Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
+''')
+            for name in ('core','std','consumer'):
+                (producer/(name+'.rs')).write_text(name+' source payload')
+            (producer/'build.ninja').write_text('rule g.rust.rustc\n'
+                '  command = python3 fake_rust.py --crate-type=rlib --sysroot=/dev/null '
+                '-o $out $in $libraries @$out.rsp\n'
+                '  depfile = $out.d\n  deps = gcc\n'
+                '  rspfile = $out.rsp\n  rspfile_content = --source $in_newline\n'
+                'build out/core/libcore.rlib: g.rust.rustc core.rs\n'
+                'build out/std/libstd.rlib: g.rust.rustc std.rs | out/core/libcore.rlib\n'
+                '  libraries = --extern core=out/core/libcore.rlib\n'
+                'build out/consumer.rlib: g.rust.rustc consumer.rs | out/std/libstd.rlib\n'
+                '  libraries = --extern std=out/std/libstd.rlib -L out/core\n')
+            db=root/'index.sqlite';graph.index_graph(producer/'build.ninja',producer,db)
+            indexed=graph.Graph(db)
+            original=indexed.slice(['out/consumer.rlib'],root/'original-graph')
+            retained=producer/'out/std/libstd.rlib'
+            retained.parent.mkdir(parents=True)
+            retained.write_text('requires=core\nretained std')
+            archive=root/'retained-std.tar'
+            with tarfile.open(archive,'w') as output:
+                output.add(retained,arcname='out/std/libstd.rlib')
+            with tarfile.open(archive) as output:
+                self.assertEqual(output.getnames(),['out/std/libstd.rlib'])
+                output.extractall(consumer)
+            for name in ('fake_rust.py','core.rs','consumer.rs'):
+                shutil.copy2(producer/name,consumer/name)
+            self.assertFalse((consumer/'out/core/libcore.rlib').exists())
+            manifest=indexed.slice(['out/core/libcore.rlib','out/consumer.rlib'],
+                consumer/'.crux-task/graph',external=['out/std/libstd.rlib'])
+            self.assertEqual(manifest['outputs'],['out/consumer.rlib','out/core/libcore.rlib'])
+            self.assertEqual(manifest['external_inputs'],['out/std/libstd.rlib'])
+            self.assertEqual(manifest['leaf_inputs'],['consumer.rs','core.rs'])
+            original_edges={edge['outputs'][0]:edge for edge in original['edges']}
+            for edge in manifest['edges']:
+                before=original_edges[edge['outputs'][0]]
+                for key in ('command','depfile','rspfile','rspfile_content'):
+                    self.assertEqual(edge[key],before[key])
+            native=subprocess.run(['ninja','-f','build.ninja','-t','commands','out/consumer.rlib'],
+                cwd=producer,check=True,capture_output=True,text=True)
+            self.assertEqual(native.stdout.splitlines(),original['commands'])
+            query=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','query',
+                'out/consumer.rlib'],cwd=consumer,check=True,capture_output=True,text=True)
+            self.assertIn('    || out/core/libcore.rlib\n',query.stdout)
+            sliced=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','commands',
+                'out/consumer.rlib'],cwd=consumer,check=True,capture_output=True,text=True)
+            self.assertEqual(sliced.stdout.splitlines(),manifest['commands'])
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-j4','-d','keeprsp',
+                'out/core/libcore.rlib','out/consumer.rlib'],cwd=consumer,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertEqual((consumer/'out/consumer.rlib').read_text(),'core source payload')
+            self.assertEqual((consumer/'out/std/libstd.rlib').read_text(),'requires=core\nretained std')
+            for edge in manifest['edges']:
+                self.assertEqual((consumer/edge['rspfile']).read_text(),edge['rspfile_content'])
+
     def test_rust_search_rejects_a_local_crate_without_prerequisite_ordering(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
