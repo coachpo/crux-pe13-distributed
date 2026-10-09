@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       producer_runs:
-        description: JSON producers with run_id, artifact, expected_worker_commit and expected_manifest_sha256
+        description: JSON bound producers including exactly one roles=["frontend_identity"] producer
         required: true
         type: string
       accepted_worker_commits:
@@ -35,7 +35,7 @@ jobs:
           sudo mkdir -p /home/qingli
           sudo chown "$(id -u):$(id -g)" /home/qingli
           sudo apt-get update
-          sudo apt-get install -y zstd u-boot-tools device-tree-compiler
+          sudo apt-get install -y zstd u-boot-tools device-tree-compiler e2fsprogs android-sdk-libsparse-utils
       - name: Download exact successful image producer artifacts
         shell: bash
         run: |
@@ -55,13 +55,14 @@ jobs:
               subprocess.run(['gh', 'run', 'download', str(producer['run_id']),
                               '--name', producer['artifact'], '--dir', str(staging / 'producers' / str(index))], check=True)
           PY
-      - name: Verify images, paired symbols and both strict U-Boot FITs
+      - name: Verify actual image properties, paired symbols and both U-Boot FITs
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/assemble.py --producer-runs "$RUNNER_TEMP/producer-runs.json" \
             --dependency-root "$RUNNER_TEMP/producers" --output-dir "$RUNNER_TEMP/result" \
-            --accepted-worker-commits "$ACCEPTED_WORKER_COMMITS"
+            --accepted-worker-commits "$ACCEPTED_WORKER_COMMITS" \
+            --expected-identity inputs/frontend-identity.json --debugfs debugfs --simg2img simg2img
       - name: Upload image archive and assembly records
         if: always()
         uses: actions/upload-artifact@v7.0.2

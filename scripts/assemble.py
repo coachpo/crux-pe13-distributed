@@ -17,10 +17,12 @@ import time
 
 import worker
 import package_fits
+import verify_properties
 
 
 REQUIRED_IMAGES = ("boot.img", "recovery.img", "system.img", "vendor.img")
 ARCHIVE_NAME = "crux-pe13-build-images.tar.zst"
+EXPECTED_IDENTITY = Path(__file__).resolve().parents[1] / "inputs/frontend-identity.json"
 
 
 README = """# Crux PixelExperience 13 build images
@@ -63,6 +65,9 @@ def validate_producers(producers, accepted_worker_commits):
             raise ValueError("producer worker commit has no explicit approval")
         if not re.fullmatch(r'[a-f0-9]{64}', producer.get("expected_manifest_sha256", "")):
             raise ValueError("producer must bind its expected Ninja manifest SHA256")
+        roles = producer.get("roles", [])
+        if not isinstance(roles, list) or any(not isinstance(role, str) or not role for role in roles):
+            raise ValueError("producer roles must be an explicit string array")
         key = (str(producer["run_id"]), producer["artifact"])
         if key in seen:
             raise ValueError("duplicate producer run and artifact")
@@ -93,15 +98,64 @@ def optional_image(name):
     } or name.endswith(".dtb")
 
 
+def verify_final_properties(accepted, native_receipts, producers, out_root, product_dir,
+                            expected_identity, report_path, debugfs, simg2img):
+    """Require the bound native frontend producer and inspect actual image files."""
+    report = {"schema_version": 1, "status": "failed", "errors": [],
+              "provenance_qualification": verify_properties.PROVENANCE_LIMIT}
+    try:
+        expected_identity = Path(expected_identity)
+        expected = json.loads(verify_properties.read_regular(expected_identity))
+        verify_properties.validate_expected(expected)
+        indexes = [index for index, producer in enumerate(producers) if "frontend_identity" in producer.get("roles", [])]
+        if len(indexes) != 1:
+            raise ValueError("exactly one bound frontend_identity producer is required")
+        index = indexes[0]
+        native = native_receipts[index]
+        paths = {"build_number": out_root / "soong/build_number.txt",
+                 "fingerprint": product_dir / "build_fingerprint.txt",
+                 "thumbprint": product_dir / "build_thumbprint.txt",
+                 "buildinfo": product_dir / "obj/PACKAGING/system_build_prop_intermediates/buildinfo.prop"}
+        members = {spec["path"]: spec for spec in native["outputs"]}
+        for role, path in paths.items():
+            spec = members.get(str(path))
+            if spec is None or spec != accepted.get(str(path)) or spec["type"] != "file" or spec["size"] <= 0:
+                raise ValueError("frontend_identity producer lacks its fresh regular member: " + str(path))
+        scalar_errors = []
+        scalar_expected = {"build_number": expected["required_buildinfo"]["ro.build.version.incremental"].encode(),
+                           "fingerprint": (expected["required_final_keys"]["ro.build.fingerprint"] + "\n").encode()}
+        for role, expected_bytes in scalar_expected.items():
+            if verify_properties.read_regular(paths[role]) != expected_bytes:
+                scalar_errors.append({"scope": "frontend " + role, "reason": "actual verified scalar differs from admitted identity"})
+        images = {partition: product_dir / (partition + ".img") for partition in verify_properties.NATIVE_PARTITIONS
+                  if str(product_dir / (partition + ".img")) in accepted}
+        report = verify_properties.verify_images(expected, paths["buildinfo"], paths["thumbprint"], images, debugfs, simg2img)
+        report["errors"].extend(scalar_errors)
+        if scalar_errors:
+            report["status"] = "failed"
+        report["expected_identity"] = {"source": str(expected_identity), "sha256": worker.digest(expected_identity)}
+        report["frontend_producer"] = {**producers[index], "id": native["id"],
+                                       "archive_sha256": native["archive_sha256"],
+                                       "members": {role: members[str(path)] for role, path in paths.items()}}
+    except (ValueError, OSError, KeyError, json.JSONDecodeError) as error:
+        report["status"] = "blocked" if isinstance(error, verify_properties.MissingInspectionTool) else "failed"
+        report["errors"].append({"reason": str(error)})
+    Path(report_path).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
 def assemble(producers, dependency_root, output_dir, source_selection,
              product_dir=None, source_root=None, build_profile="aosp_crux-userdebug",
-             accepted_worker_commits=None, with_fits=True, mkimage="mkimage", fdtoverlay="fdtoverlay"):
+             accepted_worker_commits=None, with_fits=True, mkimage="mkimage", fdtoverlay="fdtoverlay",
+             expected_identity=EXPECTED_IDENTITY, debugfs="debugfs", simg2img="simg2img"):
     started = time.monotonic()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / ARCHIVE_NAME
     destination.unlink(missing_ok=True)
     (output_dir / "build-manifest.json").unlink(missing_ok=True)
+    property_report_path = output_dir / "property-verification.json"
+    property_report_path.unlink(missing_ok=True)
     receipt = {"schema_version": 1, "status": "failed", "package_kind": "image-build-archive",
                "started_at": datetime.now(timezone.utc).isoformat(), "required_images": list(REQUIRED_IMAGES)}
     with open(output_dir / "assembly.log", "w", buffering=1) as log:
@@ -167,6 +221,12 @@ def assemble(producers, dependency_root, output_dir, source_selection,
                 if spec["type"] != "file" or spec["size"] <= 0:
                     raise ValueError(f"required image must be a nonempty regular file: {path}")
                 worker.verify_spec(spec)
+            property_report = verify_final_properties(accepted, native_receipts, producers, out_root, product_dir,
+                                                       expected_identity, property_report_path, debugfs, simg2img)
+            receipt["property_verification"] = {"status": property_report["status"], "report": property_report_path.name,
+                                                "error_count": len(property_report["errors"])}
+            if property_report["status"] != "success":
+                raise ValueError("strict final image property verification did not pass; see property-verification.json")
             paths = set(required_paths)
             paths.update(Path(path) for path, spec in accepted.items()
                          if Path(path).parent == product_dir and optional_image(Path(path).name)
@@ -180,10 +240,15 @@ def assemble(producers, dependency_root, output_dir, source_selection,
                         "accepted_worker_commits": accepted_worker_commits, "assembly_commit": os.environ.get("GITHUB_SHA"),
                         "source_selection": selection, "source_selection_sha256": worker.digest(source_selection),
                         "producers": producer_details, "images": images,
+                        "property_verification": {"report": property_report_path.name, "sha256": worker.digest(property_report_path),
+                                                  "expected_identity": property_report["expected_identity"],
+                                                  "frontend_producer": property_report["frontend_producer"],
+                                                  "native_partitions_checked": property_report["native_partitions_checked"]},
                         "boot_chain": {"loader": "U-Boot", "chain": ["ABL", "U-Boot", "PixelExperience"],
                                        "device_container_packaging_verified": False, "recovery_container_header": "v1 required"},
                         "validation": {"successful_producer_receipts": True, "all_four_images_present": True,
                                        "output_integrity_verified": True, "runtime_tested": False}}
+            manifest["validation"]["actual_final_image_properties_verified"] = True
             with tempfile.TemporaryDirectory(dir=output_dir) as temporary:
                 package = Path(temporary)
                 if with_fits:
@@ -213,6 +278,7 @@ def assemble(producers, dependency_root, output_dir, source_selection,
                 (package / "README.md").write_text(README if with_fits else README[:README.index("kernel-symbols.tar.zst")] + README[README.index("\nThis is an image build archive."):])
                 (package / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
                 shutil.copy2(source_selection, package / "source-revisions.json")
+                shutil.copy2(property_report_path, package / property_report_path.name)
                 package_directory(package, destination)
             (output_dir / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             receipt.update(status="success", image_count=len(images), archive=destination.name,
@@ -222,6 +288,9 @@ def assemble(producers, dependency_root, output_dir, source_selection,
             receipt["error"] = str(error)
             destination.unlink(missing_ok=True)
             print(f"ERROR: {error}", file=log)
+            if not property_report_path.exists():
+                property_report_path.write_text(json.dumps({"schema_version": 1, "status": "not_run",
+                    "errors": [{"reason": "assembly preflight failed before property inspection: " + str(error)}]}, indent=2) + "\n")
         finally:
             receipt["elapsed_seconds"] = time.monotonic() - started
             receipt["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -241,11 +310,15 @@ def main():
     parser.add_argument("--accepted-worker-commits", required=True, help="JSON array of explicitly approved compilation worker SHAs")
     parser.add_argument("--mkimage", default="mkimage")
     parser.add_argument("--fdtoverlay", default="fdtoverlay")
+    parser.add_argument("--expected-identity", default=str(EXPECTED_IDENTITY))
+    parser.add_argument("--debugfs", default="debugfs")
+    parser.add_argument("--simg2img", default="simg2img")
     parser.add_argument("--build-profile", default="aosp_crux-userdebug")
     args = parser.parse_args()
     result = assemble(worker.read_json(args.producer_runs), args.dependency_root, args.output_dir,
                       args.source_selection, args.product_dir, args.source_root, args.build_profile,
-                      json.loads(args.accepted_worker_commits), True, args.mkimage, args.fdtoverlay)
+                      json.loads(args.accepted_worker_commits), True, args.mkimage, args.fdtoverlay,
+                      args.expected_identity, args.debugfs, args.simg2img)
     print(json.dumps({key: result.get(key) for key in ("status", "archive", "image_count", "error")}))
     return 0 if result["status"] == "success" else 1
 

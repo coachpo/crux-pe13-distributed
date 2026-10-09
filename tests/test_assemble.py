@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import assemble
 import worker
 import package_fits
+import verify_properties
+from test_properties import expected_identity, encoded, system_values, native_partition
 
 
 @unittest.skipUnless(shutil.which("zstd"), "zstd is required for image archives")
@@ -29,6 +31,8 @@ class AssembleTests(unittest.TestCase):
         self.output = self.root / "result"
         self.selection = self.root / "source-revisions.json"
         self.selection.write_text(json.dumps({"record_date": "2026-10-08 Asia/Shanghai", "sources": {"device": "selected-revision"}}))
+        self.identity = self.root / "frontend-identity.json"
+        self.identity.write_text(json.dumps(expected_identity()))
         self.approved_workers = ["a" * 40]
         self.producers = [{"run_id": 101, "artifact": "shard-images-a", "expected_worker_commit": "a" * 40,
                            "expected_manifest_sha256": "0" * 64},
@@ -59,12 +63,44 @@ class AssembleTests(unittest.TestCase):
             (self.product / name).unlink()
 
     def assemble(self):
-        return assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
-                                 accepted_worker_commits=self.approved_workers, with_fits=False)
+        with patch("assemble.verify_properties.verify_images", self.property_inspection_fixture):
+            return assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
+                                     accepted_worker_commits=self.approved_workers, with_fits=False,
+                                     expected_identity=self.identity)
+
+    def property_inspection_fixture(self, expected, buildinfo, thumbprint, images, debugfs, simg2img):
+        # Native extraction is exercised by the separate real-ext4 integration
+        # tests. These archival tests isolate producer/receipt boundaries.
+        return verify_properties.validate_property_bytes(expected, Path(buildinfo).read_bytes(),
+            [("system", "fixture-system:/system/build.prop", encoded(system_values())),
+             ("vendor", "fixture-vendor:/build.prop", encoded(native_partition("vendor")))], Path(thumbprint).read_bytes())
+
+    def frontend_producer(self):
+        if len(self.producers) > 2:
+            return
+        expected = expected_identity()
+        descriptor = {"run_id": 103, "artifact": "shard-frontend-fixture", "expected_worker_commit": "a" * 40,
+                      "expected_manifest_sha256": "2" * 64, "roles": ["frontend_identity"]}
+        self.producers.append(descriptor)
+        paths = {self.out_root / "soong/build_number.txt": b"1791434921",
+                 self.product / "build_fingerprint.txt": (expected["required_final_keys"]["ro.build.fingerprint"] + "\n").encode(),
+                 self.product / "build_thumbprint.txt": expected["frontend_thumbprint"].encode(),
+                 self.product / "obj/PACKAGING/system_build_prop_intermediates/buildinfo.prop": encoded(expected["required_buildinfo"])}
+        directory = self.dependencies / "2"; directory.mkdir(parents=True)
+        specs = []
+        for path, data in paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data); specs.append(worker.describe(path))
+        archive = directory / "outputs.tar.zst"; worker.pack_outputs(specs, archive)
+        receipt = {"schema_version": 1, "status": "success", "id": "frontend-fixture", "run_id": "103",
+                   "source_root": str(self.source), "out_root": str(self.out_root), "worker_commit": "a" * 40,
+                   "manifest_sha256": "2" * 64, "archive_sha256": worker.digest(archive), "outputs": specs}
+        (directory / "receipt.json").write_text(json.dumps(receipt))
+        for path in paths: path.unlink()
 
     def prepare_images(self, second=("system.img", "vendor.img"), optional=()):
         self.producer(0, ("boot.img", "recovery.img", *optional))
         self.producer(1, second)
+        self.frontend_producer()
 
     def contents(self):
         raw = subprocess.run(["zstd", "-dc", str(self.output / assemble.ARCHIVE_NAME)],
@@ -76,7 +112,7 @@ class AssembleTests(unittest.TestCase):
         result = self.assemble()
         self.assertEqual(result["status"], "success", result.get("error"))
         with self.contents() as package:
-            self.assertEqual(set(package.getnames()), {*assemble.REQUIRED_IMAGES, "README.md", "build-manifest.json", "source-revisions.json"})
+            self.assertEqual(set(package.getnames()), {*assemble.REQUIRED_IMAGES, "README.md", "build-manifest.json", "source-revisions.json", "property-verification.json"})
             self.assertEqual(package.extractfile("system.img").read(), b"built-system.img")
             self.assertEqual(package.getmember("system.img").mode, 0o640)
             manifest = json.load(package.extractfile("build-manifest.json"))
@@ -84,7 +120,7 @@ class AssembleTests(unittest.TestCase):
             self.assertFalse(manifest["validation"]["runtime_tested"])
             self.assertEqual(manifest["build_profile"], "aosp_crux-userdebug")
             self.assertEqual(manifest["source_selection"]["sources"]["device"], "selected-revision")
-            self.assertEqual([p["run_id"] for p in manifest["producers"]], [101, 102])
+            self.assertEqual([p["run_id"] for p in manifest["producers"]], [101, 102, 103])
             self.assertEqual(manifest["out_root"], str(self.out_root))
             self.assertEqual(manifest["product_dir"], str(self.product))
             self.assertIn("not a full OTA", package.extractfile("README.md").read().decode())
@@ -152,7 +188,7 @@ class AssembleTests(unittest.TestCase):
         result = self.assemble()
         self.assertEqual(result["status"], "success", result.get("error"))
         manifest = json.loads((self.output / "build-manifest.json").read_text())
-        self.assertEqual([p["worker_commit"] for p in manifest["producers"]], ["a" * 40, "b" * 40])
+        self.assertEqual([p["worker_commit"] for p in manifest["producers"]], ["a" * 40, "b" * 40, "a" * 40])
 
     def test_manifest_binding_mismatch_fails_before_merge(self):
         self.prepare_images()
@@ -181,8 +217,9 @@ class AssembleTests(unittest.TestCase):
 
     def test_strict_fit_failure_cannot_publish_image_archive(self):
         self.prepare_images()
-        result = assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
-                                   accepted_worker_commits=self.approved_workers)
+        with patch("assemble.verify_properties.verify_images", self.property_inspection_fixture):
+            result = assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
+                                       accepted_worker_commits=self.approved_workers, expected_identity=self.identity)
         self.assertEqual(result["status"], "failed")
         self.assertIn("strict U-Boot FIT packaging failed", result["error"])
         self.assertFalse((self.output / assemble.ARCHIVE_NAME).exists())
@@ -227,6 +264,7 @@ class AssembleTests(unittest.TestCase):
                        "manifest_sha256": str(index) * 64, "archive_sha256": worker.digest(archive), "outputs": specs}
             (directory / "receipt.json").write_text(json.dumps(receipt))
             for path in paths: path.unlink()
+        self.frontend_producer()
         original_run = subprocess.run
         def native_recipe(command, **kwargs):
             if command in (["mkimage", "-V"], ["fdtoverlay", "--version"]):
@@ -240,9 +278,9 @@ class AssembleTests(unittest.TestCase):
                     "loads": {"fdt": 0x84800000, "ramdisk": 0x83000000}} for mode in ("rom", "recovery")}}))
                 return subprocess.CompletedProcess(command, 0)
             return original_run(command, **kwargs)
-        with patch("package_fits.subprocess.run", native_recipe):
+        with patch("package_fits.subprocess.run", native_recipe), patch("assemble.verify_properties.verify_images", self.property_inspection_fixture):
             result = assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
-                                       accepted_worker_commits=self.approved_workers)
+                                       accepted_worker_commits=self.approved_workers, expected_identity=self.identity)
         self.assertEqual(result["status"], "success", result.get("error"))
         with self.contents() as archive:
             self.assertTrue({*assemble.REQUIRED_IMAGES, "kernel-symbols.tar.zst", "fit-inputs.tar.zst", "uboot-fits.tar.zst"}.issubset(archive.getnames()))
@@ -251,6 +289,129 @@ class AssembleTests(unittest.TestCase):
             self.assertTrue(manifest["validation"]["matching_fresh_kernel_symbols"])
             self.assertTrue(manifest["validation"]["both_fits_strictly_validated"])
             self.assertFalse(manifest["boot_chain"]["device_container_packaging_verified"])
+
+    def test_missing_frontend_role_blocks_success_and_retains_report(self):
+        self.prepare_images()
+        self.producers[2].pop("roles")
+        result = self.assemble()
+        self.assertEqual(result["status"], "failed")
+        report = json.loads((self.output / "property-verification.json").read_text())
+        self.assertIn("frontend_identity", report["errors"][0]["reason"])
+        self.assertFalse((self.output / assemble.ARCHIVE_NAME).exists())
+
+    def test_property_failure_never_publishes_success_archive_or_manifest(self):
+        self.prepare_images()
+        def bad_image(expected, buildinfo, thumbprint, images, debugfs, simg2img):
+            bad_system = {**system_values(), "ro.build.version.incremental": ""}
+            return verify_properties.validate_property_bytes(expected, Path(buildinfo).read_bytes(),
+                [("system", "actual-fixture-member", encoded(bad_system)),
+                 ("vendor", "actual-fixture-vendor", encoded(native_partition("vendor")))], Path(thumbprint).read_bytes())
+        with patch("assemble.verify_properties.verify_images", bad_image):
+            result = assemble.assemble(self.producers, self.dependencies, self.output, self.selection,
+                                       accepted_worker_commits=self.approved_workers, with_fits=False,
+                                       expected_identity=self.identity)
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse((self.output / assemble.ARCHIVE_NAME).exists())
+        self.assertFalse((self.output / "build-manifest.json").exists())
+        report = json.loads((self.output / "property-verification.json").read_text())
+        self.assertTrue(any(error.get("reason") == "blank required identity" for error in report["errors"]))
+
+
+DEBUGFS = shutil.which("debugfs") or ("/opt/homebrew/opt/e2fsprogs/sbin/debugfs" if Path("/opt/homebrew/opt/e2fsprogs/sbin/debugfs").exists() else None)
+MKE2FS = ("/opt/homebrew/opt/e2fsprogs/sbin/mke2fs" if Path("/opt/homebrew/opt/e2fsprogs/sbin/mke2fs").exists() else shutil.which("mke2fs"))
+
+
+@unittest.skipUnless(DEBUGFS and MKE2FS, "native ext4 file-inspection tools unavailable")
+class RealPropertyAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = AssembleTests()
+        self.fixture.setUp()
+
+    def tearDown(self):
+        self.fixture.tearDown()
+
+    def image(self, partition, values):
+        fixture = self.fixture
+        files = fixture.root / (partition + "-files")
+        destination = files / ("system/build.prop" if partition == "system" else "build.prop")
+        destination.parent.mkdir(parents=True)
+        destination.write_bytes(encoded(values))
+        image = fixture.product / (partition + ".img")
+        with image.open("wb") as output: output.truncate(16 * 1024 * 1024)
+        subprocess.run([MKE2FS, "-q", "-F", "-t", "ext4", "-d", str(files), str(image)],
+                       check=True, capture_output=True)
+        return image
+
+    def prepare(self, system=None, vendor=None):
+        fixture = self.fixture
+        fixture.producer(0, ("boot.img", "recovery.img"))
+        images = [self.image("system", system_values() if system is None else system),
+                  self.image("vendor", native_partition("vendor") if vendor is None else vendor)]
+        directory = fixture.dependencies / "1"; directory.mkdir(parents=True)
+        specs = [worker.describe(path) for path in images]
+        archive = directory / "outputs.tar.zst"; worker.pack_outputs(specs, archive)
+        receipt = {"schema_version": 1, "status": "success", "id": "images-b", "run_id": "102",
+                   "source_root": str(fixture.source), "out_root": str(fixture.out_root), "worker_commit": "a" * 40,
+                   "manifest_sha256": "1" * 64, "archive_sha256": worker.digest(archive), "outputs": specs}
+        (directory / "receipt.json").write_text(json.dumps(receipt))
+        for image in images: image.unlink()
+        fixture.frontend_producer()
+
+    def assemble(self):
+        fixture = self.fixture
+        return assemble.assemble(fixture.producers, fixture.dependencies, fixture.output, fixture.selection,
+                                 accepted_worker_commits=fixture.approved_workers, with_fits=False,
+                                 expected_identity=fixture.identity, debugfs=DEBUGFS)
+
+    def test_real_ext4_properties_and_actual_frontend_members_admit_archive(self):
+        self.prepare()
+        result = self.assemble()
+        self.assertEqual(result["status"], "success", result.get("error"))
+        report = json.loads((self.fixture.output / "property-verification.json").read_text())
+        self.assertEqual(report["status"], "success")
+        self.assertEqual([item["format"] for item in report["image_inspection"]], ["raw", "raw"])
+        self.assertEqual(report["frontend_producer"]["id"], "frontend-fixture")
+        self.assertEqual(set(report["frontend_producer"]["members"]), {"build_number", "fingerprint", "thumbprint", "buildinfo"})
+        manifest = json.loads((self.fixture.output / "build-manifest.json").read_text())
+        self.assertTrue(manifest["validation"]["actual_final_image_properties_verified"])
+
+    def test_real_final_image_with_blank_incremental_blocks_archive(self):
+        self.prepare(system={**system_values(), "ro.build.version.incremental": ""})
+        result = self.assemble()
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse((self.fixture.output / assemble.ARCHIVE_NAME).exists())
+        report = json.loads((self.fixture.output / "property-verification.json").read_text())
+        self.assertTrue(any(error.get("reason") == "blank required identity" for error in report["errors"]))
+
+    def test_real_vendor_cannot_borrow_partition_identity_from_system(self):
+        self.prepare(system={**system_values(), **native_partition("vendor")}, vendor={"ro.vendor.other": "value"})
+        result = self.assemble()
+        self.assertEqual(result["status"], "failed")
+        report = json.loads((self.fixture.output / "property-verification.json").read_text())
+        self.assertTrue(any(error.get("scope") == "partition vendor native members" for error in report["errors"]))
+
+    def test_missing_actual_frontend_member_blocks_before_inspecting_images(self):
+        self.prepare()
+        fixture = self.fixture
+        path = fixture.dependencies / "2/receipt.json"
+        receipt = json.loads(path.read_text())
+        missing = str(fixture.product / "build_thumbprint.txt")
+        receipt["outputs"] = [spec for spec in receipt["outputs"] if spec["path"] != missing]
+        # Rebuild a complete, internally valid archive without that member.
+        fixture.product.mkdir(parents=True, exist_ok=True)
+        for spec in receipt["outputs"]:
+            original = (b"1791434921" if spec["path"].endswith("build_number.txt") else
+                        (expected_identity()["required_final_keys"]["ro.build.fingerprint"] + "\n").encode() if spec["path"].endswith("build_fingerprint.txt") else
+                        encoded(expected_identity()["required_buildinfo"]))
+            member = Path(spec["path"]); member.parent.mkdir(parents=True, exist_ok=True); member.write_bytes(original); member.chmod(spec["mode"])
+        archive = fixture.dependencies / "2/outputs.tar.zst"; worker.pack_outputs(receipt["outputs"], archive)
+        receipt["archive_sha256"] = worker.digest(archive); path.write_text(json.dumps(receipt))
+        for spec in receipt["outputs"]: Path(spec["path"]).unlink()
+        result = self.assemble()
+        self.assertEqual(result["status"], "failed")
+        report = json.loads((fixture.output / "property-verification.json").read_text())
+        self.assertIn("fresh regular member", report["errors"][0]["reason"])
+        self.assertFalse((fixture.output / assemble.ARCHIVE_NAME).exists())
 
 
 if __name__ == "__main__":
