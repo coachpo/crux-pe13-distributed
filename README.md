@@ -79,6 +79,12 @@ Current Actions dependencies are `actions/checkout@v7.0.1` and
 `actions/upload-artifact@v7.0.2`, both using Node.js 24. Android's source/toolchain
 revisions stay pinned to the PE13 build configuration.
 
+Runner jobs also use `AdityaGarg8/remove-unwanted-software@v5` to remove the
+preinstalled .NET, Android SDK, Haskell, CodeQL and Docker images. Package
+removal, general tool-cache deletion and swap removal are disabled. The ROM
+uses its declared source/toolchain inputs; disk records retain the actual
+before-cleanup and after-cleanup capacity.
+
 ## Validation
 
 Run the Python regression suite on Linux with Ninja and zstd installed:

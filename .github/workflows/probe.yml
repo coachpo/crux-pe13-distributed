@@ -8,6 +8,23 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
+      - name: Record disk space before cleanup
+        run: |
+          mkdir -p probe
+          df -B1 > probe/disks-before-cleanup.txt
+      - name: Free disk space
+        continue-on-error: true
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "false"
+          remove-cached-tools: "false"
+          remove-swapfile: "false"
+          verbose: "false"
       - uses: actions/checkout@v7.0.1
       - name: Record actual standard runner resources
         run: |

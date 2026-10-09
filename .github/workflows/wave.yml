@@ -117,6 +117,24 @@ jobs:
       TASK_JSON: ${{ toJson(matrix) }}
       SOURCE_ROOT: /home/qingli/crux-pe13-offline-2026-09-25/pe13
     steps:
+      - name: Record disk space before cleanup
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          df -B1 > "$RUNNER_TEMP/result/disks-before-cleanup.txt"
+      - name: Free disk space
+        continue-on-error: true
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "false"
+          remove-cached-tools: "false"
+          remove-swapfile: "false"
+          verbose: "false"
       - uses: actions/checkout@v7.0.1
       - name: Record actual runner resources
         shell: bash
