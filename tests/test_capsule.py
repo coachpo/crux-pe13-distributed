@@ -475,6 +475,232 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive = self.collect()
         self.assertNotIn(str(arguments).lstrip("/"), archive.getnames())
 
+    def test_generator_depfiles_are_same_action_outputs_with_ordered_real_reads(self):
+        depfile = self.out / "generated.d"
+        self.write(depfile, "old generated dependency data\n")
+        self.write(self.source / "input.aidl", "interface Input {}\n")
+        self.write(self.source / "schema.proto", "message Input {}\n")
+        for writer in ["aidl -d" + str(depfile) + " input.aidl", "aidl --dep=" + str(depfile) + " input.aidl",
+                       "protoc --dependency_out=" + str(depfile) + " schema.proto"]:
+            with self.subTest(writer=writer):
+                self.manifest["commands"] = [writer + " && dep_fixer " + str(depfile)]
+                _, _, archive = self.collect()
+                self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+                self.manifest["commands"] = ["reader --input=" + str(depfile) + " && " + writer]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = ["aidl -d" + str(depfile) + " input.aidl", "reader " + str(depfile)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_fresh_aar_and_module_namespaces_skip_stale_children_but_keep_real_inputs(self):
+        aar = self.source / "libs/input.aar"
+        dependency = self.source / "libs/dependency.jar"
+        stage = self.out / "module/aar"
+        child = stage / "classes.jar"
+        self.write(aar, b"PK\x03\x04source AAR")
+        self.write(dependency, b"PK\x03\x04source classpath")
+        self.write(child, b"PK\x03\x04stale compiled child")
+        self.write(stage / "libs/library.jar", b"PK\x03\x04stale compiled nested child")
+        self.manifest["commands"] = ["rm -rf " + str(stage) + " && mkdir -p " + str(stage)
+                                     + " && unzip -qo -d " + str(stage) + " " + str(aar)
+                                     + " && merge_zips " + str(self.out / "unit.o")
+                                     + " $(ls " + str(child) + ") $(ls " + str(stage / "libs/*.jar") + ")"
+                                     + " && javac -classpath " + str(dependency) + ":" + str(child) + " lib/unit.c"]
+        _, metadata, archive = self.collect()
+        for path in [aar, dependency]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(child).lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        self.manifest["commands"][0] = "java -classpath " + str(child) + " Main && " + self.manifest["commands"][0]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_fresh_directory_scope_starts_after_reset_and_stops_at_action_boundary(self):
+        stage = self.out / "modules"
+        child = stage / "module.jar"
+        self.write(child, b"PK\x03\x04stale module")
+        prefix = "rm -rf " + str(stage) + " && mkdir -p " + str(stage / "jmod")
+        self.manifest["commands"] = [prefix + " && /bin/bash -c 'reader " + str(child) + "' | cat"]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(child).lstrip("/"), archive.getnames())
+        for command in ["/bin/bash -c 'reader " + str(child) + "' && " + prefix,
+                        "rm -rf " + str(stage) + " || true ; mkdir -p " + str(stage) + " ; reader " + str(child),
+                        "rm -rf " + str(stage) + " | cat ; mkdir -p " + str(stage) + " ; reader " + str(child)]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+        for command in [prefix + " || true ; cat " + str(child), prefix + " ; cat " + str(child),
+                        "(rm -rf " + str(stage) + " && mkdir -p " + str(stage) + ") || true ; cat " + str(child)]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+        self.manifest["commands"] = [prefix, "reader " + str(child)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+        self.manifest["commands"] = [prefix + " && reader " + str(child)]
+        self.manifest["leaf_inputs"].append(str(child))
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_zip_rsp_keeps_sources_and_scopes_fresh_output_reader(self):
+        temporary_zip = self.out / "gensrcs.zip"
+        response = self.source / "sources.rsp"
+        self.write(temporary_zip, b"PK\x03\x04stale generated zip")
+        self.write(self.source / "inputs/src.txt", "original source bytes\n")
+        self.write(response, "-C inputs -f inputs/src.txt")
+        self.manifest["commands"] = ["soong_zip -o " + str(temporary_zip) + " @sources.rsp && zipsync " + str(temporary_zip)]
+        _, _, archive = self.collect()
+        for path in [response, self.source / "inputs/src.txt"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(temporary_zip).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader --input=" + str(temporary_zip) + " && " + self.manifest["commands"][0]]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_xmlnotice_literal_prefixes_keep_positional_metadata_dependencies(self):
+        prefix = self.out / "boot.img"
+        metadata = self.source / "notice.meta_lic"
+        self.write(prefix, b"ANDROID!stale boot image")
+        self.write(metadata, "license_kinds: \"SPDX-Apache-2.0\"\n")
+        self.manifest["commands"] = ["xmlnotice -strip_prefix=" + str(prefix) + " -product " + str(prefix)
+                                     + " -title " + str(prefix) + " " + str(metadata)]
+        _, _, archive = self.collect()
+        self.assertIn(str(metadata).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(prefix).lstrip("/"), archive.getnames())
+        self.manifest["leaf_inputs"].append(str(prefix))
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_sourced_ninja_rsp_inherits_fresh_namespace_without_losing_copy_sources(self):
+        stage = self.out / "image.apex"
+        generated = stage / "etc/data.txt"
+        source = self.source / "payload/data.txt"
+        response = self.out / "copy_commands"
+        self.write(generated, "stale staging data\n")
+        self.write(source, "actual source data\n")
+        body = "mkdir -p " + str(stage / "etc") + " && cp " + str(source) + " " + str(generated)
+        command = "rm -rf " + str(stage) + " && mkdir -p " + str(stage) + " && (. " + str(response) + ") && apexer " + str(stage)
+        self.manifest["edges"] = [{"command": command, "rspfile": str(response), "rspfile_content": body}]
+        _, _, archive = self.collect()
+        self.assertIn(str(source).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(response).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader " + str(generated) + " && " + command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_first_append_after_successful_removal_creates_fresh_action_file(self):
+        info = self.out / "image-info.txt"
+        self.write(info, "old image metadata\n")
+        command = "rm -f " + str(info) + " && echo first >> " + str(info) + " && producer | awk x && echo second >> " + str(info) + " && build_image " + str(info)
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(info).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader --input=" + str(info) + " && " + command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.manifest["commands"] = ["rm -f " + str(info) + " || true ; echo first >> " + str(info)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_llvm_output_and_kotlin_xml_are_fresh_without_global_path_exemptions(self):
+        bitcode = self.out / "lib.bc.unstripped"
+        xml = self.out / "kotlin-build.xml"
+        source_bitcode = self.source / "payload/input.bc"
+        script = self.source / "build/soong/scripts/gen-kotlin-build-file.py"
+        self.write(bitcode, b"BC\xc0\xdeold bitcode")
+        self.write(xml, "old module XML\n")
+        self.write(source_bitcode, b"BC\xc0\xdesource bitcode")
+        self.write(script, "print('generator')\n")
+        command = "llvm-link -o " + str(bitcode) + " " + str(source_bitcode) + " && bcc_strip_attr " + str(bitcode)
+        xml_command = "python3 " + str(script) + " --out " + str(xml) + " && kotlinc -Xbuild-file=" + str(xml)
+        self.manifest["commands"] = [command, xml_command]
+        _, _, archive = self.collect()
+        self.assertIn(str(source_bitcode).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(bitcode).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(xml).lstrip("/"), archive.getnames())
+        self.manifest["commands"].append("reader " + str(xml))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_rust_emit_output_is_scoped_to_its_own_action(self):
+        depfile = self.out / "lib.rlib.d.raw"
+        self.write(depfile, "old dependency data\n")
+        self.manifest["commands"] = ["rustc --emit dep-info=" + str(depfile) + " lib/unit.c",
+                                     "reader " + str(depfile)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.manifest["commands"] = ["clippy-driver --emit dep-info=" + str(depfile) + " lib/unit.c && reader " + str(depfile)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+
+    def test_grouped_writers_and_path_string_tools_do_not_read_stale_outputs(self):
+        output = self.out / "temporary.bc"
+        info = self.out / "image-info.txt"
+        self.write(output, b"BC\xc0\xdeold bitcode")
+        self.write(info, "old image metadata\n")
+        self.manifest["commands"] = ["/bin/bash -c '(mkdir -p $(dirname " + str(output) + ")) && "
+                                     + "(llvm-link -o " + str(output) + " lib/unit.c) && (reader " + str(output) + ")'",
+                                     "(rm -rf " + str(info) + ") && (echo first >> " + str(info)
+                                     + ") && (build_image " + str(info) + ")"]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(output).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(info).lstrip("/"), archive.getnames())
+
+    def test_masked_command_substitution_reset_does_not_create_fresh_namespace(self):
+        stage = self.out / "modules"
+        child = stage / "module.jar"
+        self.write(child, b"PK\x03\x04old compiled content")
+        self.manifest["commands"] = ["echo $(rm -rf " + str(stage) + ") && mkdir -p " + str(stage)
+                                     + " && reader " + str(child)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_process_substitution_keeps_parent_writer_order_and_actual_input_reads(self):
+        stage = self.out / "temporary.bc.unstripped"
+        input_file = self.source / "input.txt"
+        filters = self.source / "filter-patterns.txt"
+        self.write(stage, "old writer bytes\n")
+        self.write(input_file, "fresh writer bytes\n")
+        self.write(filters, "warning\n")
+        self.manifest["leaf_inputs"].append(str(input_file))
+        tool = self.source / "bin/llvm-link"
+        self.write(tool, '#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncat "' + str(input_file)
+                   + '" > "$2"\necho warning >&2\n', 0o755)
+        command = "(" + str(tool) + " -o " + str(stage) + " 2> >(grep -v -f " + str(filters)
+        command += " >&2)) && (cat " + str(stage) + ")"
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        for path in [tool, input_file, filters]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(stage).lstrip("/"), archive.getnames())
+        stage.unlink()
+        result = subprocess.run(command, shell=True, executable="/bin/bash", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "fresh writer bytes\n")
+        old_input = self.out / "actual-input.jar"
+        self.write(old_input, b"PK\x03\x04old input jar")
+        self.manifest["commands"] = [command.replace("-o " + str(stage), "<(cat " + str(old_input) + ") -o " + str(stage))]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_failed_reset_rescued_by_or_or_semicolon_reads_real_old_bytes(self):
+        stage = self.out / "modules"
+        child = stage / "old.jar"
+        data = b"PK\x03\x04old bytes remain after failed reset"
+        self.write(child, data)
+        remover = self.source / "bin/rm"
+        self.write(remover, "#!/bin/sh\nexit 1\n", 0o755)
+        for tail in [" || true ; cat ", " ; cat "]:
+            command = str(remover) + " -rf " + str(stage) + " && mkdir -p " + str(stage) + tail + str(child)
+            result = subprocess.run(command, shell=True, executable="/bin/bash", capture_output=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, data)
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+
     def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
         headers=self.out / "include"
         self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")

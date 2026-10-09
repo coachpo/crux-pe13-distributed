@@ -115,7 +115,26 @@ def make_dependencies(text):
 
 def command_tokens(command):
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+        # shlex combines adjacent punctuation into "))". Shell parentheses
+        # delimit separate scopes; preserve quoted and escaped literal names.
+        separated, quote, index = [], None, 0
+        while index < len(command):
+            character = command[index]
+            if character == "\\" and quote != "'" and index + 1 < len(command):
+                separated.append(command[index:index + 2])
+                index += 2
+                continue
+            if quote:
+                separated.append(character)
+                if character == quote:
+                    quote = None
+            elif character in {"'", '"'}:
+                quote = character
+                separated.append(character)
+            else:
+                separated.append(" " + character + " " if character in {"(", ")"} else character)
+            index += 1
+        lexer = shlex.shlex("".join(separated), posix=True, punctuation_chars=";&|()<>")
         lexer.whitespace_split = True
         lexer.commenters = ""
         return list(lexer)
@@ -148,14 +167,43 @@ def command_invocations(tokens):
         start = end + 1
 
 
+def substitution_positions(tokens):
+    stack, positions = [], set()
+    for index, token in enumerate(tokens):
+        if token == "(":
+            stack.append((bool(stack) and stack[-1]) or (index > 0 and tokens[index - 1] in {"$", "<", ">"}))
+        elif token == ")" and stack:
+            stack.pop()
+        elif stack and stack[-1]:
+            positions.add(index)
+    return positions
+
+
+def command_completion(tokens, end):
+    # A trailing process-substitution redirection belongs to the parent
+    # invocation. Its own commands remain separately inspected as readers.
+    while end < len(tokens) and tokens[end] == "(" and end > 0 and tokens[end - 1] in {"<", ">"}:
+        depth = 1
+        end += 1
+        while end < len(tokens) and depth:
+            depth += (tokens[end] == "(") - (tokens[end] == ")")
+            end += 1
+    while end < len(tokens) and tokens[end] == ")":
+        end += 1
+    return end
+
+
 def response_context(command, response=None):
     tokens = command_tokens(command)
     for position, end in command_invocations(tokens):
         name = Path(tokens[position]).name
-        if name in {"protoc", "aprotoc", "build_license_metadata"} and (response is None or any(
+        if name in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"} and (response is None or any(
                 token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
                 for token in tokens[position + 1:end])):
             return name
+        if tokens[position] in {".", "source"} and (response is None or any(
+                os.path.normpath(token) == os.path.normpath(response) for token in tokens[position + 1:end])):
+            return "shell-source"
         if name in {"bash", "sh", "dash"}:
             for index in range(position + 1, len(tokens) - 1):
                 if tokens[index].startswith("-") and "c" in tokens[index][1:]:
@@ -163,6 +211,31 @@ def response_context(command, response=None):
                     if context:
                         return context
     return None
+
+
+class ActionTemporaries:
+    """Literal outputs that become fresh at a specific point of one action."""
+    def __init__(self, files=(), directories=(), inherited=None, barriers=()):
+        self.files = dict(files)
+        self.directories = dict(directories)
+        self.position = -1
+        self.inherited_files, self.inherited_directories = inherited or (set(), set())
+        self.barriers = tuple(barriers)
+
+    def active(self, position):
+        return position <= self.position and not any(position <= barrier <= self.position for barrier in self.barriers)
+
+    def __contains__(self, path):
+        return (path in self.inherited_files
+                or self.active(self.files.get(path, float("inf")))
+                or any(beneath(path, root) for root in self.inherited_directories)
+                or any(self.active(position) and beneath(path, root)
+                       for root, position in self.directories.items()))
+
+    def snapshot(self):
+        return (self.inherited_files | {path for path, position in self.files.items() if self.active(position)},
+                self.inherited_directories | {path for path, position in self.directories.items()
+                                             if self.active(position)})
 
 
 class Collector:
@@ -202,6 +275,7 @@ class Collector:
         self.required_interpreters = {}
         self.assembler_scan_cache = set()
         self.proto_scan_cache = set()
+        self.command_temporaries = None
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -224,7 +298,8 @@ class Collector:
         return any(part in FORBIDDEN_PARTS for part in path.parts)
 
     def produced(self, path):
-        return (path in self.outputs or path in self.external or path in self.aux_outputs
+        return ((self.command_temporaries is not None and path in self.command_temporaries)
+                or path in self.outputs or path in self.external or path in self.aux_outputs
                 or any(beneath(path, root) for root in self.output_dirs | self.external_dirs))
 
     def register(self, path, reason):
@@ -544,6 +619,8 @@ class Collector:
         """Handle tools whose path-looking arguments are schemas or metadata."""
         ignored = set()
         for program, end in command_invocations(tokens):
+            if self.command_temporaries is not None:
+                self.command_temporaries.position = program
             name = Path(tokens[program]).name
             if name in {"protoc", "aprotoc"}:
                 search_paths, inputs = [], []
@@ -626,6 +703,24 @@ class Collector:
                     elif flag == "-is_container":
                         ignored.add(index)
                     index += 1
+            elif name == "xmlnotice":
+                for index in range(program + 1, end):
+                    flag, separator, _ = tokens[index].partition("=")
+                    if flag in {"-strip_prefix", "-product", "-title"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            ignored.add(index + 1)
+            elif name in {"java", "javac", "jmod", "jlink", "kotlinc", "kapt", "soong_javac_wrapper"}:
+                for index in range(program + 1, end):
+                    flag, separator, value = tokens[index].partition("=")
+                    if flag in {"-classpath", "--class-path", "-cp"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            ignored.add(index + 1)
+                            value = tokens[index + 1]
+                        for path in value.split(":"):
+                            if path:
+                                self.add(path, "java-classpath", required=False)
         return ignored
 
     def proto_option_input(self, flag, value):
@@ -639,13 +734,14 @@ class Collector:
 
     def expand_semantic_responses(self, tokens, temporary_outputs):
         """Inspect response operands in their caller's exact argument order."""
-        def expand(arguments, program):
+        def expand(arguments, program, start):
             result = []
-            for token in arguments:
+            for index, token in enumerate(arguments, start):
                 if not token.startswith("@"):
                     result.append((token, False))
                     continue
                 path = self.path(token[1:])
+                temporary_outputs.position = index
                 if path in temporary_outputs:
                     result.append((token, False))
                     continue
@@ -672,67 +768,158 @@ class Collector:
         marked = [(token, False) for token in tokens]
         for program, end in reversed(list(command_invocations(tokens))):
             name = Path(tokens[program]).name
-            if name in {"protoc", "aprotoc", "build_license_metadata"}:
-                marked[program + 1:end] = expand(tokens[program + 1:end], name)
+            if name in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"}:
+                marked[program + 1:end] = expand(tokens[program + 1:end], name, program + 1)
         return [token for token, _ in marked], {index for index, (_, literal) in enumerate(marked) if literal}
 
-    def action_temporaries(self, tokens):
-        """Find literal files recreated before consumption in this shell action."""
-        # Alternative/pipeline branches do not establish an ordered fresh write.
-        if any(token in {"||", "|", "&"} for token in tokens):
-            return set()
-        states, program = {}, None
-        boundaries = {";", "&&", "||", "|", "(", ")"}
+    def literal_path(self, value):
+        if not value or value.startswith("-") or any(character in value for character in "$*?[\n"):
+            return None
+        return self.path(value)
 
-        def state(value):
-            if not value or value.startswith("-") or any(c in value for c in "$*?[\n"):
-                return None
-            path = self.path(value)
-            return states.setdefault(path, {"read": None, "removed": False, "fresh": None})
-
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            if token in boundaries:
-                program = None
-            elif token in {">", ">|", ">>", "<"} and index + 1 < len(tokens):
-                index += 1
-                item = state(tokens[index])
-                if item:
-                    if token in {">", ">|"}:
-                        if item["fresh"] is None:
-                            item["fresh"] = index
-                    elif token == "<" or (token == ">>" and item["fresh"] is None):
-                        if item["read"] is None:
-                            item["read"] = index
-            elif program is None:
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
-                    item = state(command_operand(token))
-                    if item and item["read"] is None:
-                        item["read"] = index
+    def tool_output_operands(self, tokens):
+        """Return verified truncating file outputs, with completion positions."""
+        files, ignored = {}, set()
+        for program, end in command_invocations(tokens):
+            name = Path(tokens[program]).name
+            flags = set()
+            attached = set()
+            if name in {"dirname", "basename"}:
+                ignored.update(range(program + 1, end))
+            if name in {"rm", "mkdir", "touch"}:
+                reference = set()
+                if name == "touch":
+                    for index in range(program + 1, end):
+                        if tokens[index] in {"-r", "--reference"}:
+                            reference.add(index + 1)
+                        elif tokens[index].startswith("--reference="):
+                            reference.add(index)
+                ignored.update(index for index in range(program + 1, end)
+                               if not tokens[index].startswith("-") and index not in reference)
+            if name == "aidl":
+                flags, attached = {"-d", "--dep"}, {"-d"}
+            elif name in {"protoc", "aprotoc"}:
+                flags = {"--dependency_out", "--descriptor_set_out", "-o"}
+            elif name in {"soong_zip", "zip2zip", "clang", "clang++", "llvm-link", "bcc_strip_attr"}:
+                flags = {"-o"}
+            script = next((index for index in range(program, min(program + 3, end))
+                           if Path(tokens[index]).name == "gen-kotlin-build-file.py"
+                           and (index == program or name.startswith("python") or name in {"py2-cmd", "py3-cmd"})), None)
+            if script is not None:
+                flags = {"--out"}
+            for index in range(program + 1, end):
+                token = tokens[index]
+                flag, separator, value = token.partition("=")
+                operand_position = index
+                if flag in flags:
+                    if not separator and index + 1 < end:
+                        operand_position = index + 1
+                        value = tokens[operand_position]
+                    ignored.update({index, operand_position})
                 else:
-                    program = Path(token).name
-            elif not token.startswith("-") or "=" in token:
-                item = state(command_operand(token))
-                if item:
-                    if program == "rm":
-                        item["removed"] = True
-                    elif program == "touch":
-                        if item["removed"] and item["fresh"] is None:
-                            item["fresh"] = index
-                    elif program not in {"echo", "printf", "mkdir"} and item["read"] is None:
-                        item["read"] = index
-            index += 1
-        return {path for path, item in states.items() if item["fresh"] is not None
-                and (item["read"] is None or item["read"] > item["fresh"])}
+                    prefix = next((prefix for prefix in attached if token.startswith(prefix) and token != prefix), None)
+                    if prefix is None:
+                        continue
+                    value = token[len(prefix):]
+                    ignored.add(index)
+                path = self.literal_path(value)
+                if path is not None:
+                    files.setdefault(path, end)
+            if name in {"rustc", "clippy-driver"}:
+                for index in range(program + 1, end):
+                    token = tokens[index]
+                    if token == "--emit" and index + 1 < end:
+                        value = tokens[index + 1]
+                        ignored.update({index, index + 1})
+                    elif token.startswith("--emit="):
+                        value = token.partition("=")[2]
+                        ignored.add(index)
+                    else:
+                        continue
+                    for item in value.split(","):
+                        kind, separator, destination = item.partition("=")
+                        if separator and kind in {"dep-info", "link", "metadata", "asm", "llvm-ir", "llvm-bc", "obj"}:
+                            path = self.literal_path(destination)
+                            if path is not None:
+                                files.setdefault(path, end)
+        return files, ignored
+
+    def action_temporaries(self, tokens, inherited=None):
+        """Find fresh writes in the unconditional prefix of one shell action."""
+        hazard = next((index for index, token in enumerate(tokens)
+                       if token in {"||", "|", "&", "if", "for", "while", "until", "case"}), len(tokens))
+        files, _ = self.tool_output_operands(tokens[:hazard])
+        substitutions = substitution_positions(tokens)
+        completed = {}
+        for path, position in files.items():
+            if position > 0 and position - 1 in substitutions:
+                continue
+            position = command_completion(tokens, position)
+            if position < len(tokens) and tokens[position] == "&&":
+                completed[path] = position
+        files = completed
+        directories, removed = {}, {}
+        for program, end in command_invocations(tokens[:hazard]):
+            if program in substitutions:
+                continue
+            name = Path(tokens[program]).name
+            operands = [self.literal_path(token) for token in tokens[program + 1:end] if not token.startswith("-")]
+            operands = [path for path in operands if path is not None]
+            if name == "rm":
+                recursive = any(token == "--recursive" or (token.startswith("-") and not token.startswith("--")
+                                                           and "r" in token[1:]) for token in tokens[program + 1:end])
+                for path in operands:
+                    removed[path] = (end, recursive)
+            elif name in {"mkdir", "touch"}:
+                for path in operands:
+                    for root, (position, recursive) in removed.items():
+                        # A successful && chain establishes that the old file
+                        # or namespace was removed before its replacement.
+                        between = [token for token in tokens[position:program] if token not in {"(", ")"}]
+                        if not between or between[0] != "&&" or any(token in {";", "||", "|", "&"} for token in between):
+                            continue
+                        if name == "touch" and path == root:
+                            files.setdefault(path, end)
+                        elif name == "mkdir" and recursive and beneath(path, root):
+                            directories.setdefault(root, end)
+            for index in range(program + 1, end - 1):
+                if end < len(tokens) and tokens[end] in {"||", "|", "&"}:
+                    continue
+                if tokens[index] in {">", ">|", ">>"}:
+                    path = self.literal_path(tokens[index + 1])
+                    prior = removed.get(path)
+                    between = ([token for token in tokens[prior[0]:program] if token not in {"(", ")"}]
+                               if prior else [])
+                    removed_before = bool(between and between[0] == "&&"
+                                          and not any(token in {";", "||", "|", "&"} for token in between))
+                    if path is not None and (tokens[index] != ">>" or removed_before):
+                        files.setdefault(path, index + 1)
+        barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
+        return ActionTemporaries(files, directories, inherited, barriers)
 
     def command(self, command, context=None):
         tokens = command_tokens(command)
         if context:
             tokens.insert(0, context)
-        temporary_outputs = self.action_temporaries(tokens)
+        previous = self.command_temporaries
+        temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
+        self.command_temporaries = temporary_outputs
+        try:
+            self.inspect_command(command, tokens, temporary_outputs)
+        finally:
+            self.command_temporaries = previous
+
+    def inspect_command(self, command, tokens, temporary_outputs):
         tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
-        literal_tokens = self.semantic_operands(tokens, response_literals)
+        # Expanded response arguments have native caller order; recompute their
+        # output positions before inspecting any subsequent readers.
+        inherited = (temporary_outputs.inherited_files, temporary_outputs.inherited_directories)
+        temporary_outputs = self.action_temporaries(tokens, inherited)
+        self.command_temporaries = temporary_outputs
+        _, literal_tokens = self.tool_output_operands(tokens)
+        literal_tokens.update(self.semantic_operands(tokens, response_literals))
+        source_invocations = {position for position, _ in command_invocations(tokens)
+                              if tokens[position] in {".", "source"}}
         for position, token in enumerate(tokens):
             if Path(token).name == "ln":
                 end = position + 1
@@ -742,16 +929,6 @@ class Collector:
                 if any(item == "--symbolic" or (item.startswith("-") and not item.startswith("--")
                                                 and "s" in item[1:]) for item in arguments):
                     literal_tokens.update(range(position + 1, end))
-            if token == "--emit" and position + 1 < len(tokens):
-                emitted = tokens[position + 1]
-            elif token.startswith("--emit="):
-                emitted = token[len("--emit="):]
-            else:
-                continue
-            for item in emitted.split(","):
-                kind, separator, destination = item.partition("=")
-                if separator and kind in {"dep-info", "link", "metadata", "asm", "llvm-ir", "llvm-bc", "obj"}:
-                    self.aux_outputs.add(self.path(destination))
         for position, token in enumerate(tokens):
             if Path(token).name in {"python2", "python2.7"}:
                 self.require_python2()
@@ -805,6 +982,7 @@ class Collector:
                         include_paths.extend([directory / "usr/include", directory / "include"])
         index = 0
         while index < len(tokens):
+            temporary_outputs.position = index
             token = tokens[index]
             operand = command_operand(token)
             if operand and not operand.startswith("-") and self.path(operand) in temporary_outputs:
@@ -822,6 +1000,15 @@ class Collector:
                 self.command(tokens[index])
             elif self.environment(token):
                 pass
+            elif index in source_invocations and index + 1 < len(tokens):
+                index += 1
+                path = self.path(tokens[index])
+                self.add(path, "shell-source")
+                content = self.response_contents.get(path)
+                if content is None and not self.produced(path) and optional_probe(path):
+                    content = path.read_text()
+                if content is not None:
+                    self.command(content)
             elif token == "-C" and index + 1 < len(tokens):
                 index += 1
                 option = tokens[index]
