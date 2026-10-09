@@ -1270,6 +1270,115 @@ class CapsuleTests(unittest.TestCase):
         _, metadata, _ = self.collect()
         self.assertIn(str(self.source / "settings/number"), {x["path"] for x in metadata["files"]})
 
+    def test_rsync_android_exclude_is_pattern_data_and_source_filters_transport_cold(self):
+        self.write(self.source / "tree/root/sepolicy", "excluded Android policy\n")
+        self.write(self.source / "tree/kept.txt", "kept\n")
+        self.write(self.source / "filters.txt", "*.temporary\n")
+        command = "rsync -a --exclude=/root/sepolicy --include '*.txt' --exclude-from filters.txt tree/ " + str(self.out / "copy")
+        self.manifest["commands"] = [command]
+        _, metadata, archive = self.collect()
+        paths = {item["path"] for item in metadata["files"]}
+        self.assertIn(str(self.source / "filters.txt"), paths)
+        self.assertIn(str(self.source / "tree/kept.txt"), paths)
+        self.assertNotIn("/root/sepolicy", paths)
+        if shutil.which("rsync"):
+            cold = self.base / "cold"
+            cold.mkdir()
+            archive.extractall(cold)
+            destination = cold / "copy"
+            result = subprocess.run(["rsync", "-a", "--exclude=/root/sepolicy", "--include", "*.txt", "--exclude-from", "filters.txt", "tree/", str(destination)],
+                                    cwd=cold / str(self.source).lstrip("/"), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((destination / "kept.txt").read_text(), "kept\n")
+            self.assertFalse((destination / "root/sepolicy").exists())
+
+    def test_rsync_filter_file_and_actual_source_keep_old_out_gates(self):
+        old = self.out / "old.jar"
+        self.write(old, b"PK\x03\x04old")
+        for command in ["rsync --exclude-from=" + str(old) + " tree/ " + str(self.out / "copy"),
+                        "rsync --exclude=/root/sepolicy " + str(old) + " " + str(self.out / "copy")]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+                self.collect()
+
+    def test_observed_depfile_keeps_its_own_completed_transient_output_out_of_source_tar(self):
+        temporary = self.out / "withres-withoutdex.jar"
+        depfile = self.out / "compiled.d"
+        self.write(temporary, b"PK\x03\x04OLD_TEMPORARY")
+        self.write(depfile, str(self.out / "unit.o") + ": " + str(temporary) + " lib/unit.c\n")
+        command = "zip2zip -i input.jar -o " + str(temporary) + " && r8-compat-proguard -injars " + str(temporary)
+        self.manifest["edges"] = [{"command": command, "outputs": self.manifest["outputs"], "depfile": str(depfile)}]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(temporary), {item["path"] for item in metadata["files"]})
+        self.assertNotIn(str(temporary).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "lib/unit.c").lstrip("/"), archive.getnames())
+
+    def test_observed_depfile_other_action_and_prior_read_do_not_inherit_later_writer(self):
+        temporary = self.out / "withres-withoutdex.jar"
+        self.write(temporary, b"PK\x03\x04OLD_REAL_INPUT")
+        first = self.out / "first.d"
+        self.write(first, str(self.out / "first.o") + ": " + str(temporary) + "\n")
+        self.manifest["edges"] = [{"command": "hidden-reader lib/unit.c", "outputs": [str(self.out / "first.o")], "depfile": str(first)},
+                                  {"command": "zip2zip -i input.jar -o " + str(temporary) + " && consumer " + str(temporary), "outputs": self.manifest["outputs"]}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+        self.manifest["edges"] = [{"command": "cat " + str(temporary) + " && zip2zip -i input.jar -o " + str(temporary) + " && consumer " + str(temporary),
+                                  "outputs": self.manifest["outputs"], "depfile": str(first)}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+
+
+    def test_guarded_for_internal_separators_preserve_prior_fresh_namespace(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = [
+            'rm -rf %s && mkdir -p %s && for INPUT in source; do echo "--input=$INPUT"; echo "--output=%s"; done | cat >/dev/null && cat %s'
+            % (directory, directory, path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_for_outer_semicolon_does_not_preserve_prior_freshness(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s && mkdir -p %s ; for INPUT in source; do echo "$INPUT"; done && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_body_reset_cannot_establish_parent_freshness(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['for INPUT in source; do rm -rf %s && mkdir -p %s; cat %s; done' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_after_masked_reset_or_still_rejects_old_out(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s || true && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_external_or_barrier_still_rejects_old_out(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done || true && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_prior_read_before_prefix_reset_stays_rejected(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['cat %s && rm -rf %s && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done' % (path, directory, directory)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
 
 
 if __name__ == "__main__":

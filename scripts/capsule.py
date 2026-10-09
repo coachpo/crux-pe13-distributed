@@ -648,17 +648,54 @@ def shell_analysis_words(command, evaluated):
     return rewritten, tokens, children
 
 
+def guarded_for_body_barriers(tokens):
+    """Recognize plain guarded for/in/do/done bodies, not general shell AST.
+
+    Only writes established before the loop may cross its internal separators.
+    The outside guard and every outside/OR barrier retain their prior meaning.
+    Nested compounds are deliberately left to existing conservative handling.
+    """
+    invocations = list(command_invocations(tokens))
+    starts = {program for program, _ in invocations}
+    result = {}
+    for program, header_end in invocations:
+        if tokens[program] != "for" or program + 2 >= header_end:
+            continue
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tokens[program + 1]) or tokens[program + 2] != "in":
+            continue
+        previous = program - 1
+        while previous >= 0 and tokens[previous] == "(":
+            previous -= 1
+        if previous < 0 or tokens[previous] != "&&":
+            continue
+        if header_end >= len(tokens) or tokens[header_end] != ";" or header_end + 1 >= len(tokens) or tokens[header_end + 1] != "do":
+            continue
+        end = next((index for index in sorted(starts) if index > header_end and tokens[index] == "done"), None)
+        if end is None:
+            continue
+        if any(tokens[index] in {"for", "while", "until", "if", "case", "select", "function"}
+               for index in starts if header_end < index < end):
+            continue
+        for index in range(header_end, end):
+            if tokens[index] == ";":
+                result[index] = program
+    return result
+
+
 class ActionTemporaries:
     """Literal outputs that become fresh at a specific point of one action."""
-    def __init__(self, files=(), directories=(), inherited=None, barriers=()):
+    def __init__(self, files=(), directories=(), inherited=None, barriers=(), for_barriers=()):
         self.files = dict(files)
         self.directories = dict(directories)
         self.position = -1
         self.inherited_files, self.inherited_directories = inherited or (set(), set())
         self.barriers = tuple(barriers)
+        self.for_barriers = dict(for_barriers)
 
     def active(self, position):
-        return position <= self.position and not any(position <= barrier <= self.position for barrier in self.barriers)
+        return position <= self.position and not any(
+            position <= barrier <= self.position and not position < self.for_barriers.get(barrier, -1)
+            for barrier in self.barriers)
 
     def __contains__(self, path):
         return (path in self.inherited_files
@@ -1308,6 +1345,24 @@ class Collector:
                         ignored.add(index)
                         if not separator and index + 1 < end:
                             ignored.add(index + 1)
+            elif name == "rsync":
+                index = program + 1
+                operands = []
+                while index < end:
+                    flag, separator, value = tokens[index].partition("=")
+                    if flag in {"--exclude", "--include", "--exclude-from", "--include-from", "--files-from"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            index += 1
+                            ignored.add(index)
+                            value = tokens[index]
+                        if flag.endswith("-from") and value != "-":
+                            self.add(value, "rsync-pattern-file")
+                    elif not tokens[index].startswith("-"):
+                        operands.append(tokens[index])
+                    index += 1
+                for value in operands[:-1]:
+                    self.add(value, "rsync-source")
             elif name in {"java", "javac", "jmod", "jlink", "kotlinc", "kapt", "soong_javac_wrapper"}:
                 for index in range(program + 1, end):
                     flag, separator, value = tokens[index].partition("=")
@@ -1495,7 +1550,7 @@ class Collector:
                     if path is not None and (tokens[index] != ">>" or removed_before):
                         files.setdefault(path, index + 1)
         barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
-        return ActionTemporaries(files, directories, inherited, barriers)
+        return ActionTemporaries(files, directories, inherited, barriers, guarded_for_body_barriers(tokens))
 
     def command(self, command, context=None, cpp_reader=None, evaluated_shell=None):
         if evaluated_shell is None:
@@ -1729,10 +1784,22 @@ class Collector:
             self.command(command, context, cpp_reader, evaluated_shell)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
+        depfile_owners = {}
+        for edge in self.manifest.get("edges", []):
+            if edge.get("depfile") and edge.get("command"):
+                _, tokens, _ = shell_analysis_words(edge["command"], True)
+                temporaries = self.action_temporaries(tokens)
+                temporaries.position = len(tokens)
+                depfile_owners.setdefault(self.path(edge["depfile"]), []).append(temporaries)
         for value in dict.fromkeys(depfiles):
             path = self.path(value)
             if path.is_file():
                 for dependency in make_dependencies(path.read_text(errors="replace")):
+                    owners = depfile_owners.get(path, [])
+                    # A compiler depfile can name its own action's transient
+                    # inputs. Other actions' observations remain real inputs.
+                    if owners and all(self.path(dependency) in owner for owner in owners):
+                        continue
                     self.add(dependency, "observed-depfile:" + str(path))
         runner_ninja = self.source_root / "prebuilts/build-tools/linux-x86/bin/ninja"
         self.add(runner_ninja, "runner-ninja")
