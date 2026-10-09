@@ -262,6 +262,118 @@ def native_abi_exported_roots(edge, source_root, out_root):
     return sorted(roots)
 
 
+def native_link_library_operands(edge, source_root, out_root, declared_outputs,
+                                 source_leaves=(), empty_declared_rsp=False):
+    """Resolve supported literal linker operands without filesystem discovery.
+
+    Only an action's declared inline response is expanded. Search options may
+    name a declared graph output or source leaf; implicit system/toolchain
+    search results remain explicitly unresolved.
+    """
+    compiler=re.compile(r'^(?:[\w.+-]+-)?(?:clang(?:\+\+)?|gcc|g\+\+|cc|c\+\+|ld(?:\.bfd|\.gold|\.lld)?|lld)(?:-\d+(?:\.\d+)*)?$')
+    absolute=lambda value,cwd:canonical_path(value if value.startswith('/') else posixpath.join(cwd,value))
+    def invocations(command,cwd):
+        lexer=shlex.shlex(command,posix=True,punctuation_chars=';&|()<>')
+        lexer.whitespace_split=True;lexer.commenters='';segments=[];segment=[]
+        for token in lexer:
+            if token in ('&&','||',';','|','&','(',')'):
+                if segment:segments.append(segment);segment=[]
+            else:segment.append(token)
+        if segment:segments.append(segment)
+        for args in segments:
+            index=0;local_cwd=cwd
+            while index < len(args):
+                name=posixpath.basename(args[index])
+                if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=',args[index]) or name in ('exec','command','then','else','do','time'):
+                    index+=1
+                elif name == 'env':
+                    index+=1
+                    while index < len(args) and args[index].startswith('-'):
+                        option=args[index];index+=1
+                        if option in ('-u','--unset'):index+=1
+                        elif option in ('-C','--chdir') and index < len(args):
+                            local_cwd=absolute(args[index],local_cwd);index+=1
+                elif name in ('ccache','sccache','distcc'):
+                    index+=1
+                    while index < len(args) and args[index].startswith('-'):index+=1
+                else:break
+            if index == len(args):continue
+            name=posixpath.basename(args[index]);argv=args[index+1:]
+            if name == 'cd' and argv:cwd=absolute(argv[0],cwd)
+            elif name in ('bash','sh','dash'):
+                for position,option in enumerate(argv):
+                    if option.startswith('-') and not option.startswith('--') and 'c' in option[1:]:
+                        if position+1 < len(argv):yield from invocations(argv[position+1],local_cwd)
+                        break
+            elif compiler.fullmatch(name):yield name,argv,local_cwd
+    declared=declared_outputs if isinstance(declared_outputs,(dict,set,frozenset)) else set(declared_outputs)
+    def declared_path(path):
+        if path in declared:return path
+        relative=posixpath.relpath(path,source_root)
+        return relative if relative in declared else None
+    sources={absolute(path,source_root) for path in source_leaves}
+    required=set();contexts=[];unknown=[];empty_responses=0
+    for program,original,cwd in invocations(edge.get('command',''),source_root):
+        argv=[];responses=[];context_unknown=[];empty_count=0
+        for token in original:
+            if token.startswith('@'):
+                path=absolute(token[1:],cwd)
+                if edge.get('rspfile') and path == absolute(edge['rspfile'],source_root):
+                    if 'rspfile_content' in edge:
+                        argv.extend(shlex.split(edge['rspfile_content']));responses.append(path)
+                    elif empty_declared_rsp:
+                        responses.append(path);empty_count+=1
+                    else:context_unknown.append({'reason':'declared_response_content_unavailable','value':token})
+                else:context_unknown.append({'reason':'undeclared_response_not_opened','value':token})
+            else:argv.append(token)
+        if any(option in argv for option in ('-c','-E','-S','-cc1','-fsyntax-only')):continue
+        unknown.extend(context_unknown);empty_responses+=empty_count
+        args=[]
+        for argument in argv:
+            if argument.startswith('-Wl,'):args.extend(argument[4:].split(','))
+            elif argument != '-Xlinker':args.append(argument)
+        skip=set();roots=[];libraries=[];mode='dynamic';index=0
+        operands={'-o','--output','-MF','-MT','-MQ','-Map','--Map','-soname','--soname',
+            '--exclude-libs','-rpath','--rpath','-rpath-link','--rpath-link',
+            '-dynamic-linker','--dynamic-linker','--retain-symbols-file'}
+        while index < len(args):
+            argument=args[index]
+            if argument in operands and index+1 < len(args):
+                skip.update((index,index+1));index+=2;continue
+            if argument.startswith(('--output=','-Map=','--Map=')):
+                skip.add(index);index+=1;continue
+            if argument in ('-Bstatic','-static','--static'):mode='static'
+            elif argument in ('-Bdynamic','--dynamic'):mode='dynamic'
+            if argument == '-L' and index+1 < len(args):
+                roots.append(args[index+1]);skip.update((index,index+1));index+=2;continue
+            if argument.startswith('-L') and len(argument)>2:
+                roots.append(argument[2:]);skip.add(index)
+            if argument == '-l' and index+1 < len(args):
+                libraries.append((args[index+1],mode));skip.update((index,index+1));index+=2;continue
+            if argument.startswith('-l') and len(argument)>2 and not argument.startswith('-link'):
+                libraries.append((argument[2:],mode));skip.add(index)
+            index+=1
+        roots=[absolute(path,cwd) for path in roots if not any(char in path for char in '$*?[')]
+        files=set()
+        for index,argument in enumerate(args):
+            if index in skip or argument.startswith('-') or not re.search(r'\.(?:a|so(?:\.\d+)*)$',argument):continue
+            if any(char in argument for char in '$*?['):
+                unknown.append({'reason':'dynamic_library_operand','value':argument});continue
+            path=absolute(argument,cwd)
+            if path.startswith(out_root.rstrip('/')+'/'):
+                files.add(declared_path(path) or path)
+        for library,mode in libraries:
+            names=[library[1:]] if library.startswith(':') else (['lib'+library+'.a'] if mode=='static' else ['lib'+library+'.so','lib'+library+'.a'])
+            candidates=[posixpath.join(root,name) for root in roots for name in names]
+            found=next((path for path in candidates if declared_path(path) is not None or path in sources),None)
+            if found is None:unknown.append({'reason':'library_search_unresolved_without_filesystem','value':'-l'+library,'search_roots':roots})
+            elif found.startswith(out_root.rstrip('/')+'/'):files.add(declared_path(found))
+        required.update(files)
+        contexts.append({'program':program,'required_files':sorted(files),'declared_inline_responses':responses})
+    return {'required_files':sorted(required),'contexts':contexts,'unresolved':unknown,
+            'declared_empty_response_count':empty_responses}
+
+
 def expand(value, variables):
     """Expand a Ninja EvalString, including escaped separators and continuations."""
     if '$' not in value:
@@ -747,13 +859,15 @@ class Graph:
         rust=self.rust_runtime_contracts(records,producers,metadata)
         includes=self.generated_include_contracts(records,producers,out_root,metadata)
         abi=self.abi_header_namespace_contracts(records,producers,out_root,metadata)
+        links=self.native_link_runtime_contracts(records,producers,out_root,metadata)
         embedded=self.embedded_tool_contracts(records,producers,metadata)
         contracts={edge:sorted(set(rust.get(edge,[])) |
                     set(includes.get(edge,{}).get('required_headers',[])) |
                     set(includes.get(edge,{}).get('owned_dirs',[])) |
                     set(abi.get(edge,{}).get('required_files',[])) |
-                    set(abi.get(edge,{}).get('owned_dirs',[])))
-                   for edge in set(rust) | set(includes) | set(abi)}
+                    set(abi.get(edge,{}).get('owned_dirs',[])) |
+                    set(links.get(edge,{}).get('required_files',[])))
+                   for edge in set(rust) | set(includes) | set(abi) | set(links)}
         selected=set(closure['edge_ids']); own_outputs=set(closure['outputs'])
         closure['external_inputs']=sorted(set(closure['external_inputs']) | {
             path for edge in selected for path in contracts.get(edge,[]) if path not in own_outputs})
@@ -765,6 +879,8 @@ class Graph:
             manifest['edges'],embedded,producers)
         manifest['abi_header_namespace_contract']=self.abi_header_namespace_manifest_contract(
             manifest['edges'],abi,producers)
+        manifest['native_link_runtime_contract']=self.native_link_manifest_contract(
+            manifest['edges'],links,producers)
         (Path(destination)/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
         return manifest
 
@@ -935,6 +1051,54 @@ class Graph:
                     'selected_original_ancestor_declared_files_only':True,
                     'old_OUT_namespace_entries_never_establish_providers':True,
                     'header_contents_not_read_by_namespace_enumeration':True}}
+
+    def native_link_runtime_contracts(self, records, producers, out_root=None, metadata=None):
+        """Retain real library files when a .toc boundary cuts their producer.
+
+        Native linkers open the installed .so/.a, although Ninja may order the
+        action through its .toc instead. Only original selected output paths
+        and ancestor readiness can supply these additional runtime inputs.
+        """
+        source_root=self.meta['source_root']
+        out_root=canonical_path(str(out_root or Path(self.meta['ninja']).parent))
+        metadata=self.native_metadata(records) if metadata is None else metadata
+        declared={path:edge for edge,record in records.items() if record['rule']!='phony'
+                  for path in record['outputs']}
+        contracts={};providers=set()
+        for edge,record in metadata.items():
+            leaves=[path for path,kind in records[edge]['deps'] if path not in producers and kind!='validation']
+            empty=(record['rule']=='g.cc.ld' and not any(kind=='explicit' for _,kind in records[edge]['deps']))
+            parsed=native_link_library_operands(record,source_root,out_root,declared,leaves,empty)
+            if not parsed['contexts']:continue
+            for path in parsed['required_files']:
+                if path not in declared:
+                    raise ValueError('native linker library has no selected exact original producer: '+path)
+                providers.add(declared[path])
+            contracts[edge]=parsed
+        bits,ancestors=self.ancestor_provider_masks(records,producers,sorted(providers))
+        for edge,contract in contracts.items():
+            for path in contract['required_files']:
+                if not ancestors[edge] & bits[declared[path]]:
+                    raise ValueError('native linker library lacks original prerequisite ordering: '+path)
+        return contracts
+
+    def native_link_manifest_contract(self, metadata, contracts, producers):
+        contexts=[];files=set();unresolved=[];empty=0
+        for index,record in enumerate(metadata):
+            contract=contracts.get(producers[record['outputs'][0]])
+            if contract is None:continue
+            files.update(contract['required_files']);empty+=contract['declared_empty_response_count']
+            contexts.append({'edge_index':index,'primary_output':record['outputs'][0],
+                'required_files':contract['required_files'],'reader':'native_linker',
+                'literal_and_declared_inline_response_inputs_only':True,
+                'selected_original_ancestor_producers_only':True})
+            unresolved.extend({'edge_index':index,**item} for item in contract['unresolved'])
+        return {'schema_version':1,'required_files':sorted(files),'contexts':contexts,
+                'qualification':{'unresolved':unresolved,'declared_empty_response_count':empty,
+                                 'implicit_SOURCE_host_library_search_not_guessed':True},
+                'provenance':{'original_ninja':self.meta['ninja'],'native_flags_rsp_dep_scopes_unchanged':True,
+                    'selected_original_ancestor_exact_library_outputs_only':True,
+                    'filesystem_payload_or_existence_never_establishes_providers':True}}
 
     def generated_include_manifest_contract(self, metadata, contracts, producers):
         contexts=[];roots=set();headers=set();trees=set()
@@ -1384,13 +1548,15 @@ class Graph:
         rust_contracts = self.rust_runtime_contracts(records,producers,metadata)
         include_contracts=self.generated_include_contracts(records,producers,out_root,metadata)
         abi_contracts=self.abi_header_namespace_contracts(records,producers,out_root,metadata)
+        link_contracts=self.native_link_runtime_contracts(records,producers,out_root,metadata)
         embedded_contracts=self.embedded_tool_contracts(records,producers,metadata)
         runtime_contracts={edge:sorted(set(rust_contracts.get(edge,[])) |
                             set(include_contracts.get(edge,{}).get('required_headers',[])) |
                             set(include_contracts.get(edge,{}).get('owned_dirs',[])) |
                             set(abi_contracts.get(edge,{}).get('required_files',[])) |
-                            set(abi_contracts.get(edge,{}).get('owned_dirs',[])))
-                           for edge in set(rust_contracts) | set(include_contracts) | set(abi_contracts)}
+                            set(abi_contracts.get(edge,{}).get('owned_dirs',[])) |
+                            set(link_contracts.get(edge,{}).get('required_files',[])))
+                           for edge in set(rust_contracts) | set(include_contracts) | set(abi_contracts) | set(link_contracts)}
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
         visiting = set()
@@ -1529,6 +1695,8 @@ class Graph:
                 job['embedded_tool_contexts']=embedded_contexts
                 abi_contract=self.abi_header_namespace_manifest_contract(planned_metadata,abi_contracts,producers)
                 job['abi_header_namespace_contract']=abi_contract
+                link_contract=self.native_link_manifest_contract(planned_metadata,link_contracts,producers)
+                job['native_link_runtime_contract']=link_contract
                 if export:
                     directory = Path(destination)/identity
                     orders=self.local_runtime_order_inputs(selected,runtime_contracts,records,producers)
@@ -1546,6 +1714,10 @@ class Graph:
                     if actual_abi != abi_contract:
                         raise ValueError('ABI namespace metadata differs from its planned native actions')
                     manifest['abi_header_namespace_contract']=actual_abi
+                    actual_link=self.native_link_manifest_contract(manifest['edges'],link_contracts,producers)
+                    if actual_link != link_contract:
+                        raise ValueError('native linker metadata differs from its planned native actions')
+                    manifest['native_link_runtime_contract']=actual_link
                     if runtime_inputs:
                         manifest['rust_runtime_inputs'] = runtime_inputs
                     (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

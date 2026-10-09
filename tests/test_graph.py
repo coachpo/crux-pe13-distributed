@@ -921,6 +921,82 @@ Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
             self.assertEqual(rebuilt.returncode,0,rebuilt.stdout+rebuilt.stderr)
             self.assertEqual((root/'out/api.lsdump').read_bytes(),expected)
 
+    def test_native_linker_parses_only_actual_inputs_and_declared_inline_responses(self):
+        source='/source';out='/source/out';paths=['out/libs/libvalue.so','out/libs/libstatic.a']
+        edge={'command': '/bin/bash -c "clang++ @out/link.rsp -Lout/libs -lvalue -Wl,--exclude-libs,ignored.a -o out/result.so"',
+              'rspfile':'out/link.rsp','rspfile_content':'main.o -Wl,--whole-archive,out/libs/libstatic.a,--no-whole-archive'}
+        parsed=graph.native_link_library_operands(edge,source,out,paths)
+        self.assertEqual(parsed['required_files'],sorted(paths))
+        self.assertEqual(len(parsed['contexts']),1)
+        self.assertEqual(parsed['unresolved'],[])
+        compiled=graph.native_link_library_operands({'command':'clang++ -c main.c -o out/result.o'},source,out,paths)
+        self.assertEqual(compiled['contexts'],[])
+        unknown=graph.native_link_library_operands({'command':'clang++ @old.rsp -Lhost -lmissing -o out/app'},source,out,paths)
+        self.assertEqual({r['reason'] for r in unknown['unresolved']},
+                         {'undeclared_response_not_opened','library_search_unresolved_without_filesystem'})
+        empty=graph.native_link_library_operands({'command':'clang++ @out/empty.rsp -o out/libempty.so',
+            'rspfile':'out/empty.rsp'},source,out,paths,empty_declared_rsp=True)
+        self.assertEqual(empty['declared_empty_response_count'],1)
+        self.assertEqual(empty['unresolved'],[])
+
+    def test_native_linker_cannot_use_a_stale_or_unordered_OUT_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();(root/'out').mkdir();(root/'out/libstale.so').write_text('old output')
+            (root/'build.ninja').write_text('rule make\n  command = touch $out\n'
+                'rule link\n  command = cc main.c out/libstale.so -o $out\n'
+                'build out/libstale.so: make\nbuild out/app: link main.c\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db);indexed=graph.Graph(db)
+            with self.assertRaisesRegex(ValueError,'no selected exact original producer'):
+                indexed.slice(['out/app'],root/'slice',out_root=root/'out')
+            with self.assertRaisesRegex(ValueError,'lacks original prerequisite ordering'):
+                indexed.slice(['out/app','out/libstale.so'],root/'unordered',out_root=root/'out')
+
+    def test_cold_native_library_transport_survives_a_retained_toc_boundary(self):
+        if not shutil.which('ninja') or not shutil.which('cc'):
+            self.skipTest('native Ninja and C compiler are required for cold linker validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            (root/'library.c').write_text('int value(void) { return 7; }\n')
+            (root/'main.c').write_text('int value(void); int main(void) { return value() == 7 ? 0 : 1; }\n')
+            (root/'build.ninja').write_text('rule library\n'
+                '  command = mkdir -p out/source && cc -shared -fPIC library.c -o $out\n'
+                'rule copy\n  command = mkdir -p out/installed && cp $in $out\n'
+                'rule toc\n  command = printf interface > $out\n'
+                'rule link\n  command = cc main.c out/installed/libvalue.so -Wl,-rpath,'
+                f'{root}/out/installed -o $out\n'
+                'build out/source/libvalue.so: library library.c\n'
+                'build out/installed/libvalue.so: copy out/source/libvalue.so\n'
+                'build out/libvalue.so.toc: toc out/installed/libvalue.so\n'
+                'build out/app: link main.c | out/libvalue.so.toc\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db);indexed=graph.Graph(db)
+            plan=indexed.shard(['out/app'],root/'shards',max_actions=1,out_root=root/'out')
+            consumer=plan['waves'][3][0];copy=plan['waves'][1][0]
+            self.assertIn('out/installed/libvalue.so',consumer['external_inputs'])
+            self.assertIn('out/installed/libvalue.so',copy['export_outputs'])
+            planned=indexed.shard(['out/app'],root/'planned',max_actions=1,export=False,out_root=root/'out')
+            self.assertEqual(consumer['native_link_runtime_contract'],planned['waves'][3][0]['native_link_runtime_contract'])
+            subprocess.run(['ninja','-f','build.ninja','out/app'],cwd=root,check=True,capture_output=True)
+            archive=root/'inputs.tar'
+            with tarfile.open(archive,'w') as output:
+                for wave in plan['waves'][:3]:
+                    for job in wave:
+                        for path in job['export_outputs']:output.add(root/path,arcname=path)
+            shutil.rmtree(root/'out');(root/'.ninja_log').unlink(missing_ok=True)
+            with tarfile.open(archive) as output:output.extractall(root)
+            shutil.copytree(root/'shards'/consumer['id'],root/'.crux-task/graph')
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','out/app'],cwd=root,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertEqual(subprocess.run([root/'out/app'],cwd=root).returncode,0)
+            # Retain source .so and its .toc but rebuild the installed copy.
+            (root/'out/installed/libvalue.so').unlink();(root/'out/app').unlink()
+            local=indexed.slice(['out/app','out/installed/libvalue.so'],root/'.crux-task/graph',
+                external=['out/source/libvalue.so','out/libvalue.so.toc'],out_root=root/'out')
+            self.assertEqual(list(local['runtime_order_inputs'].values()),[['out/installed/libvalue.so']])
+            rebuilt=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-j4',
+                'out/app','out/installed/libvalue.so'],cwd=root,capture_output=True,text=True)
+            self.assertEqual(rebuilt.returncode,0,rebuilt.stdout+rebuilt.stderr)
+            self.assertEqual(subprocess.run([root/'out/app'],cwd=root).returncode,0)
+
 
 if __name__ == '__main__':
     unittest.main()
