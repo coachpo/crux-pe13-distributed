@@ -84,6 +84,10 @@ preinstalled .NET, Android SDK, Haskell, CodeQL and Docker images. Package
 removal, general tool-cache deletion and swap removal are disabled. The ROM
 uses its declared source/toolchain inputs; disk records retain the actual
 before-cleanup and after-cleanup capacity.
+The [cleanup probe](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37905466509)
+succeeded with zero annotations and observed 21.74 GiB of additional available
+space, leaving 107.95 GiB free. Its measurements are in
+[`results/runner-cleanup/`](results/runner-cleanup/).
 
 ## Validation
 

@@ -1,0 +1,25 @@
+{
+  "run_id": 37905466509,
+  "run_url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/37905466509",
+  "worker_commit": "984625047a942b08386bc0c3a4cce32306e39181",
+  "runner": "ubuntu-22.04",
+  "action": "AdityaGarg8/remove-unwanted-software@v5",
+  "conclusion": "success",
+  "annotations": 0,
+  "before": {
+    "filesystem": "/dev/root",
+    "total_bytes": 155897610240,
+    "used_bytes": 63311114240,
+    "available_bytes": 92569718784
+  },
+  "after": {
+    "filesystem": "/dev/root",
+    "total_bytes": 155897610240,
+    "used_bytes": 39966105600,
+    "available_bytes": 115914727424
+  },
+  "observed_available_gain_bytes": 23345008640,
+  "observed_available_gain_GiB": 21.74,
+  "observed_available_after_GiB": 107.95,
+  "qualification": "Observed result for this standard runner image; not a guaranteed capacity for every runner."
+}
