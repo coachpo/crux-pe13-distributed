@@ -2,6 +2,7 @@
 """Package the cold inputs of a Ninja graph slice for a standard Linux runner."""
 
 import argparse
+import ast
 import errno
 import hashlib
 import io
@@ -128,6 +129,42 @@ def command_operand(token):
     return token.partition("=")[2] if "=" in token else token
 
 
+def command_invocations(tokens):
+    """Locate the program of each simple shell command, including env prefixes."""
+    start = 0
+    for end in range(len(tokens) + 1):
+        if end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "&", "(", ")"}:
+            continue
+        program = start
+        while program < end and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[program]):
+            program += 1
+        if program < end and Path(tokens[program]).name == "env":
+            program += 1
+            while program < end and (tokens[program].startswith("-")
+                                     or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[program])):
+                program += 1
+        if program < end:
+            yield program, end
+        start = end + 1
+
+
+def response_context(command, response=None):
+    tokens = command_tokens(command)
+    for position, end in command_invocations(tokens):
+        name = Path(tokens[position]).name
+        if name in {"protoc", "aprotoc", "build_license_metadata"} and (response is None or any(
+                token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+                for token in tokens[position + 1:end])):
+            return name
+        if name in {"bash", "sh", "dash"}:
+            for index in range(position + 1, len(tokens) - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:]:
+                    context = response_context(tokens[index + 1], response)
+                    if context:
+                        return context
+    return None
+
+
 class Collector:
     def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
                  selection_roots=None, scan_cache=None):
@@ -142,6 +179,9 @@ class Collector:
         self.aux_outputs = {self.path(item) for item in manifest.get("depfiles", []) + manifest.get("rspfiles", [])}
         self.aux_outputs.update(self.path(edge[key]) for edge in manifest.get("edges", [])
                                 for key in ("depfile", "rspfile") if edge.get(key))
+        self.response_contents = {self.path(edge["rspfile"]): edge["rspfile_content"]
+                                  for edge in manifest.get("edges", [])
+                                  if edge.get("rspfile") and edge.get("rspfile_content")}
         self.output_dirs = ({self.path(item) for item in manifest.get("output_dirs", [])}
                             | {path for path in self.outputs if path.is_dir()})
         self.external_dirs = ({self.path(item) for item in manifest.get("external_input_dirs", [])}
@@ -161,6 +201,7 @@ class Collector:
         self.system_tools = set()
         self.required_interpreters = {}
         self.assembler_scan_cache = set()
+        self.proto_scan_cache = set()
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -231,6 +272,15 @@ class Collector:
                 or start.startswith(b"dey\n") or start.startswith(b"!<arch>\n")
                 or start.startswith(b"\xca\xfe\xba\xbe") or start.startswith(b"PK\x03\x04")
                 or start.startswith(b"ANDROID!") or start.startswith(b"VNDRBOOT"))
+
+    def binary_header_candidate(self, path):
+        if self.compiled(path):
+            return True
+        with path.open("rb") as stream:
+            prefix = stream.read(4096)
+        # Extensionless C/C++ headers are text. Binary containers (including
+        # jimage, Mach-O and ARM64 Image) contain NULs in their format header.
+        return b"\0" in prefix
 
     def add(self, value, reason, required=True):
         path = self.path(value)
@@ -323,7 +373,7 @@ class Collector:
                 if headers_only and path.suffix not in HEADER_SUFFIXES and path.suffix:
                     continue
                 if headers_only and not path.suffix:
-                    if path.name.startswith(".") or (path.is_file() and self.compiled(path)):
+                    if path.name.startswith(".") or (path.is_file() and self.binary_header_candidate(path)):
                         continue
                 self.add(path, reason, required=False)
 
@@ -448,6 +498,184 @@ class Collector:
             if directive == "include":
                 self.assembler_inputs(dependency, include_paths)
 
+    def proto_input(self, value, search_paths):
+        path = self.path(value)
+        self.add(path, "protobuf-schema")
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(search_paths))
+        if key in self.proto_scan_cache:
+            return
+        self.proto_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        # Protobuf accepts adjacent quoted import strings. Tokenize comments and
+        # strings together so examples inside either do not become dependencies.
+        lexemes = r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_][A-Za-z_0-9]*|[^\s]'
+        tokens = [token for token in re.findall(lexemes, text, flags=re.DOTALL)
+                  if not token.startswith(("//", "/*"))]
+        for index, token in enumerate(tokens):
+            if token != "import":
+                continue
+            index += 1
+            if index < len(tokens) and tokens[index] in {"public", "weak"}:
+                index += 1
+            parts = []
+            while index < len(tokens) and tokens[index].startswith(('"', "'")):
+                parts.append(ast.literal_eval(tokens[index]))
+                index += 1
+            if not parts or index >= len(tokens) or tokens[index] != ";":
+                continue
+            name = "".join(parts)
+            candidates = self.proto_candidates(name, search_paths)
+            dependency = next((item for item in candidates if self.produced(item) or optional_probe(item)),
+                              candidates[0] if candidates else self.path(name))
+            self.proto_input(dependency, search_paths)
+
+    def proto_candidates(self, value, search_paths):
+        candidates = []
+        for virtual, directory in search_paths:
+            if not virtual:
+                candidates.append(directory / value)
+            elif value.startswith(virtual + "/"):
+                candidates.append(directory / value[len(virtual) + 1:])
+        return candidates
+
+    def semantic_operands(self, tokens, response_literals=()):
+        """Handle tools whose path-looking arguments are schemas or metadata."""
+        ignored = set()
+        for program, end in command_invocations(tokens):
+            name = Path(tokens[program]).name
+            if name in {"protoc", "aprotoc"}:
+                search_paths, inputs = [], []
+                index = program + 1
+                while index < end:
+                    token = tokens[index]
+                    if token.isdigit() and index + 1 < end and tokens[index + 1] in {"<", ">", ">>", ">|"}:
+                        ignored.add(index)
+                        index += 1
+                        continue
+                    if token.startswith("@") and index not in response_literals:
+                        index += 1
+                        continue
+                    ignored.add(index)
+                    if token in {"<", ">", ">>", ">|", "<>", "<<", "<<<", "<&", ">&"} and index + 1 < end:
+                        index += 1
+                        ignored.add(index)
+                        if token in {"<", "<>", ">>"}:
+                            self.add(tokens[index], "command-redirection-input", required=token != ">>")
+                        index += 1
+                        continue
+                    if token in {"-I", "--proto_path"} and index + 1 < end:
+                        index += 1
+                        ignored.add(index)
+                        mapping = tokens[index]
+                    elif token.startswith("--proto_path="):
+                        mapping = token.split("=", 1)[1]
+                    elif token.startswith("-I") and len(token) > 2:
+                        mapping = token[2:]
+                    else:
+                        if token in {"-o", "--descriptor_set_in", "--descriptor_set_out", "--dependency_out",
+                                     "--plugin", "--encode", "--decode"} or (token.startswith("--")
+                                                                             and token.endswith("_out")):
+                            if index + 1 < end:
+                                index += 1
+                                ignored.add(index)
+                                self.proto_option_input(token, tokens[index])
+                        elif token.startswith(("--descriptor_set_in=", "--plugin=")):
+                            self.proto_option_input(*token.split("=", 1))
+                        elif not token.startswith("-"):
+                            if not token:
+                                raise CapsuleError("Empty protobuf schema argument")
+                            inputs.append(token)
+                        index += 1
+                        continue
+                    for item in mapping.split(":"):
+                        virtual, separator, directory = item.partition("=")
+                        search_paths.append((virtual.rstrip("/"), self.path(directory)) if separator
+                                            else ("", self.path(item)))
+                    index += 1
+                if not search_paths:
+                    search_paths = [("", self.source_root)]
+                for value in inputs:
+                    direct = self.path(value)
+                    candidates = [direct] + self.proto_candidates(value, search_paths)
+                    dependency = next((item for item in candidates if self.produced(item) or optional_probe(item)), direct)
+                    self.proto_input(dependency, search_paths)
+            elif name == "build_license_metadata":
+                # The native tool stores these fields as protobuf strings. Only
+                # @response files are opened; graph dependencies are collected
+                # separately even when the same path is also metadata text.
+                index = program + 1
+                ignored.update(position for position in response_literals if program < position < end)
+                metadata_flags = {"-s", "-t", "-i", "-d", "-m", "-n", "-mt", "-mc", "-k", "-c", "-p", "-o", "-r"}
+                while index < end:
+                    token = tokens[index]
+                    flag, separator, value = token.partition("=")
+                    if flag in metadata_flags:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            index += 1
+                            ignored.add(index)
+                            value = tokens[index]
+                        if flag == "-r":
+                            path = self.path(value)
+                            if self.selected(path) and not self.produced(path) and optional_probe(path, "is_dir"):
+                                resolved = self.symlink_ancestors(path, "license-git-probe-root")
+                                if self.allowed_path(resolved) and not beneath(resolved, self.out_root):
+                                    self.register(resolved, "license-git-probe-root")
+                    elif flag == "-is_container":
+                        ignored.add(index)
+                    index += 1
+        return ignored
+
+    def proto_option_input(self, flag, value):
+        if flag == "--descriptor_set_in":
+            for path in value.split(":"):
+                self.add(path, "protobuf-descriptor-input")
+        elif flag == "--plugin":
+            path = value.partition("=")[2] or value
+            self.add(path, "protobuf-plugin")
+            self.tool_package(path)
+
+    def expand_semantic_responses(self, tokens, temporary_outputs):
+        """Inspect response operands in their caller's exact argument order."""
+        def expand(arguments, program):
+            result = []
+            for token in arguments:
+                if not token.startswith("@"):
+                    result.append((token, False))
+                    continue
+                path = self.path(token[1:])
+                if path in temporary_outputs:
+                    result.append((token, False))
+                    continue
+                self.add(path, "command-response")
+                if path in self.response_contents:
+                    content = self.response_contents[path]
+                elif not self.produced(path) and optional_probe(path):
+                    content = path.read_text()
+                else:
+                    result.append((token, False))
+                    continue
+                # Native protoc reads one argument per line. The license tool
+                # uses the Soong quoted response parser. Neither re-expands @
+                # tokens from inside response content.
+                if program in {"protoc", "aprotoc"}:
+                    arguments = content.split("\n")
+                    if arguments and arguments[-1] == "":
+                        arguments.pop()
+                else:
+                    arguments = shlex.split(content, posix=True)
+                result.extend((argument, argument.startswith("@")) for argument in arguments)
+            return result
+
+        marked = [(token, False) for token in tokens]
+        for program, end in reversed(list(command_invocations(tokens))):
+            name = Path(tokens[program]).name
+            if name in {"protoc", "aprotoc", "build_license_metadata"}:
+                marked[program + 1:end] = expand(tokens[program + 1:end], name)
+        return [token for token, _ in marked], {index for index, (_, literal) in enumerate(marked) if literal}
+
     def action_temporaries(self, tokens):
         """Find literal files recreated before consumption in this shell action."""
         # Alternative/pipeline branches do not establish an ordered fresh write.
@@ -498,10 +726,13 @@ class Collector:
         return {path for path, item in states.items() if item["fresh"] is not None
                 and (item["read"] is None or item["read"] > item["fresh"])}
 
-    def command(self, command):
+    def command(self, command, context=None):
         tokens = command_tokens(command)
+        if context:
+            tokens.insert(0, context)
         temporary_outputs = self.action_temporaries(tokens)
-        literal_tokens = set()
+        tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
+        literal_tokens = self.semantic_operands(tokens, response_literals)
         for position, token in enumerate(tokens):
             if Path(token).name == "ln":
                 end = position + 1
@@ -554,6 +785,8 @@ class Collector:
         include_paths = []
         assembler_paths = []
         for index, token in enumerate(tokens):
+            if index in literal_tokens:
+                continue
             if token in include_flags and index + 1 < len(tokens):
                 directory = self.path(tokens[index + 1])
                 include_paths.append(directory)
@@ -632,9 +865,9 @@ class Collector:
                 # Ninja writes declared rspfiles; their content is inspected separately.
                 path = self.path(token[1:])
                 if not beneath(path, self.out_root):
-                    self.add(path, "command-response", required=False)
-                    if path.is_file():
-                        self.command(path.read_text())
+                    self.add(path, "command-response")
+                    if not self.produced(path) and path.is_file():
+                        self.command(path.read_text(), response_context(command, token[1:]))
             elif token not in {"&&", "||", ";", "|", "(", ")", ">", "<"}:
                 value = command_operand(token)
                 if value and not value.startswith("-"):
@@ -655,14 +888,16 @@ class Collector:
                 self.include_directory(path.parent, "source-local-headers")
             self.python_package(path)
             self.tool_package(path)
-        commands = list(self.manifest.get("commands", []))
+        commands = [(command, None) for command in self.manifest.get("commands", [])]
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
-                commands.append(edge["command"])
+                commands.append((edge["command"], None))
             if edge.get("rspfile_content"):
-                commands.append(edge["rspfile_content"])
-        for command in dict.fromkeys(commands):
-            self.command(command)
+                context = response_context(edge.get("command", ""), edge.get("rspfile"))
+                if not context:
+                    commands.append((edge["rspfile_content"], None))
+        for command, context in dict.fromkeys(commands):
+            self.command(command, context)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         for value in dict.fromkeys(depfiles):
