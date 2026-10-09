@@ -290,6 +290,87 @@ class SchedulerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'fixed current worker commit'):
             scheduler.apply_input_correction(state, task)
 
+    def test_approved_primary_variant_bypasses_missing_original_capsule_and_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, archive = self.lazy_fixture(root)
+            archive.unlink()
+            original = json.dumps(task)
+            proof = root / 'proof.json'
+            proof.write_text('native commands unchanged; imports augmented')
+            variant_sha = 'd' * 64
+            archive_sha = 'e' * 64
+            metadata = {'schema_version': 1, 'source_root': '/source', 'out_root': '/out',
+                        'slice_path': '/source/.crux-task/graph', 'manifest_sha256': variant_sha,
+                        'archive': {'name': 'task-cooutputs-v1.tar.zst', 'sha256': archive_sha, 'size': 10},
+                        'files': [{'path': '/source/.crux-task/graph/manifest.json', 'type': 'file',
+                                   'mode': 0o644, 'size': 20, 'sha256': variant_sha, 'reasons': ['task-graph']},
+                                  {'path': '/source/source.c', 'type': 'file', 'mode': 0o644,
+                                   'size': 30, 'sha256': 'f' * 64, 'reasons': ['graph-leaf']}]}
+            path = root / 'task-cooutputs-v1.json'
+            path.write_text(json.dumps(metadata))
+            part = {'name': 'task-cooutputs-v1.tar.zst', 'path': str(root / 'missing-archived-local-copy'),
+                    'size': 10, 'sha256': archive_sha, 'uploaded': True,
+                    'api_digest': 'sha256:' + archive_sha, 'api_size': 10}
+            correction = {'approved': True, 'original_manifest_sha256': scheduler.frozen_manifest(task),
+                          'variant_manifest_sha256': variant_sha,
+                          'variant_provenance': {'verified': True, 'proof': {'path': str(proof),
+                                                                          'sha256': scheduler.digest(proof)}},
+                          'primary_input': {'metadata': {'path': str(path), 'sha256': scheduler.digest(path)},
+                                            'parts': [part], 'archive_sha256': archive_sha,
+                                            'manifest_sha256': variant_sha}}
+            state = {'input_corrections': {'task': correction}}
+            with patch.object(scheduler, 'gh') as gh, patch.object(scheduler.subprocess, 'run') as pack:
+                prepared = scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            self.assertEqual(prepared['capsule_assets'], [part['name']])
+            self.assertEqual(state['inputs']['task']['manifest_sha256'], variant_sha)
+            self.assertEqual(state['frozen_inputs']['/source/source.c']['sha256'], 'f' * 64)
+            self.assertEqual(json.dumps(task), original)
+            pack.assert_not_called()
+            gh.assert_not_called()
+            del state['input_corrections']
+            with self.assertRaisesRegex(ValueError, 'no approved primary input correction'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            state['input_corrections'] = {'task': correction}
+            part['api_digest'] = 'sha256:' + 'a' * 64
+            with self.assertRaisesRegex(ValueError, 'not API verified'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+
+    def test_explicit_ready_subset_prepares_only_ready_task_and_waits_for_remaining_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            revision = 'a' * 40
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            plan_path.write_text(json.dumps({'schema_version': 2, 'waves': [
+                {'id': 0, 'tasks': [{'id': 'ready', 'capsule_assets': ['ready.tar.zst']},
+                                    {'id': 'unready', 'capsule_assets': ['unready.tar.zst']}]},
+                {'id': 1, 'tasks': [{'id': 'later', 'capsule_assets': ['later.tar.zst']}]}]}))
+            state = {'repo': 'owner/project', 'tag': 'inputs', 'plan_sha256': scheduler.digest(plan_path),
+                     'worker_sha': revision, 'worker_ref': 'fixed-worker', 'runs': {},
+                     'ready_subsets': {'0': {'approved': True, 'task_ids': ['ready'], 'reason': 'Controller approved'}}}
+            state_path.write_text(json.dumps(state))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs']
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh', return_value=revision), \
+                    patch.object(scheduler, 'prepare_task', side_effect=lambda plan, task, *rest: task) as prepare, \
+                    patch.object(scheduler, 'dispatch', return_value={'databaseId': 123,
+                        'url': 'https://github.com/run/123', 'headSha': revision}) as dispatch, \
+                    patch.object(scheduler, 'wait', return_value={'conclusion': 'success',
+                        'jobs': [self.compile_job('ready', 'success')]}):
+                scheduler.main()
+            self.assertEqual([call.args[1]['id'] for call in prepare.call_args_list], ['ready'])
+            dispatch.assert_called_once()
+            completed = json.loads(state_path.read_text())
+            self.assertEqual(completed['waves']['0']['status'], 'waiting_for_inputs')
+            self.assertEqual(set(completed['task_runs']), {'ready'})
+            self.assertNotIn('finished_at', completed)
+            state['ready_subsets']['0']['task_ids'] = ['unknown']
+            state_path.write_text(json.dumps(state))
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'prepare_task') as prepare:
+                with self.assertRaisesRegex(ValueError, 'Invalid explicitly approved ready subset'):
+                    scheduler.main()
+            prepare.assert_not_called()
+
     def test_failed_wave_retry_preserves_previous_run_and_pins_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -152,13 +152,32 @@ def require_wave_producers(state, wave, run):
             raise ValueError('Successful wave attempt is missing producer bindings: ' + ', '.join(missing))
 
 
-def apply_input_correction(state, task, original_task=None):
+def ready_subset(state, wave):
+    subset = state.get('ready_subsets', {}).get(str(wave['id']))
+    if subset is None:
+        return None
+    ids = subset.get('task_ids', [])
+    known = {task['id'] for task in wave['tasks']}
+    if subset.get('approved') is not True or not isinstance(ids, list) or not ids \
+            or any(not isinstance(identity, str) or identity not in known for identity in ids) \
+            or len(set(ids)) != len(ids):
+        raise ValueError('Invalid explicitly approved ready subset for wave ' + str(wave['id']))
+    return set(ids)
+
+
+def waiting_for_inputs(state, state_path, wave):
+    state.setdefault('waves', {}).setdefault(str(wave['id']), {})['status'] = 'waiting_for_inputs'
+    save(state_path, state)
+    say('Wave ' + str(wave['id']) + ' successful subset retained; waiting for remaining inputs.')
+
+
+def apply_input_correction(state, task, original_task=None, verify_proof=True):
     correction = state.get('input_corrections', {}).get(task['id'])
     if not correction:
         return task
     if correction.get('approved') is not True:
         raise ValueError('Input correction has no explicit approval: ' + task['id'])
-    correction_manifest(original_task or task, correction, verify_proof=True)
+    correction_manifest(original_task or task, correction, verify_proof=verify_proof)
     for field, actual in [('expected_worker_sha', state.get('worker_sha')),
                           ('expected_worker_ref', state.get('worker_ref'))]:
         if field in correction and correction[field] != actual:
@@ -227,13 +246,91 @@ def pin_worker(repo, ref, tag, state, state_path):
     return state['worker_ref']
 
 
+def checked_source_inputs(state, metadata):
+    frozen = state.get('frozen_inputs', {})
+    current = {}
+    for spec in metadata['files']:
+        if 'task-graph' in spec.get('reasons', []):
+            continue
+        keys = ['type', 'mode']
+        if spec['type'] == 'file':
+            keys += ['size', 'sha256']
+        elif spec['type'] == 'symlink':
+            keys += ['target']
+        identity = {key: spec[key] for key in keys}
+        if spec['path'] in frozen and frozen[spec['path']] != identity:
+            raise ValueError('Input differs from an earlier cold capsule: ' + spec['path'])
+        current[spec['path']] = identity
+    return current
+
+
+def prepare_primary_variant(plan, task, correction, state, state_path):
+    variant, original = correction_manifest(task, correction, verify_proof=True)
+    if not original:
+        raise ValueError('Primary input requires an approved manifest variant: ' + task['id'])
+    for spec in task['preparation']['slice_files']:
+        validate_frozen_file(spec)
+    primary = correction['primary_input']
+    spec = primary['metadata']
+    if not Path(spec['path']).is_absolute():
+        raise ValueError('Primary input metadata path must be absolute')
+    metadata_bytes = Path(spec['path']).read_bytes()
+    if hashlib.sha256(metadata_bytes).hexdigest() != spec['sha256']:
+        raise ValueError('Approved primary input metadata changed: ' + task['id'])
+    metadata = json.loads(metadata_bytes)
+    if metadata.get('schema_version') != 1 or metadata['source_root'] != plan['source_root'] \
+            or metadata['out_root'] != plan['preparation']['out_root'] \
+            or primary['manifest_sha256'] != variant or metadata['manifest_sha256'] != variant \
+            or primary['archive_sha256'] != metadata['archive']['sha256']:
+        raise ValueError('Approved primary input has a different manifest/source/archive identity: ' + task['id'])
+    manifest = json.loads(Path(task['preparation']['manifest']).read_text())
+    runtime = Path(plan['source_root']) / manifest.get('runtime_dir', '.crux-task/graph')
+    bundled = {item['path']: item for item in metadata['files']}
+    if metadata.get('slice_path') != str(runtime) or bundled.get(str(runtime / 'manifest.json'), {}).get('sha256') != variant:
+        raise ValueError('Approved primary input omits its variant manifest: ' + task['id'])
+    archive = metadata['archive']
+    parts = primary['parts']
+    if not isinstance(parts, list) or not parts or sum(part['size'] for part in parts) != archive['size']:
+        raise ValueError('Approved primary input has invalid asset parts: ' + task['id'])
+    expected_names = [archive['name']] if len(parts) == 1 else [
+        archive['name'] + f'.part-{index:04d}' for index in range(len(parts))]
+    if [part['name'] for part in parts] != expected_names or (
+            len(parts) == 1 and parts[0]['sha256'] != primary['archive_sha256']):
+        raise ValueError('Approved primary input has different asset names/identity: ' + task['id'])
+    for part in parts:
+        if part.get('uploaded') is not True or part.get('api_size') != part['size'] \
+                or part.get('api_digest') != 'sha256:' + part['sha256'] \
+                or not re.fullmatch(r'[a-f0-9]{64}', part['sha256']):
+            raise ValueError('Approved primary input asset is not API verified: ' + part['name'])
+    current = checked_source_inputs(state, metadata)
+    record = {'status': 'ready', 'uploaded': True, 'primary_variant': True,
+              'archive_sha256': primary['archive_sha256'], 'metadata': spec['path'],
+              'metadata_sha256': spec['sha256'], 'manifest_sha256': variant,
+              'original_manifest_sha256': original, 'variant_provenance': copy.deepcopy(correction['variant_provenance']),
+              'parts': copy.deepcopy(parts)}
+    frozen = state.setdefault('frozen_inputs', {})
+    changed = any(path not in frozen for path in current)
+    frozen.update(current)
+    inputs = state.setdefault('inputs', {})
+    if inputs.get(task['id']) != record or changed:
+        inputs[task['id']] = record
+        save(state_path, state)
+    return {key: value for key, value in task.items() if key != 'preparation'} | {
+        'capsule_assets': [part['name'] for part in parts]}
+
+
 def prepare_task(plan, task, state, state_path, repo, tag):
     recipe = task.get('preparation')
     if not recipe:
         return task
+    correction = state.get('input_corrections', {}).get(task['id'], {})
+    if 'primary_input' in correction:
+        return prepare_primary_variant(plan, task, correction, state, state_path)
     inputs = state.setdefault('inputs', {})
     existing = inputs.get(task['id'])
     if existing and existing.get('uploaded'):
+        if existing.get('primary_variant') or existing.get('manifest_sha256', frozen_manifest(task)) != frozen_manifest(task):
+            raise ValueError('Uploaded manifest variant has no approved primary input correction: ' + task['id'])
         return {key: value for key, value in task.items() if key != 'preparation'} | {
             'capsule_assets': [part['name'] for part in existing['parts']]}
     preparation = plan['preparation']
@@ -285,20 +382,7 @@ def prepare_task(plan, task, state, state_path, repo, tag):
         validate_frozen_file(shared)
         if not any(layer['manifest_sha256'] == shared['sha256'] for layer in metadata.get('shared_layers', [])):
             raise ValueError('Cold capsule has a different frozen shared source layer: ' + task['id'])
-    frozen_inputs = state.setdefault('frozen_inputs', {})
-    current_inputs = {}
-    for spec in metadata['files']:
-        if 'task-graph' in spec.get('reasons', []):
-            continue  # Each shard intentionally restores its own graph at this runtime path.
-        keys = ['type', 'mode']
-        if spec['type'] == 'file':
-            keys += ['size', 'sha256']
-        elif spec['type'] == 'symlink':
-            keys += ['target']
-        identity = {key: spec[key] for key in keys}
-        if spec['path'] in frozen_inputs and frozen_inputs[spec['path']] != identity:
-            raise ValueError('Input differs from an earlier cold capsule: ' + spec['path'])
-        current_inputs[spec['path']] = identity
+    current_inputs = checked_source_inputs(state, metadata)
     archive_spec = metadata['archive']
     if archive.name != archive_spec['name'] or archive.stat().st_size != archive_spec['size'] \
             or digest(archive) != archive_spec['sha256']:
@@ -310,7 +394,7 @@ def prepare_task(plan, task, state, state_path, repo, tag):
               'metadata_sha256': digest(metadata_path), 'parts': part_specs}
     if existing and existing.get('archive_sha256') and existing['archive_sha256'] != record['archive_sha256']:
         raise ValueError('Prepared capsule changed during resume: ' + task['id'])
-    frozen_inputs.update(current_inputs)
+    state.setdefault('frozen_inputs', {}).update(current_inputs)
     inputs[task['id']] = record
     save(state_path, state)
     for part in part_specs:
@@ -395,8 +479,10 @@ def main():
             save(state_path, state)
     for wave in plan['waves']:
         wave_id = str(wave['id'])
+        selected = ready_subset(state, wave)
         existing = state['runs'].get(wave_id)
-        history = state.get('failed_runs', {}).get(wave_id, [])
+        history = [*state.get('failed_runs', {}).get(wave_id, []),
+                   *state.get('subset_runs', {}).get(wave_id, [])]
         for prior in [*history, *([existing] if existing else [])]:
             changed = False
             if state.get('worker_sha'):
@@ -410,10 +496,11 @@ def main():
             if changed:
                 save(state_path, state)
         if existing and existing.get('conclusion') == 'success':
-            require_wave_producers(state, wave, existing)
-            if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
-                return
-            continue
+            if not existing.get('ready_subset') or all(successful_task(state, task['id']) for task in wave['tasks']):
+                require_wave_producers(state, wave, existing)
+                if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
+                    return
+                continue
         if existing and not existing.get('conclusion'):
             say(f"Resuming wave {wave_id}: {existing['url']}")
             result = wait(args.repo, existing['run_id'])
@@ -422,19 +509,29 @@ def main():
             save(state_path, state)
             if result['conclusion'] != 'success':
                 raise RuntimeError(f"Wave {wave_id} failed: {result['url']}")
+            if existing.get('ready_subset') and not all(successful_task(state, task['id']) for task in wave['tasks']):
+                waiting_for_inputs(state, state_path, wave)
+                return
             require_wave_producers(state, wave, existing)
             if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
                 return
             continue
         tasks = []
         for task in wave['tasks']:
+            if selected is not None and task['id'] not in selected:
+                continue
             if successful_task(state, task['id']):
                 continue
             dependencies = [dependency_producer(state, dep) for dep in task.get('dependencies', [])]
             prepared = prepare_task(plan, task, state, state_path, args.repo, args.tag)
-            prepared = apply_input_correction(state, {**prepared, 'dependencies': dependencies}, task)
+            correction = state.get('input_corrections', {}).get(task['id'], {})
+            prepared = apply_input_correction(state, {**prepared, 'dependencies': dependencies}, task,
+                                              verify_proof='primary_input' not in correction)
             tasks.append(prepared)
         if not tasks and wave['tasks']:
+            if not all(successful_task(state, task['id']) for task in wave['tasks']):
+                waiting_for_inputs(state, state_path, wave)
+                return
             state.setdefault('waves', {}).setdefault(wave_id, {})['status'] = 'success'
             save(state_path, state)
             if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
@@ -454,9 +551,12 @@ def main():
         worker_ref = pin_worker(args.repo, args.ref, args.tag, state, state_path)
         run = dispatch(args.repo, args.tag, wave_id, worker_ref)
         if existing:
-            state.setdefault('failed_runs', {}).setdefault(wave_id, []).append(existing)
+            history_key = 'subset_runs' if existing.get('conclusion') == 'success' else 'failed_runs'
+            state.setdefault(history_key, {}).setdefault(wave_id, []).append(existing)
         state['runs'][wave_id] = {'run_id': run['databaseId'], 'url': run['url'], 'headSha': run['headSha'],
                                   'task_ids': [task['id'] for task in tasks]}
+        if selected is not None:
+            state['runs'][wave_id]['ready_subset'] = copy.deepcopy(state['ready_subsets'][wave_id])
         corrections = state.get('input_corrections', {})
         used = {task['id']: copy.deepcopy(corrections[task['id']]) for task in tasks if task['id'] in corrections}
         if used:
@@ -473,6 +573,9 @@ def main():
         save(state_path, state)
         if result['conclusion'] != 'success':
             raise RuntimeError(f"Wave {wave_id} failed: {result['url']}")
+        if selected is not None and not all(successful_task(state, task['id']) for task in wave['tasks']):
+            waiting_for_inputs(state, state_path, wave)
+            return
         require_wave_producers(state, wave, state['runs'][wave_id])
         if args.stop_after_wave is not None and wave['id'] >= args.stop_after_wave:
             return
