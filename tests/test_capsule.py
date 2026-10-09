@@ -3,6 +3,8 @@ import io
 import json
 from pathlib import Path
 import shutil
+import shlex
+import zipfile
 import subprocess
 import tarfile
 import tempfile
@@ -1468,6 +1470,250 @@ class CapsuleTests(unittest.TestCase):
         with self.assertRaisesRegex(capsule.CapsuleError, "absent from its contract"):
             self.collect()
 
+
+
+
+    def test_move_overwrite_after_skipped_conditionals_cold_restores_source_archive_and_log(self):
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("classes.dex", b"FRESH_SOURCE_DEX")
+            archive.writestr("lib/arm64/fixture.so", b"FRESH_SOURCE_NATIVE")
+        source = self.source / "inputs/archive.data"
+        unsigned = self.out / "unsigned.data"
+        signed = self.out / "signed.data"
+        log = self.out / "compatibility.data"
+        output = self.out / "unit.o"
+        self.write(source, content.getvalue())
+        for path in [unsigned, signed, output]:
+            self.write(path, b"PK\x03\x04OLD_POISON")
+        self.write(log, "OLD_POISON_LOG")
+        append = " && ".join("printf 'record%d\\n' >> %s" % (i, log) for i in range(8))
+        body = ("mkdir -p %s && (cp %s %s) && "
+                "(if false; then printf skipped > %s; fi) && "
+                "(if false; then printf skipped > %s; fi) && "
+                "(rm -f %s && %s) && (mv %s %s) && "
+                "(cat %s > %s) && (mv %s %s)") % (
+                    self.out, source, output, unsigned, unsigned, log, append,
+                    output, unsigned, unsigned, signed, signed, output)
+        self.manifest["commands"] = ["bash -c " + shlex.quote(body)]
+        _, metadata, archive = self.collect()
+        self.assertIn(str(source).lstrip("/"), archive.getnames())
+        for path in [unsigned, signed, output, log]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        subprocess.run(["bash", "-c", body], check=True)
+        self.assertEqual(output.read_bytes(), content.getvalue())
+        self.assertEqual(log.read_text().splitlines(), ["record%d" % i for i in range(8)])
+
+    def test_move_overwrite_preserves_real_source_reads_and_prior_destination_reads(self):
+        old_source = self.out / "previous.data"
+        destination = self.out / "stage.data"
+        self.write(old_source, b"PK\x03\x04OLD_REAL_INPUT")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["mv %s %s && cat %s" % (old_source, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer.*previous.data"):
+            self.collect()
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        self.manifest["commands"] = ["cat %s && mv input.data %s && cat %s" % (destination, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer.*stage.data"):
+            self.collect()
+
+    def test_move_non_overwrite_unknown_and_directory_modes_keep_old_destination_gates(self):
+        source = self.source / "input.data"
+        destination = self.out / "stage.data"
+        self.write(source, "FRESH_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        for option in ["-n", "--no-clobber", "-u", "--update", "-i", "--interactive", "-fn", "--backup", "--unknown-mode"]:
+            with self.subTest(option=option):
+                self.manifest["commands"] = ["mv %s input.data %s && cat %s" % (option, destination, destination)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+        directory = self.out / "directory"
+        self.write(directory / "old.data", b"PK\x03\x04OLD_DIRECTORY_CHILD")
+        for expression in [str(directory), str(directory) + "/", "-t " + str(directory), "--target-directory=" + str(directory)]:
+            with self.subTest(expression=expression):
+                self.manifest["commands"] = ["mv input.data %s && cat %s/old.data" % (expression, directory)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+        source_directory = self.source / "source-directory"
+        self.write(source_directory / "data", "fresh source child")
+        self.manifest["commands"] = ["mv %s %s && cat %s" % (source_directory, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_skipped_if_and_or_branch_move_writers_do_not_establish_parent_freshness(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        expressions = [
+            "(if false; then mv input.data %s; fi) && cat %s",
+            "(if false; then mv input.data %s && true; fi) && cat %s",
+            "true || mv input.data %s && cat %s",
+            "true || (mv input.data %s && true) && cat %s",
+            "true || ((mv input.data %s && true)) && cat %s",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                self.manifest["commands"] = [expression % (path, path)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_pipeline_branch_move_and_masked_reset_keep_old_input_gates(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        expressions = [
+            "mv input.data %s | true && cat %s",
+            "true | mv input.data %s && cat %s",
+            "(mv input.data %s && true) | true && cat %s",
+            "true | (mv input.data %s && true) && cat %s",
+            "(rm -f %s && printf new >> %s) | true && cat %s",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                values = (path,) * expression.count("%s")
+                self.manifest["commands"] = [expression % values]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_unconditional_move_after_completed_pipeline_uses_its_own_success_guard(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["printf x | cat && mv -f input.data %s && cat %s" % (path, path)]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "input.data").lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+
+    def test_repeated_move_reestablishes_fresh_destination_after_a_separator_cold(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = "mv -f %s %s && true ; mv -f %s %s && cat %s" % (
+            first, destination, second, destination, destination)
+        self.manifest["commands"] = [command]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(destination).lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.out.mkdir(exist_ok=True)
+        result = subprocess.run(["bash", "-c", command], check=True, stdout=subprocess.PIPE)
+        self.assertEqual(result.stdout, b"SECOND_SOURCE")
+
+    def test_repeated_move_keeps_each_completed_write_for_earlier_reads_and_substitutions(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        first_read, second_read = self.out / "first.read", self.out / "second.read"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = ("mv -f %s %s && printf '%%s' \"$(cat %s)\" > %s ; "
+                   "mv -f %s %s && printf '%%s' \"$(cat %s)\" > %s") % (
+                       first, destination, destination, first_read,
+                       second, destination, destination, second_read)
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        for path in [destination, first_read, second_read]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.out.mkdir(exist_ok=True)
+        subprocess.run(["bash", "-c", command], check=True)
+        self.assertEqual(first_read.read_text(), "FIRST_SOURCE")
+        self.assertEqual(second_read.read_text(), "SECOND_SOURCE")
+
+    def test_repeated_move_does_not_hide_a_read_before_its_success_guard(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        for prefix in ["cat %s && " % destination,
+                       "mv -f %s %s && true ; cat %s && " % (first, destination, destination)]:
+            with self.subTest(prefix=prefix):
+                self.manifest["commands"] = [prefix + "mv -f %s %s && cat %s" % (
+                    second, destination, destination)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_late_append_requires_local_guaranteed_reset_and_keeps_prior_reads(self):
+        path = self.out / "compatibility.data"
+        self.write(path, "OLD_LOG")
+        prefix = "(if false; then true; fi) && (if false; then true; fi) && "
+        for body in ["echo new >> %s && cat %s", "(rm -f %s || true) && echo new >> %s && cat %s",
+                     "(if false; then rm -f %s; fi) && echo new >> %s && cat %s",
+                     "cat %s && rm -f %s && echo new >> %s"]:
+            with self.subTest(body=body):
+                self.manifest["commands"] = [prefix + body % ((path,) * body.count("%s"))]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = [prefix + "(rm -f %s && echo new >> %s) && cat %s" % (path, path, path)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+
+    def test_response_argument_data_cannot_supply_a_move_overwrite_scope(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["argument_reader @" + str(self.out / "args.rsp")]
+        self.manifest["edges"] = [{"command": self.manifest["commands"][0], "outputs": self.manifest["outputs"],
+                                  "rspfile": str(self.out / "args.rsp"),
+                                  "rspfile_content": "mv input.data %s && cat %s" % (path, path)}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+
+
+    def test_negated_or_defined_function_writer_remains_opaque_and_reads_old_bytes(self):
+        source = self.source / "input.data"
+        path = self.out / "stage.data"
+        self.write(source, "FRESH_SOURCE")
+        old = b"PK\x03\x04OLD_NOT_REPLACED"
+        for body in ["! (false && mv %s %s) && cat %s",
+                     "time ! (false && mv %s %s) && cat %s",
+                     "coproc (false && mv %s %s) && cat %s",
+                     "true || {\n false && mv %s %s && true\n } && cat %s",
+                     "{\n false && mv %s %s && true\n } | true && cat %s",
+                     "f() (mv %s %s) && cat %s",
+                     "f() { mv %s %s; } && cat %s"]:
+            with self.subTest(body=body):
+                self.write(path, old)
+                command = body % (source, path, path)
+                self.manifest["commands"] = [command]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+                if command.startswith("coproc ") and subprocess.run(
+                        ["bash", "-c", "help coproc"], stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE).returncode:
+                    continue  # The gate is portable; this native construct requires Bash 4+.
+                result = subprocess.run(["bash", "-c", command], check=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.assertEqual(result.stdout, old)
+                self.assertEqual(source.read_text(), "FRESH_SOURCE")
+
+    def test_moving_relative_source_symlink_does_not_hide_its_relocated_old_target(self):
+        self.write(self.source / "payload.data", "FRESH_SOURCE_TARGET")
+        old = b"PK\x03\x04OLD_RELOCATED_TARGET"
+        self.write(self.out / "payload.data", old)
+        source = self.source / "relative-link"
+        source.symlink_to("payload.data")
+        destination = self.out / "stage.data"
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = "mv %s %s && cat %s" % (source, destination, destination)
+        self.manifest["commands"] = [command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+        result = subprocess.run(["bash", "-c", command], check=True, stdout=subprocess.PIPE)
+        self.assertEqual(result.stdout, old)
 
 
 if __name__ == "__main__":

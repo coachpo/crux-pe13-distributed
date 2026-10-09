@@ -494,9 +494,9 @@ def shell_child_snapshot(temporaries, tokens, position, command_invocations):
     temporaries.position = position
     files, directories = temporaries.snapshot()
     files = {path for path in files if path in temporaries.inherited_files
-             or temporaries.files.get(path, float('inf')) < start}
+             or temporaries.file_active(path, before=start)}
     directories = {path for path in directories if path in temporaries.inherited_directories
-                   or temporaries.directories.get(path, float('inf')) < start}
+                   or temporaries.directory_active(path, before=start)}
     return files, directories
 
 
@@ -695,11 +695,63 @@ def guarded_for_body_barriers(tokens):
     return result
 
 
+def unconditional_command_positions(tokens):
+    """Bound simple commands outside opaque controls and skipped/piped branches.
+
+    Parenthesized groups retain their caller's branch. Conditional bodies never
+    supply parent freshness; a later simple command may establish its own write.
+    Unsupported controls remain opaque through the end of this analysis scope.
+    """
+    invocations = list(command_invocations(tokens))
+    blocked, controls = [], []
+    for program, end in invocations:
+        keyword = tokens[program]
+        if keyword in {"then", "else", "do"} and program + 1 < end:
+            keyword = tokens[program + 1]
+        if (keyword in {"!", "time", "coproc", "{", "}", "while", "until", "case", "select", "function"}
+                or (end + 1 < len(tokens) and tokens[end:end + 2] == ["(", ")"])):
+            blocked.append((program, len(tokens)))
+        elif keyword in {"if", "for"}:
+            controls.append(("fi" if keyword == "if" else "done", program))
+        elif keyword in {"fi", "done"} and controls:
+            closing, start = controls.pop()
+            if closing != keyword:
+                blocked.append((start, len(tokens)))
+            else:
+                blocked.append((start, end))
+    blocked.extend((start, len(tokens)) for _, start in controls)
+    stack = []
+    for index, token in enumerate(tokens):
+        if token == "(":
+            stack.append(index)
+        elif token == ")" and stack:
+            opening = stack.pop()
+            before = tokens[opening - 1] if opening else None
+            after = tokens[index + 1] if index + 1 < len(tokens) else None
+            if before in {"||", "|", "&", "$", "<", ">"} or after in {"|", "&"}:
+                blocked.append((opening, index + 1))
+    blocked.extend((opening, len(tokens)) for opening in stack)
+    result = set()
+    separators = {";", "&&", "||", "|", "&", "(", ")"}
+    for program, end in invocations:
+        boundary = program - 1
+        while boundary >= 0 and tokens[boundary] not in separators:
+            boundary -= 1
+        before = tokens[boundary] if boundary >= 0 else None
+        after = tokens[end] if end < len(tokens) else None
+        if (before not in {"||", "|", "&"} and after not in {"|", "&"}
+                and not any(start <= program < stop for start, stop in blocked)):
+            result.add(program)
+    return result
+
+
 class ActionTemporaries:
     """Literal outputs that become fresh at a specific point of one action."""
     def __init__(self, files=(), directories=(), inherited=None, barriers=(), for_barriers=()):
-        self.files = dict(files)
-        self.directories = dict(directories)
+        self.files = {path: tuple(positions) if isinstance(positions, (list, tuple)) else (positions,)
+                      for path, positions in dict(files).items()}
+        self.directories = {path: tuple(positions) if isinstance(positions, (list, tuple)) else (positions,)
+                            for path, positions in dict(directories).items()}
         self.position = -1
         self.inherited_files, self.inherited_directories = inherited or (set(), set())
         self.barriers = tuple(barriers)
@@ -710,17 +762,22 @@ class ActionTemporaries:
             position <= barrier <= self.position and not position < self.for_barriers.get(barrier, -1)
             for barrier in self.barriers)
 
+    def file_active(self, path, before=float("inf")):
+        return any(position < before and self.active(position) for position in self.files.get(path, ()))
+
+    def directory_active(self, path, before=float("inf")):
+        return any(position < before and self.active(position) for position in self.directories.get(path, ()))
+
     def __contains__(self, path):
         return (path in self.inherited_files
-                or self.active(self.files.get(path, float("inf")))
+                or self.file_active(path)
                 or any(beneath(path, root) for root in self.inherited_directories)
-                or any(self.active(position) and beneath(path, root)
-                       for root, position in self.directories.items()))
+                or any(self.directory_active(root) and beneath(path, root)
+                       for root in self.directories))
 
     def snapshot(self):
-        return (self.inherited_files | {path for path, position in self.files.items() if self.active(position)},
-                self.inherited_directories | {path for path, position in self.directories.items()
-                                             if self.active(position)})
+        return (self.inherited_files | {path for path in self.files if self.file_active(path)},
+                self.inherited_directories | {path for path in self.directories if self.directory_active(path)})
 
 
 class Collector:
@@ -1486,6 +1543,36 @@ class Collector:
             return None
         return self.path(value)
 
+    def move_destination(self, tokens, program, end):
+        """Recognize only a two-file, unconditional-overwrite mv protocol."""
+        if not getattr(self, "evaluated_shell", True):
+            return None
+        operands, options = [], True
+        for index in range(program + 1, end):
+            value = tokens[index]
+            if options and value == "--":
+                options = False
+            elif options and value.startswith("-"):
+                if value in {"--force", "--no-target-directory"}:
+                    continue
+                if not value.startswith("--") and value != "-" and set(value[1:]) <= {"f", "T"}:
+                    continue
+                return None  # n/u/i, target directories, backups and unknown modes.
+            else:
+                operands.append(index)
+        if len(operands) != 2:
+            return None
+        source, destination = (self.literal_path(tokens[index]) for index in operands)
+        if (source is None or destination is None or not optional_probe(source, "is_file")
+                or optional_probe(source, "is_symlink")):
+            return None  # Moving a directory or relocated link is not a file-byte overwrite.
+        declared_dirs = self.output_dirs | self.external_dirs
+        if (any(tokens[index].endswith("/") for index in operands)
+                or source in declared_dirs or destination in declared_dirs
+                or optional_probe(source, "is_dir") or optional_probe(destination, "is_dir")):
+            return None
+        return operands[-1], destination
+
     def tool_output_operands(self, tokens):
         """Return verified truncating file outputs, with completion positions."""
         files, ignored = {}, set()
@@ -1493,6 +1580,16 @@ class Collector:
             name = Path(tokens[program]).name
             flags = set()
             attached = set()
+            if getattr(self, "evaluated_shell", True):
+                for index in range(program + 1, end - 1):
+                    if tokens[index] in {">", ">|"}:
+                        ignored.add(index + 1)  # Truncation targets do not read old bytes.
+            if name == "mv":
+                destination = self.move_destination(tokens, program, end)
+                if destination is not None:
+                    position, path = destination
+                    ignored.add(position)
+                    files.setdefault(path, end)
             if name in {"dirname", "basename"}:
                 ignored.update(range(program + 1, end))
             if name in {"rm", "mkdir", "touch"}:
@@ -1554,22 +1651,28 @@ class Collector:
         return files, ignored
 
     def action_temporaries(self, tokens, inherited=None):
-        """Find fresh writes in the unconditional prefix of one shell action."""
-        hazard = next((index for index, token in enumerate(tokens)
-                       if token in {"||", "|", "&", "if", "for", "while", "until", "case"}), len(tokens))
-        files, _ = self.tool_output_operands(tokens[:hazard])
+        """Find guarded fresh writes of unconditional simple commands."""
+        eligible = unconditional_command_positions(tokens)
+        files = {}
+        for program, end in command_invocations(tokens):
+            if program not in eligible:
+                continue
+            candidates, _ = self.tool_output_operands(tokens[program:end])
+            for path, position in candidates.items():
+                files.setdefault(path, []).append(position + program)
         substitutions = substitution_positions(tokens)
         completed = {}
-        for path, position in files.items():
-            if position > 0 and position - 1 in substitutions:
-                continue
-            position = command_completion(tokens, position)
-            if position < len(tokens) and tokens[position] == "&&":
-                completed[path] = position
+        for path, positions in files.items():
+            for position in positions:
+                if position > 0 and position - 1 in substitutions:
+                    continue
+                position = command_completion(tokens, position)
+                if position < len(tokens) and tokens[position] == "&&":
+                    completed.setdefault(path, []).append(position)
         files = completed
         directories, removed = {}, {}
-        for program, end in command_invocations(tokens[:hazard]):
-            if program in substitutions:
+        for program, end in command_invocations(tokens):
+            if program not in eligible or program in substitutions:
                 continue
             name = Path(tokens[program]).name
             operands = [self.literal_path(token) for token in tokens[program + 1:end] if not token.startswith("-")]
@@ -1588,9 +1691,9 @@ class Collector:
                         if not between or between[0] != "&&" or any(token in {";", "||", "|", "&"} for token in between):
                             continue
                         if name == "touch" and path == root:
-                            files.setdefault(path, end)
+                            files.setdefault(path, []).append(end)
                         elif name == "mkdir" and recursive and beneath(path, root):
-                            directories.setdefault(root, end)
+                            directories.setdefault(root, []).append(end)
             for index in range(program + 1, end - 1):
                 if end < len(tokens) and tokens[end] in {"||", "|", "&"}:
                     continue
@@ -1602,7 +1705,7 @@ class Collector:
                     removed_before = bool(between and between[0] == "&&"
                                           and not any(token in {";", "||", "|", "&"} for token in between))
                     if path is not None and (tokens[index] != ">>" or removed_before):
-                        files.setdefault(path, index + 1)
+                        files.setdefault(path, []).append(index + 1)
         barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
         return ActionTemporaries(files, directories, inherited, barriers, guarded_for_body_barriers(tokens))
 
