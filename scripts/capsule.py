@@ -323,6 +323,7 @@ class Collector:
         self.required_interpreters = {}
         self.assembler_scan_cache = set()
         self.proto_scan_cache = set()
+        self.flatbuffer_scan_cache = set()
         self.command_temporaries = None
         self.cpp_reader = False
         self.cpp_binding = False
@@ -705,6 +706,124 @@ class Collector:
                 candidates.append(directory / value[len(virtual) + 1:])
         return candidates
 
+    def flatbuffer_input(self, value, search_paths):
+        path = self.path(value)
+        self.add(path, "flatbuffers-schema")
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or resolved not in self.entries or not optional_probe(resolved):
+            return
+        key = (resolved, tuple(search_paths))
+        if key in self.flatbuffer_scan_cache:
+            return
+        self.flatbuffer_scan_cache.add(key)
+        text = resolved.read_text(errors="replace")
+        lexemes = r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z_0-9]*|[^\s]'
+        tokens = [token for token in re.findall(lexemes, text, flags=re.DOTALL)
+                  if not token.startswith(("//", "/*"))]
+        for index, token in enumerate(tokens[:-2]):
+            if token != "include" or not tokens[index + 1].startswith('"') or tokens[index + 2] != ";":
+                continue
+            name = ast.literal_eval(tokens[index + 1])
+            candidates = [directory / name for directory in search_paths]
+            dependency = next((item for item in candidates
+                               if self.produced(item) or self.produced(item.resolve()) or optional_probe(item)), candidates[0])
+            self.flatbuffer_input(dependency, search_paths)
+
+    def flatbuffer_operands(self, tokens, program, end):
+        ignored, roots, inputs = set(), [], []
+        # A substitution is one operand of the parent invocation, even though
+        # its inner commands have their own shell scopes. In particular -o
+        # $(dirname output.h) must not hide the following source schema.
+        end = program + 1
+        while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "&", "(", ")"}:
+            if tokens[end] == "$" and end + 1 < len(tokens) and tokens[end + 1] == "(":
+                start, depth = end, 1
+                end += 2
+                while end < len(tokens) and depth:
+                    depth += (tokens[end] == "(") - (tokens[end] == ")")
+                    end += 1
+                if depth:
+                    raise CapsuleError("Unclosed Flatc command substitution")
+                ignored.update(range(start, end))
+            else:
+                end += 1
+        index = program + 1
+        while index < end:
+            token = tokens[index]
+            if index in ignored:
+                index += 1
+                continue
+            ignored.add(index)
+            if token.isdigit() and index + 1 < end and tokens[index + 1] in {"<", ">", ">>"}:
+                index += 1
+                continue
+            if token in {"<", ">", ">>", ">|", "<>", "<<", "<<<", "<&", ">&"} and index + 1 < end:
+                index += 1
+                ignored.add(index)
+                if token in {"<", "<>", ">>"}:
+                    self.add(tokens[index], "command-redirection-input", required=token != ">>")
+            elif token == "-I" and index + 1 < end:
+                index += 1
+                ignored.add(index)
+                roots.append(self.path(tokens[index]))
+            elif token.startswith("-I") and len(token) > 2:
+                roots.append(self.path(token[2:]))
+            elif token in {"-o", "--include-prefix", "--filename-suffix", "--filename-ext", "--bfbs-filenames"}:
+                if index + 1 < end:
+                    index += 1
+                    ignored.add(index)
+            elif not token.startswith("-"):
+                inputs.append(token)
+            index += 1
+        for value in inputs:
+            # Flatc retains this vector while parsing recursive children; a
+            # nested include's parent never becomes an additional search root.
+            self.flatbuffer_input(value, roots + [self.path(value).parent])
+        return ignored
+
+    def embedded_commands(self):
+        commands = []
+        for context in self.manifest.get("embedded_tool_contexts", []):
+            edges = self.manifest.get("edges", [])
+            index = context.get("edge_index")
+            if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                    or self.path(context.get("primary_output", "")) not in
+                    {self.path(value) for value in edges[index].get("outputs", [])}):
+                raise CapsuleError("Invalid embedded tool consumer edge binding")
+            generated = self.path(context.get("generated_manifest", ""))
+            if (not self.produced(generated) or self.path(context.get("producer_primary_output", "")) != generated
+                    or not isinstance(context.get("producer_original_edge"), int)
+                    or context["producer_original_edge"] < 0
+                    or context.get("provenance", {}).get("producer_rule") != "g.android.writeFile"):
+                raise CapsuleError("Embedded tool manifest has no original writeFile producer binding")
+            if not context.get("cwd") or self.path(context["cwd"]) != self.source_root or context.get("chdir") is not False:
+                raise CapsuleError("Unsupported embedded tool working directory")
+            if any(not item.get("to", "").startswith("tools/") for item in context.get("copy_before", [])):
+                raise CapsuleError("Unsupported embedded tool source copy mapping")
+            def binds(command):
+                tokens = command_tokens(command)
+                for program, end in command_invocations(tokens):
+                    name = Path(tokens[program]).name
+                    if name == "sbox":
+                        for position in range(program + 1, end):
+                            flag, separator, value = tokens[position].partition("=")
+                            if flag == "--manifest":
+                                value = value if separator else (tokens[position + 1] if position + 1 < end else "")
+                                if value and self.path(value) == generated:
+                                    return True
+                    if name in {"bash", "sh", "dash"}:
+                        for position in range(program + 1, end - 1):
+                            if tokens[position].startswith("-") and "c" in tokens[position][1:] and binds(tokens[position + 1]):
+                                return True
+                return False
+            command = context.get("command", "")
+            if not binds(edges[index].get("command", "")) or not any(
+                    Path(tokens[program]).name == "flatc"
+                    for tokens in [command_tokens(command)] for program, _ in command_invocations(tokens)):
+                raise CapsuleError("Embedded tool command is not bound to an actual Flatc Sbox consumer")
+            commands.append(command)
+        return commands
+
     def semantic_operands(self, tokens, response_literals=()):
         """Handle tools whose path-looking arguments are schemas or metadata."""
         ignored = set()
@@ -712,7 +831,9 @@ class Collector:
             if self.command_temporaries is not None:
                 self.command_temporaries.position = program
             name = Path(tokens[program]).name
-            if name in {"protoc", "aprotoc"}:
+            if name == "flatc":
+                ignored.update(self.flatbuffer_operands(tokens, program, end))
+            elif name in {"protoc", "aprotoc"}:
                 search_paths, inputs = [], []
                 index = program + 1
                 while index < end:
@@ -1179,6 +1300,7 @@ class Collector:
             self.python_package(path)
             self.tool_package(path)
         commands = [(command, None, command in self.compiler_commands) for command in self.manifest.get("commands", [])]
+        commands.extend((command, None, False) for command in self.embedded_commands())
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
                 commands.append((edge["command"], None, edge["command"] in self.compiler_commands))

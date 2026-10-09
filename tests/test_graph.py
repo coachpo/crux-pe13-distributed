@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+import shlex
 import tempfile
 import tarfile
 import unittest
@@ -703,6 +704,129 @@ Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
                 native=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-j1',
                     'out/result.o','out/include/generated.h'],cwd=root,capture_output=True,text=True)
                 self.assertEqual(native.returncode,0,native.stdout+native.stderr)
+
+    def sbox_fixture(self, root, block, writer_rule='g.android.writeFile'):
+        manifest=str(root/'out/gen.sbox.textproto');result=str(root/'out/result')
+        (root/'out').mkdir(exist_ok=True)
+        payload='commands:{'+block+'}\n'
+        content=shlex.quote(payload.replace('\\','\\\\').replace('\n','\\n')).replace('$','$$')
+        writer=' /bin/bash -c \'echo -e -n "$$0" > ${out}\' ${content}'
+        if writer_rule != 'g.android.writeFile':writer=' cp $in $out'
+        (root/'build.ninja').write_text(f'rule {writer_rule}\n  command ={writer}\n'
+            f'rule generate\n  command = {root}/sbox --manifest $manifest\n'
+            f'build {manifest}: {writer_rule}\n  content = {content}\n'
+            f'build {result}: generate | {manifest} {root}/flatc-source\n  manifest = {manifest}\n')
+        db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+        return graph.Graph(db),manifest,result,payload
+
+    def test_writefile_and_protobuf_escaping_are_separate_literal_layers(self):
+        native='__SBOX_SANDBOX_DIR__/tools/flatc -I schemas "schemas/a b.fbs" && printf \'{command: decoy}\\n\''
+        payload='commands:{command:'+json.dumps(native)+'}\n'
+        literal=payload.replace('\\','\\\\').replace('\n','\\n')
+        command="/bin/bash -c 'echo -e -n \"$0\" > output' "+shlex.quote(literal)
+        saved,decoded=graph.soong_writefile_literal(command,'output')
+        self.assertEqual(saved,literal)
+        self.assertEqual(decoded,payload)
+        self.assertEqual(graph.sbox_textproto(decoded)['commands'][0]['command'],[native])
+        self.assertEqual(graph.sbox_textproto(r'''commands{command:"flat" 'c \xE4\xB8\xAD \uD83D\uDE00'}''')
+                         ['commands'][0]['command'],['flatc 中 😀'])
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['/bin/bash','-c','echo -e -n "$0" > output',literal],
+                           cwd=directory,check=True)
+            self.assertEqual((Path(directory)/'output').read_bytes(),payload.encode())
+        for malformed in ('commands:{command:"unterminated}',r'commands:{command:"\q"}',
+                          'commands:{command:"raw\nnewline"}','commands{command"missing colon"}'):
+            with self.subTest(malformed=malformed),self.assertRaises(ValueError):
+                graph.sbox_textproto(malformed)
+
+    def test_embedded_flatc_consumer_survives_a_cold_external_manifest_cut(self):
+        if not shutil.which('ninja'):
+            self.skipTest('native Ninja executable is required for cold source capture validation')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();(root/'schemas').mkdir()
+            (root/'schemas/main.fbs').write_text('include "nested.fbs";\nmain payload\n')
+            (root/'schemas/nested.fbs').write_text('nested payload\n')
+            (root/'flatc-source').write_text('#!/usr/bin/env python3\n'
+                'import pathlib,re,sys\na=sys.argv[1:];p=pathlib.Path(a[-1]);data=p.read_text()\n'
+                'for name in re.findall(r\'include "([^\\"]+)";\',data):\n'
+                ' data+=(pathlib.Path(a[a.index("-I")+1])/name).read_text()\n'
+                'pathlib.Path(a[a.index("-o")+1]).write_text(data)\n')
+            (root/'flatc-source').chmod(0o755)
+            (root/'sbox').write_text('#!/usr/bin/env python3\n'
+                'import json,pathlib,re,shutil,subprocess,sys\n'
+                'data=pathlib.Path(sys.argv[sys.argv.index("--manifest")+1]).read_text()\n'
+                'p=pathlib.Path("sandbox");p.mkdir(exist_ok=True)\n'
+                'for source,target in re.findall(r\'copy_before:\\{from:("(?:\\\\.|[^"\\\\])*") to:("(?:\\\\.|[^"\\\\])*")\',data):\n'
+                ' d=p/json.loads(target);d.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(json.loads(source),d)\n'
+                'command=json.loads(re.search(r\'command:("(?:\\\\.|[^"\\\\])*")\',data).group(1))\n'
+                'subprocess.run(command.replace("__SBOX_SANDBOX_DIR__",str(p.resolve())),shell=True,check=True)\n')
+            (root/'sbox').chmod(0o755)
+            native=f'__SBOX_SANDBOX_DIR__/tools/bin/flatc -I schemas -o {root}/out/result schemas/main.fbs'
+            block=(f'copy_before:{{from:{json.dumps(str(root/"flatc-source"))} '
+                   f'to:"tools/bin/flatc" executable:false}} command:{json.dumps(native)}')
+            indexed,manifest,result,payload=self.sbox_fixture(root,block)
+            # Existing OUT payloads cannot supply capture metadata.
+            Path(manifest).write_text('untrusted old payload without schema inputs')
+            selected=indexed.slice([result],root/'.crux-task/graph',external=[manifest])
+            context=selected['embedded_tool_contexts'][0]
+            self.assertEqual(context['command'],native)
+            self.assertEqual(context['edge_index'],0)
+            self.assertEqual(context['producer_primary_output'],manifest)
+            self.assertEqual(selected['external_inputs'],[manifest])
+            original=subprocess.run(['ninja','-f','build.ninja','-t','commands',result],
+                                    cwd=root,capture_output=True,text=True,check=True).stdout.splitlines()[-1]
+            sliced=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-t','commands',result],
+                                  cwd=root,capture_output=True,text=True,check=True).stdout.strip()
+            self.assertEqual(sliced,original)
+            capsule_spec=importlib.util.spec_from_file_location('embedded_capsule',MODULE.parent/'capsule.py')
+            capsule=importlib.util.module_from_spec(capsule_spec);capsule_spec.loader.exec_module(capsule)
+            collector=capsule.Collector(selected,root,root/'out')
+            for leaf in selected['leaf_inputs']:collector.add(leaf,'graph-leaf')
+            collector.command(selected['commands'][0])
+            for command in collector.embedded_commands():collector.command(command)
+            self.assertEqual(collector.errors,set())
+            self.assertIn(root/'schemas/nested.fbs',collector.entries)
+            self.assertNotIn(Path(manifest),collector.entries)
+            source_archive=root/'source.tar'
+            with tarfile.open(source_archive,'w') as archive:
+                for path in collector.entries:
+                    archive.add(path,arcname=str(path.relative_to(root)),recursive=False)
+            Path(manifest).unlink()
+            subprocess.run(['ninja','-f','build.ninja',manifest],cwd=root,check=True,capture_output=True)
+            self.assertEqual(Path(manifest).read_text(),payload)
+            output_archive=root/'producer.tar'
+            with tarfile.open(output_archive,'w') as archive:archive.add(manifest,arcname='out/gen.sbox.textproto')
+            shutil.rmtree(root/'schemas');(root/'flatc-source').unlink();(root/'sbox').unlink();Path(manifest).unlink()
+            (root/'.ninja_log').unlink(missing_ok=True)
+            with tarfile.open(source_archive) as archive:archive.extractall(root)
+            with tarfile.open(output_archive) as archive:archive.extractall(root)
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja',result],
+                                cwd=root,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertIn('nested payload',Path(result).read_text())
+            exported=indexed.shard([result],root/'shards',max_actions=1)
+            planned=indexed.shard([result],root/'planned',max_actions=1,export=False)
+            self.assertEqual(exported['waves'][1][0]['embedded_tool_contexts'],
+                             planned['waves'][1][0]['embedded_tool_contexts'])
+
+    def test_embedded_flatc_rejects_unreviewed_sandbox_mappings(self):
+        native='__SBOX_SANDBOX_DIR__/tools/flatc schemas/main.fbs'
+        for extra in ('chdir:true','copy_before:{from:"schemas/main.fbs" to:"schemas/main.fbs"}',
+                      'rsp_files:{file:"inputs.rsp"}','command:"echo duplicate"','unknown:true'):
+            with self.subTest(extra=extra),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory).resolve()
+                indexed,manifest,result,_=self.sbox_fixture(root,'command:'+json.dumps(native)+' '+extra)
+                with self.assertRaises(ValueError):indexed.slice([result],root/'slice',external=[manifest])
+
+    def test_unrelated_sbox_providers_are_excluded_before_flatc_validation(self):
+        for rule,block in [('metalavaManifest','command:"metalava --api output"'),
+                           ('g.android.writeFile','number:123 command:"echo unrelated"')]:
+            with self.subTest(rule=rule),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory).resolve()
+                indexed,manifest,result,_=self.sbox_fixture(root,block,rule)
+                selected=indexed.slice([result],root/'slice',external=[manifest])
+                self.assertEqual(selected['embedded_tool_contexts'],[])
+                self.assertEqual(selected['external_inputs'],[manifest])
 
 
 if __name__ == '__main__':

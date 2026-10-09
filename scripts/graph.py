@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import heapq
 import json
 import os
@@ -19,6 +20,122 @@ import shlex
 import sqlite3
 import sys
 import tempfile
+
+
+def soong_writefile_literal(command, output):
+    """Recover the literal written by Soong's unsharded writeFile rule.
+
+    defs.go escapes existing backslashes before replacing newlines. Decode
+    that outer layer once; protobuf string escaping is a separate layer.
+    """
+    args=shlex.split(command)
+    if len(args) != 4 or posixpath.basename(args[0]) != 'bash' or args[1] != '-c':
+        raise ValueError('unsupported Soong writeFile command shape')
+    if shlex.split(args[2]) != ['echo','-e','-n','$0','>',output]:
+        raise ValueError('unsupported Soong writeFile literal writer')
+    literal=args[3];decoded=[];index=0
+    while index < len(literal):
+        char=literal[index];index+=1
+        if char == '\\':
+            if index == len(literal) or literal[index] not in ('\\','n'):
+                raise ValueError('unsupported Soong writeFile outer escape')
+            char='\n' if literal[index] == 'n' else '\\';index+=1
+        decoded.append(char)
+    return literal,''.join(decoded)
+
+
+def sbox_textproto(text):
+    """Read the generated string/message subset used by Sbox manifests.
+
+    This is an explicit capture format boundary, not a general protobuf
+    decoder. Invalid or unsupported generated syntax fails before any OUT
+    payload is opened. Escaped non-UTF8 proto2 strings are unsupported here.
+    """
+    index=0
+    def whitespace():
+        nonlocal index
+        while index < len(text):
+            if text[index].isspace():index+=1
+            elif text[index] == '#':
+                end=text.find('\n',index);index=len(text) if end < 0 else end+1
+            else:break
+    def string():
+        nonlocal index
+        quote=text[index];index+=1;data=bytearray()
+        escapes={'a':7,'b':8,'f':12,'n':10,'r':13,'t':9,'v':11,
+                 '\\':92,'"':34,"'":39,'?':63}
+        while index < len(text):
+            char=text[index];index+=1
+            if char == quote:
+                try:return data.decode('utf-8')
+                except UnicodeDecodeError as error:
+                    raise ValueError('unsupported non-UTF8 Sbox string') from error
+            if char in ('\n','\x00'):
+                raise ValueError('invalid raw newline or NUL in Sbox string')
+            if char != '\\':data.extend(char.encode('utf-8'));continue
+            if index == len(text):break
+            char=text[index];index+=1
+            if char in escapes:data.append(escapes[char]);continue
+            if char in '01234567':
+                value=char
+                while len(value) < 3 and index < len(text) and text[index] in '01234567':
+                    value+=text[index];index+=1
+                if int(value,8) > 255:raise ValueError('invalid Sbox octal escape')
+                data.append(int(value,8));continue
+            if char in ('x','u','U'):
+                maximum=2 if char == 'x' else (4 if char == 'u' else 8)
+                value=''
+                while len(value) < maximum and index < len(text) and text[index] in '0123456789abcdefABCDEF':
+                    value+=text[index];index+=1
+                if not value or (char != 'x' and len(value) != maximum):
+                    raise ValueError('invalid Sbox hexadecimal escape')
+                code=int(value,16)
+                if char == 'x':data.append(code);continue
+                if 0xD800 <= code <= 0xDBFF:
+                    following=text[index:index+6]
+                    if not re.fullmatch(r'\\u[0-9a-fA-F]{4}',following):
+                        raise ValueError('invalid Sbox surrogate pair')
+                    low=int(following[2:],16)
+                    if not 0xDC00 <= low <= 0xDFFF:raise ValueError('invalid Sbox surrogate pair')
+                    index+=6;code=0x10000+((code-0xD800)<<10)+(low-0xDC00)
+                try:data.extend(chr(code).encode('utf-8'))
+                except (ValueError,UnicodeEncodeError) as error:
+                    raise ValueError('invalid Sbox Unicode escape') from error
+                continue
+            raise ValueError('unsupported Sbox string escape')
+        raise ValueError('unterminated Sbox string')
+    def message(end=None):
+        nonlocal index
+        result=collections.defaultdict(list)
+        while True:
+            whitespace()
+            if index == len(text):
+                if end:raise ValueError('unterminated Sbox message')
+                return dict(result)
+            if end and text[index] == end:
+                index+=1;return dict(result)
+            match=re.match(r'[A-Za-z_][A-Za-z0-9_]*',text[index:])
+            if not match:raise ValueError('unsupported Sbox field syntax')
+            name=match.group();index+=len(name);whitespace()
+            colon=index < len(text) and text[index] == ':'
+            if colon:index+=1;whitespace()
+            if index == len(text):raise ValueError('missing Sbox field value')
+            if text[index] not in ('{','<') and not colon:
+                raise ValueError('missing colon before Sbox scalar value')
+            if text[index] in ('{','<'):
+                closing='}' if text[index] == '{' else '>';index+=1
+                value=message(closing)
+            elif text[index] in ('"',"'"):
+                value=string();whitespace()
+                while index < len(text) and text[index] in ('"',"'"):
+                    value+=string();whitespace()
+            else:
+                match=re.match(r'(?:true|false)(?![A-Za-z0-9_])',text[index:])
+                if not match:raise ValueError('unsupported Sbox scalar value')
+                value=match.group() == 'true';index+=len(match.group())
+            result[name].append(value);whitespace()
+            if index < len(text) and text[index] in (',',';'):index+=1
+    return message()
 
 
 def native_generated_include_roots(edge, source_root, out_root):
@@ -597,6 +714,7 @@ class Graph:
         metadata=self.native_metadata(records)
         rust=self.rust_runtime_contracts(records,producers,metadata)
         includes=self.generated_include_contracts(records,producers,out_root,metadata)
+        embedded=self.embedded_tool_contracts(records,producers,metadata)
         contracts={edge:sorted(set(rust.get(edge,[])) |
                     set(includes.get(edge,{}).get('required_headers',[])) |
                     set(includes.get(edge,{}).get('owned_dirs',[])))
@@ -608,6 +726,8 @@ class Graph:
         manifest=self.export_edges(closure,targets,destination,runtime_dir,runtime_order_inputs=orders)
         manifest['generated_include_contract']=self.generated_include_manifest_contract(
             manifest['edges'],includes,producers)
+        manifest['embedded_tool_contexts']=self.embedded_tool_manifest_contexts(
+            manifest['edges'],embedded,producers)
         (Path(destination)/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
         return manifest
 
@@ -730,6 +850,121 @@ class Graph:
                               'zero_provider_roots_preserved':True,
                               'original_ninja':self.meta['ninja'],
                               'old_depfiles_planning_evidence_only':True}}
+
+    def embedded_tool_contracts(self, records, producers, metadata=None):
+        """Bind Flatc source reads to the original Sbox consumer action.
+
+        A textproto can cross a task boundary while its native tool command
+        disappears from the consumer's Ninja command. Recover it only from
+        the original literal writeFile producer. Version 1 supports source
+        cwd, a single command block and declared tool/library copies; other
+        sandbox mappings need an explicit contract before capture.
+        """
+        metadata=self.native_metadata(records) if metadata is None else metadata
+        contracts={}
+        def singular(message,name,default=None,required=False):
+            values=message.get(name,[])
+            if len(values) > 1 or (required and len(values) != 1):
+                raise ValueError('invalid Sbox singular field: '+name)
+            return values[0] if values else default
+        def validate(message,allowed):
+            if not isinstance(message,dict) or set(message)-set(allowed):
+                raise ValueError('unsupported Sbox message fields')
+        def copy_record(message):
+            validate(message,('from','to','executable'))
+            source=singular(message,'from',required=True)
+            target=singular(message,'to',required=True)
+            executable=singular(message,'executable',False)
+            if not isinstance(source,str) or not isinstance(target,str) or not isinstance(executable,bool):
+                raise ValueError('invalid Sbox copy fields')
+            return {'from':source,'to':target,'executable':executable}
+        def flatc(command):
+            lexer=shlex.shlex(command,posix=True,punctuation_chars=';&|()')
+            lexer.whitespace_split=True;lexer.commenters='';first=True
+            for token in lexer:
+                if token in ('&&','||',';','|','&','(',')'):
+                    first=True
+                elif first:
+                    if posixpath.basename(token) == 'flatc':return True
+                    first=False
+            return False
+        for edge,record in metadata.items():
+            command=record.get('command','')
+            if 'sbox' not in command or '--manifest' not in command:
+                continue
+            args=shlex.split(command)
+            if '--manifest' not in args:
+                continue
+            position=args.index('--manifest')
+            if position+1 == len(args):raise ValueError('missing Sbox manifest argument')
+            manifest=canonical_path(args[position+1]);owner=producers.get(manifest)
+            writer=metadata.get(owner)
+            # Other Sbox families have their own source readers and manifest
+            # writers (e.g. Metalava). This contract only captures a literal
+            # writeFile that names Flatc; never open an unrecognized payload.
+            if writer is None or writer['rule'] != 'g.android.writeFile' or not re.search(
+                    r'(?<![A-Za-z0-9_])flatc(?![A-Za-z0-9_])',writer.get('command','')):
+                continue
+            if writer['outputs'] != [manifest] or records[owner]['deps']:
+                raise ValueError('unsupported Soong writeFile producer contract')
+            literal,payload=soong_writefile_literal(writer.get('command',''),manifest)
+            parsed=sbox_textproto(payload)
+            validate(parsed,('commands','output_depfile'))
+            singular(parsed,'output_depfile')
+            blocks=parsed.get('commands',[])
+            for block in blocks:
+                validate(block,('command','chdir','copy_before','copy_after','input_hash','rsp_files'))
+                singular(block,'chdir',False);singular(block,'input_hash')
+                native=singular(block,'command',required=True)
+                if not isinstance(native,str) or not native or '\x00' in native:
+                    raise ValueError('unsupported Sbox command string')
+            relevant=[block for block in blocks if flatc(singular(block,'command'))]
+            if not relevant:
+                continue
+            if len(blocks) != 1 or len(relevant) != 1:
+                raise ValueError('unsupported multi-command Flatc sandbox')
+            if posixpath.basename(args[0]) != 'sbox' or any(token in args for token in ('&&','||',';','|')):
+                raise ValueError('unsupported Sbox invocation cwd wrapper')
+            if (manifest,'validation') in records[edge]['deps'] or not any(
+                    path == manifest and kind != 'validation' for path,kind in records[edge]['deps']):
+                raise ValueError('Sbox manifest is not an original prerequisite')
+            block=relevant[0]
+            chdir=singular(block,'chdir',False)
+            if chdir is not False:
+                raise ValueError('unsupported Flatc sandbox chdir')
+            if block.get('rsp_files'):
+                raise ValueError('unsupported Flatc sandbox input response mappings')
+            copies=[copy_record(item) for item in block.get('copy_before',[])]
+            for item in block.get('copy_after',[]):copy_record(item)
+            dependencies={path for path,kind in records[edge]['deps'] if kind != 'validation'}
+            for item in copies:
+                if not item['to'].startswith('tools/') or '..' in item['to'].split('/'):
+                    raise ValueError('unsupported Flatc sandbox source input alias')
+                if item['from'] not in dependencies:
+                    raise ValueError('Sbox tool copy has no original declared prerequisite')
+            statement=self.db.execute('SELECT * FROM statements WHERE id=?',(owner,)).fetchone()
+            graph_file=self.db.execute('SELECT path FROM files WHERE id=?',(statement['file'],)).fetchone()['path']
+            contracts[edge]=[{'schema_version':1,'generated_manifest':manifest,
+                'producer_original_edge':owner,'producer_primary_output':manifest,
+                'producer_rule':writer['rule'],'command':singular(block,'command'),
+                'cwd':self.meta['source_root'],'chdir':False,'copy_before':copies,
+                'provenance':{'payload_origin':'original_writeFile_literal',
+                    'producer_rule':writer['rule'],
+                    'original_ninja':self.meta['ninja'],'producer_graph_file':graph_file,
+                    'producer_statement_offset':statement['offset'],
+                    'producer_statement_length':statement['length'],
+                    'producer_command_sha256':hashlib.sha256(writer['command'].encode()).hexdigest(),
+                    'literal_payload_sha256':hashlib.sha256(literal.encode()).hexdigest(),
+                    'native_command_flags_scopes_dependencies_unchanged':True}}]
+        return contracts
+
+    def embedded_tool_manifest_contexts(self, metadata, contracts, producers):
+        contexts=[]
+        for index,record in enumerate(metadata):
+            owner=producers[record['outputs'][0]]
+            for context in contracts.get(owner,[]):
+                contexts.append({'edge_index':index,'primary_output':record['outputs'][0],**context})
+        return contexts
 
     def local_runtime_order_inputs(self, closure, contracts, records, producers):
         """Preserve runtime readiness when an external cut removes an ancestor.
@@ -1043,6 +1278,7 @@ class Graph:
         metadata=self.native_metadata(records)
         rust_contracts = self.rust_runtime_contracts(records,producers,metadata)
         include_contracts=self.generated_include_contracts(records,producers,out_root,metadata)
+        embedded_contracts=self.embedded_tool_contracts(records,producers,metadata)
         runtime_contracts={edge:sorted(set(rust_contracts.get(edge,[])) |
                             set(include_contracts.get(edge,{}).get('required_headers',[])) |
                             set(include_contracts.get(edge,{}).get('owned_dirs',[])))
@@ -1181,6 +1417,8 @@ class Graph:
                 planned_metadata=[record for edge,record in metadata.items() if edge in chosen]
                 include_contract=self.generated_include_manifest_contract(planned_metadata,include_contracts,producers)
                 job['generated_include_contract']=include_contract
+                embedded_contexts=self.embedded_tool_manifest_contexts(planned_metadata,embedded_contracts,producers)
+                job['embedded_tool_contexts']=embedded_contexts
                 if export:
                     directory = Path(destination)/identity
                     orders=self.local_runtime_order_inputs(selected,runtime_contracts,records,producers)
@@ -1190,6 +1428,10 @@ class Graph:
                     if actual_contract != include_contract:
                         raise ValueError('generated include metadata differs from its planned native actions')
                     manifest['generated_include_contract']=actual_contract
+                    actual_embedded=self.embedded_tool_manifest_contexts(manifest['edges'],embedded_contracts,producers)
+                    if actual_embedded != embedded_contexts:
+                        raise ValueError('embedded tool metadata differs from its original native actions')
+                    manifest['embedded_tool_contexts']=actual_embedded
                     if runtime_inputs:
                         manifest['rust_runtime_inputs'] = runtime_inputs
                     (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

@@ -818,6 +818,105 @@ class CapsuleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.out / "unit.o").is_file())
 
+    def test_flatc_source_transport_preserves_ordered_roots_and_fixed_recursive_context(self):
+        self.write(self.source / "schemas/root.fbs", 'include "sub/child.schema"; table Root { value: Child; }\n')
+        self.write(self.source / "first/sub/child.schema", 'include "leaf.data"; table Child { value: Leaf; }\n')
+        self.write(self.source / "second/sub/child.schema", 'include "WRONG_SECOND_ROOT";\n')
+        self.write(self.source / "first/sub/leaf.data", 'include "WRONG_NESTED_PARENT";\n')
+        self.write(self.source / "schemas/leaf.data", 'native_include "name_only.hpp"; table Leaf { value:int; }\n')
+        self.manifest["commands"] = ["flatc -I first -I second --cpp -o " + str(self.out / "gen") + " schemas/root.fbs"]
+        _, _, archive = self.collect()
+        expected = [self.source / "schemas/root.fbs", self.source / "first/sub/child.schema", self.source / "schemas/leaf.data"]
+        for path in expected:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "first/sub/leaf.data").lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "second/sub/child.schema").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        _, _, restored = self.collect()
+        for path in expected:
+            self.assertIn(str(path).lstrip("/"), restored.getnames())
+
+    def test_flatc_generated_schema_and_alias_do_not_seed_old_payload(self):
+        generated = self.out / "generated.fbs"
+        self.write(generated, 'include "OLD_PAYLOAD_MUST_NOT_BE_READ";\n')
+        alias = self.source / "schemas/alias.schema"
+        alias.parent.mkdir()
+        alias.symlink_to(generated)
+        self.write(self.source / "schemas/root.fbs", 'include "alias.schema"; table Root { value:int; }\n')
+        self.manifest["external_inputs"].append(str(generated))
+        self.manifest["commands"] = ["flatc --cpp -o " + str(self.out / "gen") + " schemas/root.fbs"]
+        _, _, archive = self.collect()
+        self.assertIn(str(alias).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        self.write(generated, 'table Fresh { value:int; }\n')
+        archive.extractall("/")
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(alias.read_text(), 'table Fresh { value:int; }\n')
+
+    def test_flatc_invocations_keep_separate_search_contexts_and_real_redirection_reads(self):
+        self.write(self.source / "schemas/root.fbs", '/* include "COMMENT"; */\ninclude "leaf.schema";\n')
+        for root in ["first", "second"]:
+            self.write(self.source / root / "leaf.schema", 'native_include "NAME_ONLY"; table Leaf { value:int; }\n')
+        self.write(self.source / "input.bin", b"data read through stdin")
+        self.write(self.out / "depfile.d", b"OLD_METADATA")
+        self.manifest["commands"] = ["flatc -M -I first schemas/root.fbs > " + str(self.out / "depfile.d")
+                                     + " && flatc -I second --cpp -o " + str(self.out / "gen") + " schemas/root.fbs < input.bin"]
+        _, _, archive = self.collect()
+        for path in [self.source / "first/leaf.schema", self.source / "second/leaf.schema", self.source / "input.bin"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.out / "depfile.d").lstrip("/"), archive.getnames())
+
+    def test_flatc_missing_generated_include_remains_a_real_producer_gate(self):
+        unknown = self.out / "include/old.fbs"
+        self.write(unknown, 'table Old { value:int; }\n')
+        self.write(self.source / "schemas/root.fbs", 'include "old.fbs";\n')
+        self.manifest["commands"] = ["flatc -I " + str(unknown.parent) + " schemas/root.fbs"]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_flatc_single_invocation_schema_after_dirname_substitution_survives_cold_transport(self):
+        self.write(self.source / "tensorflow/lite/schema/schema.fbs", 'include "child.schema"; table Root { value: Child; }\n')
+        child = self.source / "tensorflow/lite/schema/child.schema"
+        self.write(child, 'table Child { value:int; }\n')
+        output = self.out / "tensorflow/lite/schema/mutable/schema_generated.h"
+        self.write(output, "OLD_GENERATED_OUTPUT")
+        self.manifest["commands"] = ["flatc --cpp --gen-mutable --keep-prefix -o $(dirname " + str(output)
+                                     + ") tensorflow/lite/schema/schema.fbs"]
+        _, _, archive = self.collect()
+        self.assertIn(str(child).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(output).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        _, _, restored = self.collect()
+        self.assertIn(str(child).lstrip("/"), restored.getnames())
+
+    def test_flatc_embedded_writefile_recipe_is_collected_at_its_sbox_consumer(self):
+        generated = self.out / "genrule.sbox.textproto"
+        self.write(generated, 'OLD_PAYLOAD_MUST_NOT_BE_READ')
+        self.write(self.source / "schemas/root.fbs", 'include "module.schema"; table Root { value: Module; }\n')
+        self.write(self.source / "schemas/module.schema", 'table Module { value:int; }\n')
+        self.manifest["external_inputs"].append(str(generated))
+        command = "sbox --manifest " + str(generated) + " --sandbox-path " + str(self.out / "sandbox")
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [{"command": command, "outputs": self.manifest["outputs"]}]
+        context = {"edge_index": 0, "primary_output": self.manifest["outputs"][0], "generated_manifest": str(generated),
+                   "producer_original_edge": 1234, "producer_primary_output": str(generated), "command": "tools/out/bin/flatc -I schemas --cpp -o __SBOX__/out schemas/root.fbs",
+                   "cwd": str(self.source), "chdir": False, "copy_before": [{"from": "/compiled/flatc", "to": "tools/out/bin/flatc", "executable": True}],
+                   "provenance": {"producer_rule": "g.android.writeFile"}}
+        self.manifest["embedded_tool_contexts"] = [context]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "schemas/module.schema").lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        for change in [{"chdir": True}, {"copy_before": [{"from": "schemas/root.fbs", "to": "root.fbs"}]},
+                       {"generated_manifest": str(self.out / "unbound.textproto")}, {"primary_output": str(self.out / "other")}]:
+            saved = dict(context)
+            context.update(change)
+            with self.assertRaises(capsule.CapsuleError):
+                self.collect()
+            context.clear()
+            context.update(saved)
+
     def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
         headers=self.out / "include"
         self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")
