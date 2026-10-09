@@ -345,15 +345,18 @@ class CapsuleTests(unittest.TestCase):
     def test_make_environment_includes_compiler_runtimes_and_source_tree(self):
         clang = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
         kernel_tools = self.source / "prebuilts/kernel-build-tools/linux-x86"
+        custom_tools = self.source / "prebuilts/tools-custom/linux-x86"
         self.write(clang / "bin/clang", "compiler", 0o755)
         self.write(clang / "lib64/runtime.so", "runtime")
         self.write(kernel_tools / "bin/pahole", "pahole", 0o755)
         self.write(kernel_tools / "lib64/libdwarves.so", "dwarves")
+        self.write(custom_tools / "bin/perl", "frozen perl", 0o755)
+        self.write(custom_tools / "lib64/runtime.so", "custom runtime")
         self.write(self.source / "prebuilts/tools-custom/common/perl-base/module.pm", "perl")
         self.write(self.source / "prebuilts/build-tools/common/bison/skeletons/yacc.c", "bison")
         self.write(self.source / "kernel/drivers/driver.c", "kernel driver")
         self.manifest["commands"] = [
-            'PATH=' + str(clang / "bin") + ':/usr/bin:$PATH '
+            'PATH=' + str(custom_tools / "bin") + ':' + str(clang / "bin") + ':/usr/bin:$PATH '
             'PERL5LIB=' + str(self.source / "prebuilts/tools-custom/common/perl-base") + ' '
             'BISON_PKGDATADIR=' + str(self.source / "prebuilts/build-tools/common/bison") + ' '
             'CC="/usr/bin/ccache clang --cuda-path=/dev/null" '
@@ -362,11 +365,13 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive = self.collect()
         names = archive.getnames()
         for path in [clang / "lib64/runtime.so", kernel_tools / "lib64/libdwarves.so",
+                     custom_tools / "bin/perl", custom_tools / "lib64/runtime.so",
                      self.source / "prebuilts/tools-custom/common/perl-base/module.pm",
                      self.source / "prebuilts/build-tools/common/bison/skeletons/yacc.c",
                      self.source / "kernel/drivers/driver.c"]:
             self.assertIn(str(path).lstrip("/"), names)
         self.assertFalse(any(name.startswith("usr/") for name in names))
+        self.assertEqual(archive.getmember(str(custom_tools / "bin/perl").lstrip("/")).mode, 0o755)
 
     def test_host_link_flags_preserve_startup_objects_and_sysroot_libraries(self):
         gcc = self.source / "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"

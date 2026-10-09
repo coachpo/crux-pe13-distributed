@@ -22,6 +22,23 @@ FSTAB = b"""/dev/block/by-name/pesystem /system ext4 ro wait,first_stage_mount
 /dev/block/by-name/pemetadata /metadata ext4 noatime wait,first_stage_mount
 /dev/block/by-name/peuserdata /data ext4 noatime wait,fileencryption=ice,keydirectory=/metadata/vold/metadata_encryption
 """
+LTO_ORDER = """SECTIONS {
+\t.initcall1.init : {
+\t\t*(.initcall1.init..0_101_driver_init) ;
+\t\t*(.initcall1.init..1_102_second_init) ;
+\t}
+\t.con_initcall.init : {
+\t\t*(.con_initcall.init..0_103_console_init) ;
+\t}
+\t.initcallrootfs.init : {
+\t\t*(.initcallrootfs.init..0_104_rootfs_init) ;
+\t}
+\t.security_initcall.init : {
+\t\t*(.security_initcall.init..0_105_security_init) ;
+\t}
+}
+__crc_system_state = 0x9ed9e03e;
+"""
 
 
 def tree(properties):
@@ -89,6 +106,125 @@ class PackagingTests(unittest.TestCase):
     def prepare(self, **kwargs):
         return package_fits.prepare(self.accepted, self.receipts, self.output, self.product,
                                     self.kernel, source_selection={"kernel": "fresh-source"}, **kwargs)
+
+    def record_kernel_inputs(self, paths):
+        for path in paths:
+            spec = worker.describe(path)
+            self.accepted[str(path)] = spec
+            self.receipts[0]["outputs"] = [old for old in self.receipts[0]["outputs"] if old["path"] != str(path)]
+            self.receipts[0]["outputs"].append(spec)
+
+    def set_lto_input(self, text=None):
+        config = self.kernel / ".config"
+        config.write_text("CONFIG_ARM64=y\nCONFIG_LTO_CLANG=y\nCONFIG_MODVERSIONS=y\n")
+        system_map = self.kernel / "System.map"
+        system_map.write_text("ffffff8008080000 T _text\nffffff80125cae60 D __initcall_start\n"
+                              "ffffff80125cae80 D __initcall_end\n"
+                              "ffffff80125cae80 D __con_initcall_start\nffffff80125cae80 D __con_initcall_end\n"
+                              "ffffff80125cae80 D __security_initcall_start\nffffff80125cae80 D __security_initcall_end\n")
+        paths = [config, system_map]
+        if text is not None:
+            order = self.kernel / ".tmp_lto.lds"
+            order.write_text(text)
+            paths.append(order)
+        self.record_kernel_inputs(paths)
+
+    def test_lto_requires_a_receipted_initcall_order_artifact(self):
+        self.set_lto_input()
+        # Even a valid ambient file is not evidence from the paired build.
+        (self.kernel / ".tmp_lto.lds").write_text(LTO_ORDER)
+        result = self.prepare(build_fits=False)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Missing fresh regular", result["error"])
+        self.assertFalse((self.output / "kernel-symbols").exists())
+
+    def test_lto_missing_order_file_is_rejected(self):
+        self.set_lto_input()
+        result = self.prepare(build_fits=False)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn(".tmp_lto.lds", result["error"])
+
+    def test_lto_crc_only_artifact_cannot_certify_symbols_or_fits(self):
+        self.set_lto_input("__crc_system_state = 0x9ed9e03e;\n__crc_init_task = 0x66138bea;\n")
+        result = self.prepare()
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("lacks its SECTIONS block", result["error"])
+        self.assertFalse(result["fits_generated"])
+        self.assertFalse((self.output / "kernel-symbols").exists())
+        self.assertFalse((self.output / "fit-inputs").exists())
+
+    def test_lto_malformed_ordering_is_rejected(self):
+        malformed = [
+            "SECTIONS {\n}\n",
+            "SECTIONS {\n.initcall1.init : {\n}\n}\n",
+            LTO_ORDER.replace("*(.initcall1.init..0_101_driver_init)", "*(.initcall2.init..0_101_driver_init)"),
+            LTO_ORDER.replace("0_101_driver_init", "driver_init"),
+            LTO_ORDER.replace("}\n__crc_system_state", "__crc_system_state"),
+            LTO_ORDER.replace("0x9ed9e03e", "invalid"),
+            LTO_ORDER + "unexpected data\n",
+        ]
+        for text in malformed:
+            with self.subTest(text=text):
+                self.set_lto_input(text)
+                result = self.prepare(build_fits=False)
+                self.assertEqual(result["status"], "failed")
+                self.assertIn("LTO", result["error"])
+                self.assertFalse((self.output / "kernel-symbols").exists())
+
+    def test_lto_order_must_share_the_image_and_symbol_producer(self):
+        self.set_lto_input(LTO_ORDER)
+        order = str(self.kernel / ".tmp_lto.lds")
+        spec = self.accepted[order]
+        self.receipts[0]["outputs"].remove(spec)
+        self.receipts.append({"status": "success", "id": "other-kernel", "run_id": "122",
+                              "manifest_sha256": "3" * 64, "archive_sha256": "4" * 64, "outputs": [spec]})
+        result = self.prepare(build_fits=False)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("must belong to the paired kernel build", result["error"])
+
+    def test_generator_shaped_lto_order_is_recorded_with_the_symbol_pair(self):
+        self.set_lto_input(LTO_ORDER)
+        result = self.prepare(build_fits=False)
+        self.assertEqual(result["status"], "success", result.get("error"))
+        manifest = json.loads((self.output / "kernel-symbols/kernel-build.json").read_text())
+        report = manifest["lto_initcall_order"]
+        self.assertEqual(report["initcall_entry_count"], 5)
+        self.assertEqual(report["crc_assignment_count"], 1)
+        self.assertEqual(report["artifact"], self.accepted[str(self.kernel / ".tmp_lto.lds")])
+        self.assertEqual(report["system_map"], self.accepted[str(self.kernel / "System.map")])
+        self.assertEqual(report["runtime_table"]["start"], "0xffffff80125cae60")
+        self.assertEqual(report["runtime_table"]["end"], "0xffffff80125cae80")
+        self.assertEqual(report["runtime_table"]["size_bytes"], 32)
+        self.assertEqual((self.output / "kernel-symbols/.tmp_lto.lds").read_text(), LTO_ORDER)
+        self.assertIn(str(self.kernel / ".tmp_lto.lds"), manifest["inputs"])
+
+    def test_valid_lto_order_with_collapsed_runtime_tables_is_rejected(self):
+        self.set_lto_input(LTO_ORDER)
+        system_map = self.kernel / "System.map"
+        boundaries = ["__initcall_start", *["__initcall" + str(level) + "_start" for level in range(8)],
+                      "__initcallrootfs_start", "__initcall_end", "__con_initcall_start", "__con_initcall_end",
+                      "__security_initcall_start", "__security_initcall_end"]
+        system_map.write_text("".join("ffffff80125cae60 D " + name + "\n" for name in boundaries))
+        self.record_kernel_inputs([system_map])
+        result = self.prepare()
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("empty or reversed runtime initcall table", result["error"])
+        self.assertFalse(result["fits_generated"])
+        self.assertFalse((self.output / "kernel-symbols").exists())
+
+    def test_lto_requires_unique_ordered_runtime_boundaries(self):
+        for text in ("ffffff80125cae80 D __initcall_start\nffffff80125cae60 D __initcall_end\n",
+                     "ffffff80125cae60 D __initcall_start\n",
+                     "ffffff80125cae60 D __initcall_start\nffffff80125cae60 D __initcall_start\n"
+                     "ffffff80125cae80 D __initcall_end\n"):
+            with self.subTest(text=text):
+                self.set_lto_input(LTO_ORDER)
+                system_map = self.kernel / "System.map"
+                system_map.write_text(text)
+                self.record_kernel_inputs([system_map])
+                result = self.prepare(build_fits=False)
+                self.assertEqual(result["status"], "failed")
+                self.assertIn("LTO System.map", result["error"])
 
     def test_inputs_only_keeps_fresh_symbol_pair_and_raw_inputs(self):
         result = self.prepare(build_fits=False)

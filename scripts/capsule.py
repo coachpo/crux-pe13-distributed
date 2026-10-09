@@ -1108,6 +1108,8 @@ class Collector:
             package = self.source_root.joinpath(*relative[:3])
         elif relative[:3] == ("prebuilts", "kernel-build-tools", "linux-x86"):
             package = self.source_root.joinpath(*relative[:3])
+        elif relative[:3] == ("prebuilts", "tools-custom", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
         elif relative[:3] == ("prebuilts", "go", "linux-x86"):
             package = self.source_root.joinpath(*relative[:3])
         elif relative[:2] == ("prebuilts", "python") and "bin" in relative:

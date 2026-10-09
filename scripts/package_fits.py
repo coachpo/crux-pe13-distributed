@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -54,6 +55,60 @@ def fresh_inputs(accepted, receipts, paths):
         if str(path) not in owners:
             raise ValueError("FIT/symbol input has no successful producer: " + str(path))
     return owners
+
+
+def validate_lto_initcall_order(text):
+    """Validate the frozen generate_initcall_order.pl output and appended CRCs."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines or lines[0] != "SECTIONS {":
+        raise ValueError("LTO initcall-order artifact lacks its SECTIONS block")
+    section_pattern = re.compile(
+        r"(\.(?:initcall(?:[0-9]|early|rootfs)s?|initcall(?:cons|securitys)|"
+        r"con_initcall|security_initcall)\.init)\s*:\s*\{")
+    sections, entries, crcs = [], 0, 0
+    section, section_entries, closed = None, 0, False
+    for line in lines[1:]:
+        if closed:
+            if not re.fullmatch(r"__crc_[A-Za-z0-9_]+\s*=\s*0x[0-9a-fA-F]+\s*;", line):
+                raise ValueError("Malformed trailing LTO symbol-version assignment")
+            crcs += 1
+        elif section is not None:
+            if line == "}":
+                if not section_entries:
+                    raise ValueError("Empty LTO initcall-order section: " + section)
+                section = None
+            elif re.fullmatch(r"\*\(" + re.escape(section) + r"\.\.\d+_\d+_[^\s(){};]+\)\s*;", line):
+                section_entries += 1
+                entries += 1
+            else:
+                raise ValueError("Malformed LTO initcall-order selector: " + line)
+        elif line == "}":
+            closed = True
+        else:
+            match = section_pattern.fullmatch(line)
+            if not match or match[1] in sections:
+                raise ValueError("Malformed or duplicate LTO initcall-order section: " + line)
+            section, section_entries = match[1], 0
+            sections.append(section)
+    if not closed or section is not None or not entries:
+        raise ValueError("LTO initcall-order artifact has no complete nonempty ordering block")
+    return {"sections": sections, "initcall_entry_count": entries, "crc_assignment_count": crcs}
+
+
+def validate_lto_initcall_table(text):
+    """Require a nonempty normal initcall table after the final kernel link."""
+    bounds = {name: [] for name in ("__initcall_start", "__initcall_end")}
+    for line in text.splitlines():
+        match = re.fullmatch(r"([0-9a-fA-F]+)\s+[A-Za-z]\s+(__initcall_start|__initcall_end)", line.strip())
+        if match:
+            bounds[match[2]].append(int(match[1], 16))
+    if any(len(values) != 1 for values in bounds.values()):
+        raise ValueError("LTO System.map lacks unique initcall start/end boundaries")
+    start, end = bounds["__initcall_start"][0], bounds["__initcall_end"][0]
+    if end <= start:
+        raise ValueError("LTO System.map has an empty or reversed runtime initcall table")
+    return {"start_symbol": "__initcall_start", "end_symbol": "__initcall_end",
+            "start": hex(start), "end": hex(end), "size_bytes": end - start}
 
 
 def extract_crux_overlay(data, recipe):
@@ -163,6 +218,21 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
             kernel_producers = set.intersection(*(owners[str(path)] for path in core))
             if not kernel_producers:
                 raise ValueError("Image, all four DTBs and symbols must share one successful kernel build")
+            lto_report = None
+            if "CONFIG_LTO_CLANG=y" in symbols[2].read_text().splitlines():
+                # A masked generator failure can leave only appended CRCs while
+                # the native link and worker receipt still report success.
+                order = kernel / ".tmp_lto.lds"
+                order_owners = fresh_inputs(accepted, receipts, [order])
+                kernel_producers &= order_owners[str(order)]
+                if not kernel_producers:
+                    raise ValueError("LTO initcall-order artifact must belong to the paired kernel build")
+                lto_report = validate_lto_initcall_order(order.read_text())
+                lto_report["artifact"] = accepted[str(order)]
+                lto_report["runtime_table"] = validate_lto_initcall_table(symbols[1].read_text())
+                lto_report["system_map"] = accepted[str(symbols[1])]
+                core.append(order)
+                symbols.append(order)
             primary = sorted(kernel_producers)[0]
             recipe = load_recipe(recipe_path)
             image_report = recipe.validate_image(image.read_bytes())
@@ -239,6 +309,8 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
                         "watchdog": {"device": "watchdog@17c10000", "timeout_ms": 30000,
                                      "handoff": "run boot_go", "actual_handoff_verification_required": True},
                         "hardware_verified": False, "fits_generated": False}
+            if lto_report is not None:
+                manifest["lto_initcall_order"] = lto_report
             (symbols_dir / "README.md").write_text("# Fresh Crux PE13 kernel symbols\n\nKeep Image, vmlinux, System.map and .config paired with the same kernel producer and Image SHA256 in kernel-build.json. These symbols belong to this fresh build. Runtime/device validation is separate.\n")
             if build_fits:
                 manifest["host_tools"] = {}
