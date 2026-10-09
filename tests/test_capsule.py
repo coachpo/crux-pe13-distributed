@@ -701,6 +701,123 @@ class CapsuleTests(unittest.TestCase):
             with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
                 self.collect()
 
+    def compiler_contract(self, command, roots, headers=(), rsp=None):
+        edge = {"command": command, "outputs": [str(self.out / "unit.o")]}
+        if rsp:
+            edge.update(rspfile=str(self.out / "unit.rsp"), rspfile_content=rsp)
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [edge]
+        self.manifest["generated_include_contract"] = {
+            "schema_version": 1, "search_roots": [str(path) for path in roots],
+            "required_headers": [str(path) for path in headers], "owned_dirs": [],
+            "compiler_contexts": [{"edge_index": 0, "primary_output": str(self.out / "unit.o"),
+                                   "search_roots": [str(path) for path in roots], "forced_files": [],
+                                   "reader": "c_cpp_frontend"}], "provenance": {"native_flags_unchanged": True}}
+
+    @unittest.skipUnless(shutil.which("cc"), "C compiler is required for cold header transport")
+    def test_compiler_contract_cold_headers_come_from_receipt_and_ambient_out_is_omitted(self):
+        root = self.out / "generated/include"
+        required = root / "needed.h"
+        stale = root / "unused-old.h"
+        self.write(required, "#define IMPORTED 99\n")
+        self.write(stale, "old ambient generated header\n")
+        self.write(self.source / "lib/unit.c", '#include "local.h"\n#include "needed.h"\nint value = LOCAL + IMPORTED;\n')
+        self.manifest["external_inputs"].append(str(required))
+        command = "cc -I" + str(root) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        self.compiler_contract(command, [root], [required])
+        _, _, archive = self.collect()
+        for path in [required, stale]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(required, "#define IMPORTED 11\n")
+        result = subprocess.run(command, shell=True, cwd=self.source, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.out / "unit.o").is_file())
+
+    def test_compiler_contract_binds_rsp_and_zero_provider_roots_without_hiding_forced_reads(self):
+        root = self.out / "empty/compiler-root"
+        stale = root / "old-only.h"
+        source_header = self.source / "ordinary/source.h"
+        self.write(stale, "old ambient header\n")
+        self.write(source_header, "// actual source header\n")
+        command = "clang @" + str(self.out / "unit.rsp") + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        self.compiler_contract(command, [root], rsp="-I" + str(root) + " -Iordinary")
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.assertIn(str(source_header).lstrip("/"), archive.getnames())
+        self.manifest["edges"][0]["rspfile_content"] += " -include " + str(stale)
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_compiler_contract_requires_real_header_and_typed_reader_bindings(self):
+        root = self.out / "include"
+        unknown = root / "missing-producer.h"
+        self.write(unknown, "old generated header\n")
+        self.compiler_contract("cc -I" + str(root) + " lib/unit.c", [root], [unknown])
+        with self.assertRaisesRegex(capsule.CapsuleError, "no selected producer or receipt"):
+            self.collect()
+        self.compiler_contract("aidl -I" + str(root) + " input.aidl", [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "not a supported C/C\+\+ frontend"):
+            self.collect()
+        self.compiler_contract("cc -I" + str(root) + " lib/unit.c", [])
+        with self.assertRaisesRegex(capsule.CapsuleError, "absent from its contract"):
+            self.collect()
+
+    def test_compiler_contract_does_not_leak_to_noncompiler_in_same_action_or_rsp(self):
+        root = self.out / "include"
+        stale = root / "old-only.h"
+        self.write(stale, "old metadata input\n")
+        command = "cc -I" + str(root) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command += " && header-abi-linker -I" + str(root) + " input.lsdump -o " + str(self.out / "linked.lsdump")
+        self.compiler_contract(command, [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        command = "cc @" + str(self.out / "unit.rsp") + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command += " && header-abi-linker @" + str(self.out / "unit.rsp") + " input.lsdump"
+        self.compiler_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_reader_contract_applies_only_after_compiler_argument_separator(self):
+        root = self.out / "include"
+        stale = root / "old-only.h"
+        self.write(stale, "old filename filter metadata\n")
+        for command, rsp in [("header-abi-dumper -I" + str(root) + " lib/unit.c -- -I" + str(root), None),
+                             ("header-abi-dumper @" + str(self.out / "unit.rsp"), "-I" + str(root) + " lib/unit.c -- -I" + str(root)),
+                             ("header-abi-dumper @" + str(self.out / "unit.rsp") + " lib/unit.c -- @" + str(self.out / "unit.rsp"), "-I" + str(root))]:
+            self.compiler_contract(command, [root], rsp=rsp)
+            with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                self.collect()
+        self.compiler_contract("header-abi-dumper lib/unit.c -- -I" + str(root), [root])
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        command = command.split(" && ")[0] + " && header-abi-linker @" + str(self.out / "unit.rsp")
+        self.compiler_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    @unittest.skipUnless(shutil.which("cc"), "C compiler is required for cold shared response transport")
+    def test_compiler_shared_semantic_rsp_keeps_source_headers_for_its_own_reader(self):
+        header = self.source / "ordinary/extra.h"
+        self.write(header, "#define EXTRA 13\n")
+        self.write(self.source / "ordinary/root.proto", 'syntax="proto2"; message X {}\n')
+        self.write(self.source / "lib/unit.c", '#include "extra.h"\nint value = EXTRA;\n')
+        rsp = self.out / "unit.rsp"
+        compile_command = "cc @" + str(rsp) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command = compile_command + " && protoc @" + str(rsp) + " ordinary/root.proto --cpp_out=" + str(self.out / "proto")
+        self.compiler_contract(command, [], rsp="-Iordinary")
+        _, _, archive = self.collect()
+        self.assertIn(str(header).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(rsp, "-Iordinary")
+        result = subprocess.run(compile_command, shell=True, cwd=self.source, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.out / "unit.o").is_file())
+
     def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
         headers=self.out / "include"
         self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")

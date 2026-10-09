@@ -21,6 +21,98 @@ import sys
 import tempfile
 
 
+def native_generated_include_roots(edge, source_root, out_root):
+    source_root, out_root = map(lambda p: posixpath.normpath(str(p)), (source_root, out_root))
+    search_flags = ('-isystem', '-iquote', '-idirafter', '-I')
+    file_flags = ('-include', '-imacros')
+    compiler = re.compile(r'^(?:[\w.-]+-)?(?:clang(?:\+\+)?|gcc|g\+\+|cc|c\+\+)(?:-\d+(?:\.\d+)*)?$')
+    include_roots, forced_files = set(), set()
+
+    def absolute(path, cwd):
+        return posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
+
+    def contexts(command, cwd):
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>')
+        lexer.whitespace_split, lexer.commenters = True, ''
+        segments, segment = [], []
+        for token in lexer:
+            if token in ('&&', '||', ';', '|', '&', '(', ')'):
+                if segment: segments.append(segment); segment = []
+            else: segment.append(token)
+        if segment: segments.append(segment)
+        for args in segments:
+            i, local_cwd = 0, cwd
+            while i < len(args):
+                token, name = args[i], posixpath.basename(args[i])
+                if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', token) or name in ('exec', 'command', 'do', 'then', 'else', 'time'):
+                    i += 1
+                elif name == 'env':
+                    i += 1
+                    while i < len(args) and args[i].startswith('-'):
+                        option = args[i]; i += 1
+                        if option in ('-u', '--unset'): i += 1
+                        elif option in ('-C', '--chdir') and i < len(args):
+                            local_cwd = absolute(args[i], local_cwd); i += 1
+                elif name in ('ccache', 'sccache', 'distcc'):
+                    i += 1
+                    while i < len(args) and args[i].startswith('-'): i += 1
+                else: break
+            if i == len(args): continue
+            name, argv = posixpath.basename(args[i]), args[i + 1:]
+            if name == 'cd' and argv:
+                cwd = absolute(argv[0], cwd)
+            elif name in ('bash', 'sh', 'dash'):
+                for j, option in enumerate(argv):
+                    if option.startswith('-') and not option.startswith('--') and 'c' in option[1:]:
+                        if j + 1 < len(argv): yield from contexts(argv[j + 1], local_cwd)
+                        break
+            elif name != 'llvm-rs-cc' and (compiler.fullmatch(name) or name in ('clang-tidy', 'header-abi-dumper')):
+                yield name, argv, local_cwd
+
+    def expand_responses(argv, cwd, active=()):
+        result, unknown = [], []
+        declared = edge.get('rspfile')
+        declared = absolute(declared, source_root) if declared else None
+        for token in argv:
+            if not token.startswith('@'):
+                result.append(token); continue
+            path = absolute(token[1:], cwd)
+            if path != declared or edge.get('rspfile_content') is None:
+                unknown.append(token); result.append(token); continue
+            if path in active: raise ValueError('recursive compiler response file: ' + path)
+            expanded, nested = expand_responses(shlex.split(edge['rspfile_content']), cwd, active + (path,))
+            result.extend(expanded); unknown.extend(nested)
+        return result, unknown
+
+    for name, argv, cwd in contexts(edge.get('command', ''), source_root):
+        argv, unknown = expand_responses(argv, cwd)
+        if name in ('clang-tidy', 'header-abi-dumper'):
+            if unknown: raise ValueError('unknown native frontend response file: ' + unknown[0])
+            if '--' not in argv: continue
+            argv = argv[argv.index('--') + 1:]
+        elif not any(mode in argv for mode in ('-c', '-E', '-S')):
+            continue
+        if unknown: raise ValueError('unknown native compiler response file: ' + unknown[0])
+        i = 0
+        while i < len(argv):
+            token = argv[i]
+            for flag in search_flags + file_flags:
+                value = None
+                if token == flag:
+                    if i + 1 == len(argv): raise ValueError('missing compiler operand for ' + flag)
+                    i += 1; value = argv[i]
+                elif token.startswith(flag) and not (flag == '-include' and token.startswith('-include-pch')):
+                    value = token[len(flag):].lstrip('=')
+                else: continue
+                if value and not value.startswith('-') and '$' not in value:
+                    path = absolute(value, cwd)
+                    if path == out_root or path.startswith(out_root + '/'):
+                        (include_roots if flag in search_flags else forced_files).add(path)
+                break
+            i += 1
+    return {'include_roots': sorted(include_roots), 'forced_files': sorted(forced_files)}
+
+
 def expand(value, variables):
     """Expand a Ninja EvalString, including escaped separators and continuations."""
     if '$' not in value:
@@ -498,20 +590,26 @@ class Graph:
         handle = handles[file_id]; handle.seek(row['offset'])
         return handle.read(row['length']).decode('utf-8')
 
-    def slice(self, targets, destination, external=(), runtime_dir='.crux-task/graph'):
+    def slice(self, targets, destination, external=(), runtime_dir='.crux-task/graph', out_root=None):
         closure = self.closure(targets,external)
-        selected_records,_=self.edge_records(closure['edge_ids'])
-        orders={}
-        if any(record['rule'] in {'g.rust.rustc','g.rust.clippy','g.rust.rustdoc'}
-               for record in selected_records.values()):
-            original=self.closure(targets)
-            records,producers=self.edge_records(original['edge_ids'])
-            contracts=self.rust_runtime_contracts(records,producers)
-            selected=set(closure['edge_ids']); own_outputs=set(closure['outputs'])
-            closure['external_inputs']=sorted(set(closure['external_inputs']) | {
-                path for edge in selected for path in contracts.get(edge,[]) if path not in own_outputs})
-            orders=self.local_runtime_order_inputs(closure,contracts,records,producers)
-        return self.export_edges(closure,targets,destination,runtime_dir,runtime_order_inputs=orders)
+        original=self.closure(targets)
+        records,producers=self.edge_records(original['edge_ids'])
+        metadata=self.native_metadata(records)
+        rust=self.rust_runtime_contracts(records,producers,metadata)
+        includes=self.generated_include_contracts(records,producers,out_root,metadata)
+        contracts={edge:sorted(set(rust.get(edge,[])) |
+                    set(includes.get(edge,{}).get('required_headers',[])) |
+                    set(includes.get(edge,{}).get('owned_dirs',[])))
+                   for edge in set(rust) | set(includes)}
+        selected=set(closure['edge_ids']); own_outputs=set(closure['outputs'])
+        closure['external_inputs']=sorted(set(closure['external_inputs']) | {
+            path for edge in selected for path in contracts.get(edge,[]) if path not in own_outputs})
+        orders=self.local_runtime_order_inputs(closure,contracts,records,producers)
+        manifest=self.export_edges(closure,targets,destination,runtime_dir,runtime_order_inputs=orders)
+        manifest['generated_include_contract']=self.generated_include_manifest_contract(
+            manifest['edges'],includes,producers)
+        (Path(destination)/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+        return manifest
 
     def edge_records(self, edge_ids):
         records={};producers={}
@@ -531,6 +629,107 @@ class Graph:
                             producers[path]=owner
                             break
         return records,producers
+
+    def native_metadata(self, records):
+        """Evaluate retained native actions in their original lexical scopes."""
+        actions={edge:record for edge,record in records.items() if record['rule'] != 'phony'}
+        if not actions:
+            return {}
+        closure={'edge_ids':sorted(actions),'edge_count':len(actions),
+                 'outputs':sorted({path for record in actions.values() for path in record['outputs']}),
+                 'phony_outputs':[],'leaf_inputs':[],'external_inputs':[]}
+        by_output={path:edge for edge,record in actions.items() for path in record['outputs']}
+        with tempfile.TemporaryDirectory(prefix='ninja-native-metadata-') as temporary:
+            metadata=self.export_edges(closure,[],temporary)
+        return {by_output[record['outputs'][0]]:record for record in metadata['edges']}
+
+    def generated_include_contracts(self, records, producers, out_root=None, metadata=None):
+        """Bind native include searches to selected ancestor header producers.
+
+        Include flags also survive on synthetic stubs that deliberately omit
+        generated-header dependencies. Directory contents cannot establish a
+        read or add a producer; only the original selected prerequisite graph
+        supplies header readiness and reviewed generated-tree ownership.
+        """
+        source_root=self.meta['source_root']
+        out_root=canonical_path(str(out_root or Path(self.meta['ninja']).parent))
+        absolute=lambda path:canonical_path(path if path.startswith('/') else
+                                            posixpath.join(source_root,path))
+        suffixes=('.h','.hh','.hpp','.hxx','.inc','.inl','.def')
+        catalog={absolute(path):(path,edge) for edge,record in records.items()
+                 if record['rule'] != 'phony' for path in record['outputs']
+                 if path.endswith(suffixes) and absolute(path).startswith(out_root.rstrip('/')+'/')}
+        trees={directory:owner for directory,owner in self.side_output_dirs.items()
+               if owner in records}
+        providers=sorted({owner for _,owner in catalog.values()} | set(trees.values()))
+        bits={owner:1 << index for index,owner in enumerate(providers)}
+        parents={edge:{producers[path] for path,kind in record['deps']
+                       if kind != 'validation' and path in producers and producers[path] != edge}
+                 for edge,record in records.items()}
+        successors=collections.defaultdict(set)
+        remaining={edge:len(before) for edge,before in parents.items()}
+        for edge,before in parents.items():
+            for owner in before:
+                successors[owner].add(edge)
+        ready=collections.deque(edge for edge,count in remaining.items() if not count)
+        ancestors={}
+        while ready:
+            edge=ready.popleft();mask=0
+            for owner in parents[edge]:
+                mask |= ancestors[owner] | bits.get(owner,0)
+            ancestors[edge]=mask
+            for child in successors[edge]:
+                remaining[child]-=1
+                if not remaining[child]:ready.append(child)
+        if len(ancestors) != len(records):
+            raise ValueError('generated include contract requires an acyclic original prerequisite graph')
+        metadata=self.native_metadata(records) if metadata is None else metadata
+        directories={};contracts={}
+        for edge,record in metadata.items():
+            parsed=native_generated_include_roots(record,source_root,out_root)
+            roots,forced=parsed['include_roots'],parsed['forced_files']
+            if not roots and not forced:
+                continue
+            required=set();owned=[]
+            for root in roots:
+                if root not in directories:
+                    prefix=root.rstrip('/')+'/'
+                    directories[root]=[(path,owner) for absolute_path,(path,owner) in catalog.items()
+                                       if absolute_path.startswith(prefix)]
+                required.update(path for path,owner in directories[root]
+                                if ancestors[edge] & bits[owner])
+            for path in forced:
+                if path in catalog:
+                    native,owner=catalog[path]
+                    if ancestors[edge] & bits[owner]:required.add(native)
+            for directory,owner in trees.items():
+                tree=absolute(directory)
+                overlap=any(root == tree or root.startswith(tree+'/') or tree.startswith(root+'/')
+                            for root in roots) or any(path.startswith(tree+'/') for path in forced)
+                if overlap and ancestors[edge] & bits[owner]:owned.append(directory)
+            contracts[edge]={'search_roots':roots,'forced_files':forced,
+                             'required_headers':sorted(required),'owned_dirs':sorted(owned)}
+        return contracts
+
+    def generated_include_manifest_contract(self, metadata, contracts, producers):
+        contexts=[];roots=set();headers=set();trees=set()
+        for index,record in enumerate(metadata):
+            edge=producers[record['outputs'][0]]
+            contract=contracts.get(edge)
+            if contract is None:
+                continue
+            roots.update(contract['search_roots']);headers.update(contract['required_headers'])
+            trees.update(contract['owned_dirs'])
+            contexts.append({'edge_index':index,'primary_output':record['outputs'][0],
+                             'search_roots':contract['search_roots'],'forced_files':contract['forced_files'],
+                             'reader':'c_cpp_frontend'})
+        return {'schema_version':1,'search_roots':sorted(roots),'required_headers':sorted(headers),
+                'owned_dirs':sorted(trees),'compiler_contexts':contexts,
+                'provenance':{'native_flags_unchanged':True,
+                              'selected_original_ancestor_declared_headers_only':True,
+                              'zero_provider_roots_preserved':True,
+                              'original_ninja':self.meta['ninja'],
+                              'old_depfiles_planning_evidence_only':True}}
 
     def local_runtime_order_inputs(self, closure, contracts, records, producers):
         """Preserve runtime readiness when an external cut removes an ancestor.
@@ -752,7 +951,7 @@ class Graph:
             for handle in handles.values():
                 handle.close()
 
-    def rust_runtime_contracts(self, records, producers):
+    def rust_runtime_contracts(self, records, producers, metadata=None):
         """Resolve Rust crate searches from commands and declared producers.
 
         Soong exports transitive crate directories through ``-L`` while Ninja
@@ -764,13 +963,9 @@ class Graph:
         rust_edges = {edge for edge,record in records.items() if record['rule'] in known_rules}
         if not rust_edges:
             return {}
-        closure = {'edge_ids':sorted(rust_edges),'edge_count':len(rust_edges),
-                   'outputs':sorted(path for edge in rust_edges for path in records[edge]['outputs']),
-                   'phony_outputs':[],'leaf_inputs':[],'external_inputs':[]}
-        with tempfile.TemporaryDirectory(prefix='ninja-rust-contracts-') as temporary:
-            metadata = self.export_edges(closure,[],temporary)
-        commands = {producers[edge['outputs'][0]]:edge['command']
-                    for edge in metadata['edges'] if edge.get('command')}
+        metadata=self.native_metadata({edge:records[edge] for edge in rust_edges}) if metadata is None else metadata
+        commands={edge:record['command'] for edge,record in metadata.items()
+                  if edge in rust_edges and record.get('command')}
         tokens = {edge:shlex.split(command) for edge,command in commands.items()}
         crate_types = {edge:{kind for token in arguments if token.startswith('--crate-type=')
                               for kind in token.partition('=')[2].split(',')}
@@ -835,7 +1030,7 @@ class Graph:
                 contracts[edge] = sorted(required)
         return contracts
 
-    def shard(self, targets, destination, max_actions=4000, max_parallel=20, export=True):
+    def shard(self, targets, destination, max_actions=4000, max_parallel=20, export=True, out_root=None):
         """Pack DAG frontiers into waves; dependencies inside a job stay local.
 
         Phony aliases are expanded when scheduling and preserved inside each
@@ -845,7 +1040,13 @@ class Graph:
             raise ValueError('shard capacities must be positive')
         complete = self.closure(targets)
         records,producers = self.edge_records(complete['edge_ids'])
-        rust_contracts = self.rust_runtime_contracts(records,producers)
+        metadata=self.native_metadata(records)
+        rust_contracts = self.rust_runtime_contracts(records,producers,metadata)
+        include_contracts=self.generated_include_contracts(records,producers,out_root,metadata)
+        runtime_contracts={edge:sorted(set(rust_contracts.get(edge,[])) |
+                            set(include_contracts.get(edge,{}).get('required_headers',[])) |
+                            set(include_contracts.get(edge,{}).get('owned_dirs',[])))
+                           for edge in set(rust_contracts) | set(include_contracts)}
         actions = {edge for edge,record in records.items() if record['rule'] != 'phony'}
         aliases = {}
         visiting = set()
@@ -957,6 +1158,8 @@ class Graph:
                 runtime_inputs=sorted({path for edge in chosen for path in rust_contracts.get(edge,[])
                                        if path not in own_outputs})
                 imported.update(runtime_inputs)
+                imported.update(path for edge in chosen for path in runtime_contracts.get(edge,[])
+                                if path not in own_outputs)
                 for path in list(imported):
                     imported.update(records[producers[path]]['outputs'])
                 selected['external_inputs']=sorted(imported)
@@ -975,14 +1178,21 @@ class Graph:
                        'external_inputs':selected['external_inputs']}
                 if runtime_inputs:
                     job['rust_runtime_inputs'] = runtime_inputs
+                planned_metadata=[record for edge,record in metadata.items() if edge in chosen]
+                include_contract=self.generated_include_manifest_contract(planned_metadata,include_contracts,producers)
+                job['generated_include_contract']=include_contract
                 if export:
                     directory = Path(destination)/identity
-                    orders=self.local_runtime_order_inputs(selected,rust_contracts,records,producers)
+                    orders=self.local_runtime_order_inputs(selected,runtime_contracts,records,producers)
                     manifest = self.export_edges(selected,job_targets,directory,defer_validations=True,
                                                  runtime_order_inputs=orders)
+                    actual_contract=self.generated_include_manifest_contract(manifest['edges'],include_contracts,producers)
+                    if actual_contract != include_contract:
+                        raise ValueError('generated include metadata differs from its planned native actions')
+                    manifest['generated_include_contract']=actual_contract
                     if runtime_inputs:
                         manifest['rust_runtime_inputs'] = runtime_inputs
-                        (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+                    (directory/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
                     job['manifest'] = f'{identity}/manifest.json'
                 wave_jobs.append(job)
             waves.append(wave_jobs)

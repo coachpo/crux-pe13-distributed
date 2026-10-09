@@ -213,6 +213,54 @@ def response_context(command, response=None):
     return None
 
 
+def cpp_invocations(tokens):
+    names = {"clang", "clang++", "gcc", "g++", "cc", "c++", "header-abi-dumper", "clang-tidy"}
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name in names or (name == "ccache" and program + 1 < end and Path(tokens[program + 1]).name in names):
+            yield program, end
+
+
+def cpp_frontend(command, response=None):
+    tokens = command_tokens(command)
+    for program, end in cpp_invocations(tokens):
+        if response is None or any(token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+                                   for token in tokens[program + 1:end]):
+            return True
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:] and cpp_frontend(tokens[index + 1], response):
+                    return True
+    return False
+
+
+def rsp_callers(command, response):
+    tokens = command_tokens(command)
+    cpp_programs = {program for program, _ in cpp_invocations(tokens)}
+    callers = []
+    for program, end in command_invocations(tokens):
+        if any(token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+               for token in tokens[program + 1:end]):
+            name = Path(tokens[program]).name
+            if program in cpp_programs:
+                if name == "ccache":
+                    name = Path(tokens[program + 1]).name
+                dash = next((index for index in range(program + 1, end) if tokens[index] == "--"), None)
+                for index in range(program + 1, end):
+                    if tokens[index].startswith("@") and os.path.normpath(tokens[index][1:]) == os.path.normpath(response):
+                        after_dash = dash is not None and index > dash
+                        callers.append((name + " --" if name in {"header-abi-dumper", "clang-tidy"} and after_dash else name, True))
+            else:
+                callers.append((Path(tokens[program]).name, False))
+        if Path(tokens[program]).name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:]:
+                    callers.extend(rsp_callers(tokens[index + 1], response))
+    return list(dict.fromkeys(callers))
+
+
 class ActionTemporaries:
     """Literal outputs that become fresh at a specific point of one action."""
     def __init__(self, files=(), directories=(), inherited=None, barriers=()):
@@ -276,6 +324,39 @@ class Collector:
         self.assembler_scan_cache = set()
         self.proto_scan_cache = set()
         self.command_temporaries = None
+        self.cpp_reader = False
+        self.cpp_binding = False
+        self.generated_include_contract = manifest.get("generated_include_contract")
+        self.generated_include_roots = set()
+        self.generated_required_headers = set()
+        self.generated_processed_roots = set()
+        self.compiler_commands = set()
+        if self.generated_include_contract is not None:
+            contract = self.generated_include_contract
+            if contract.get("schema_version") != 1:
+                raise CapsuleError("Unsupported generated_include_contract schema")
+            self.generated_include_roots = {self.path(value) for value in contract.get("search_roots", [])}
+            self.generated_required_headers = {self.path(value) for value in contract.get("required_headers", [])}
+            if any(not beneath(path, self.out_root) for path in self.generated_include_roots | self.generated_required_headers):
+                raise CapsuleError("Generated compiler include contracts must stay under OUT")
+            for path in self.generated_required_headers:
+                if not self.produced(path):
+                    raise CapsuleError("Generated header contract has no selected producer or receipt import: %s" % path)
+            for value in contract.get("owned_dirs", []):
+                if self.path(value) not in self.output_dirs | self.external_dirs:
+                    raise CapsuleError("Generated include owned directory is not declared for transport: %s" % value)
+            for context in contract.get("compiler_contexts", []):
+                index = context.get("edge_index")
+                edges = manifest.get("edges", [])
+                if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                        or context.get("reader") != "c_cpp_frontend"
+                        or self.path(context.get("primary_output", "")) not in {self.path(path) for path in edges[index].get("outputs", [])}):
+                    raise CapsuleError("Invalid compiler_contexts edge binding")
+                if any(self.path(root) not in self.generated_include_roots for root in context.get("search_roots", [])):
+                    raise CapsuleError("Compiler context contains an unlisted generated include root")
+                if not cpp_frontend(edges[index]["command"]):
+                    raise CapsuleError("Compiler context is not a supported C/C++ frontend")
+                self.compiler_commands.add(edges[index]["command"])
         self.scan_cache = scan_cache if scan_cache is not None else set()
         self.digester = digester or digest
         self.selection_roots = None
@@ -454,6 +535,15 @@ class Collector:
 
     def include_directory(self, value, reason):
         path = self.path(value)
+        if self.generated_include_contract is not None and self.cpp_reader and beneath(path, self.out_root):
+            if path not in self.generated_include_roots:
+                self.errors.add("Compiler generated include root is absent from its contract: %s" % path)
+            elif path not in self.generated_processed_roots:
+                self.generated_processed_roots.add(path)
+                for header in self.generated_required_headers:
+                    if beneath(header, path):
+                        self.add(header, "compiler-generated-header-contract")
+            return
         if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
             return
         resolved = self.symlink_ancestors(path, reason)
@@ -897,17 +987,22 @@ class Collector:
         barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
         return ActionTemporaries(files, directories, inherited, barriers)
 
-    def command(self, command, context=None):
+    def command(self, command, context=None, cpp_reader=None):
         tokens = command_tokens(command)
         if context:
-            tokens.insert(0, context)
+            tokens = command_tokens(context) + tokens
         previous = self.command_temporaries
+        previous_reader = self.cpp_reader
+        previous_binding = self.cpp_binding
+        self.cpp_binding = previous_binding if cpp_reader is None else cpp_reader
         temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
         self.command_temporaries = temporary_outputs
         try:
             self.inspect_command(command, tokens, temporary_outputs)
         finally:
             self.command_temporaries = previous
+            self.cpp_reader = previous_reader
+            self.cpp_binding = previous_binding
 
     def inspect_command(self, command, tokens, temporary_outputs):
         tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
@@ -920,6 +1015,13 @@ class Collector:
         literal_tokens.update(self.semantic_operands(tokens, response_literals))
         source_invocations = {position for position, _ in command_invocations(tokens)
                               if tokens[position] in {".", "source"}}
+        compiler_positions = set()
+        for program, end in cpp_invocations(tokens):
+            start = program
+            tool = program + 1 if Path(tokens[program]).name == "ccache" else program
+            if Path(tokens[tool]).name in {"header-abi-dumper", "clang-tidy"}:
+                start = next((index + 1 for index in range(program + 1, end) if tokens[index] == "--"), end)
+            compiler_positions.update(range(start, end))
         for position, token in enumerate(tokens):
             if Path(token).name == "ln":
                 end = position + 1
@@ -983,6 +1085,7 @@ class Collector:
         index = 0
         while index < len(tokens):
             temporary_outputs.position = index
+            self.cpp_reader = self.cpp_binding and index in compiler_positions
             token = tokens[index]
             operand = command_operand(token)
             if operand and not operand.startswith("-") and self.path(operand) in temporary_outputs:
@@ -1075,16 +1178,24 @@ class Collector:
                 self.include_directory(path.parent, "source-local-headers")
             self.python_package(path)
             self.tool_package(path)
-        commands = [(command, None) for command in self.manifest.get("commands", [])]
+        commands = [(command, None, command in self.compiler_commands) for command in self.manifest.get("commands", [])]
         for edge in self.manifest.get("edges", []):
             if edge.get("command"):
-                commands.append((edge["command"], None))
+                commands.append((edge["command"], None, edge["command"] in self.compiler_commands))
             if edge.get("rspfile_content"):
                 context = response_context(edge.get("command", ""), edge.get("rspfile"))
-                if not context:
-                    commands.append((edge["rspfile_content"], None))
-        for command, context in dict.fromkeys(commands):
-            self.command(command, context)
+                callers = rsp_callers(edge.get("command", ""), edge.get("rspfile", ""))
+                if not callers and not context:
+                    callers = [(None, False)]
+                for reader, cpp_rsp in callers:
+                    # These callers expand their arguments inline. Another
+                    # reader of the same file still needs its own tool context.
+                    if reader in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"}:
+                        continue
+                    commands.append((edge["rspfile_content"], reader,
+                                     cpp_rsp and edge.get("command") in self.compiler_commands))
+        for command, context, cpp_reader in dict.fromkeys(commands):
+            self.command(command, context, cpp_reader)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         for value in dict.fromkeys(depfiles):

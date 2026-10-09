@@ -553,6 +553,157 @@ Path(args.o+'.d').write_text(args.o+': '+args.source+'\\n')
                     graph.Graph(db).shard(['final'],root/('export' if export else 'plan-only'),
                         max_actions=10,max_parallel=1,export=export)
 
+    def test_native_include_operands_keep_their_executable_and_response_context(self):
+        source='/fixture';out=source+'/out'
+        edge={'command':"/bin/bash -c 'echo \"clang -c -Iout/data\"; env -i MODE=compile "
+                        "ccache clang++ -c source.cc @out/compile.rsp'",
+              'rspfile':'out/compile.rsp',
+              'rspfile_content':'-Iout/include -isystem out/system -include out/config.h'}
+        self.assertEqual(graph.native_generated_include_roots(edge,source,out),{
+            'include_roots':[out+'/include',out+'/system'],'forced_files':[out+'/config.h']})
+        abi={'command':'header-abi-dumper -Iout/filter source.cc -- -Iout/actual'}
+        self.assertEqual(graph.native_generated_include_roots(abi,source,out),{
+            'include_roots':[out+'/actual'],'forced_files':[]})
+        for command in ('aproto -Iout/proto source.proto',
+                        'build_license_metadata @out/data.rsp',
+                        'header-abi-linker -Iout/filter @out/unknown.rsp',
+                        'clang -shared @out/unknown.rsp -Iout/link-only'):
+            with self.subTest(command=command):
+                self.assertEqual(graph.native_generated_include_roots({'command':command},source,out),
+                    {'include_roots':[],'forced_files':[]})
+        with self.assertRaisesRegex(ValueError,'unknown native compiler response file'):
+            graph.native_generated_include_roots({'command':'clang -c source.cc @unknown.rsp'},source,out)
+
+    def test_generated_header_readiness_survives_a_cold_shard_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();source=root/'source';source.mkdir()
+            (source/'main.c').write_text('#include <generated.h>\nint answer(void) { return GENERATED_VALUE; }\n')
+            (source/'build.ninja').write_text('rule header\n'
+                '  command = mkdir -p out/include && printf "#define GENERATED_VALUE 41\\n" > $out\n'
+                'rule ready\n  command = touch $out\n'
+                'rule g.cc.cc\n  command = cc -c $in -Iout/include -o $out -MMD -MF $out.d\n'
+                '  depfile = $out.d\n  deps = gcc\n'
+                'build out/include/generated.h: header\n'
+                'build out/headers.timestamp: ready out/include/generated.h\n'
+                'build out/main.o: g.cc.cc main.c || out/headers.timestamp\n')
+            db=root/'index.sqlite';graph.index_graph(source/'build.ninja',source,db)
+            indexed=graph.Graph(db)
+            plan=indexed.shard(['out/main.o'],root/'shards',max_actions=1,out_root=source/'out')
+            jobs=[j for wave in plan['waves'] for j in wave];consumer=jobs[-1]
+            self.assertEqual(consumer['external_inputs'],['out/headers.timestamp','out/include/generated.h'])
+            self.assertIn('out/include/generated.h',jobs[0]['export_outputs'])
+            manifest=json.loads((root/'shards'/consumer['manifest']).read_text())
+            contract=manifest['generated_include_contract']
+            self.assertEqual(contract['search_roots'],[str(source/'out/include')])
+            self.assertEqual(contract['required_headers'],['out/include/generated.h'])
+            self.assertEqual(contract['owned_dirs'],[])
+            self.assertEqual(contract['compiler_contexts'][0]['edge_index'],0)
+            self.assertTrue(contract['provenance']['native_flags_unchanged'])
+            self.assertEqual(manifest['edges'][0]['depfile'],'out/main.o.d')
+            plan_only=indexed.shard(['out/main.o'],root/'plan-only',max_actions=1,export=False,
+                                    out_root=source/'out')
+            compare=lambda p:[{k:j[k] for k in ('targets','depends_on','external_inputs',
+                'export_outputs','generated_include_contract')} for w in p['waves'] for j in w]
+            self.assertEqual(compare(plan_only),compare(plan))
+            if not shutil.which('ninja') or not shutil.which('cc'):
+                self.skipTest('native Ninja and C compiler are required for cold header validation')
+            native=subprocess.run(['ninja','-f','build.ninja','-t','commands','out/main.o'],
+                cwd=source,check=True,capture_output=True,text=True)
+            exported=[command for j in jobs for command in
+                json.loads((root/'shards'/j['manifest']).read_text())['commands']]
+            self.assertEqual(native.stdout.splitlines(),exported)
+            subprocess.run(['ninja','-f','build.ninja','out/headers.timestamp'],cwd=source,
+                check=True,capture_output=True,text=True)
+            archive=root/'headers.tar'
+            with tarfile.open(archive,'w') as output:
+                for path in consumer['external_inputs']:output.add(source/path,arcname=path)
+            # Recreate the recorded absolute source root, as independent workers do.
+            source.rename(root/'previous-worker');source.mkdir()
+            shutil.copy2(root/'previous-worker/main.c',source/'main.c')
+            with tarfile.open(archive) as output:output.extractall(source)
+            shutil.copytree(root/'shards'/consumer['id'],source/'.crux-task/graph')
+            cold=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','out/main.o'],
+                cwd=source,capture_output=True,text=True)
+            self.assertEqual(cold.returncode,0,cold.stdout+cold.stderr)
+            self.assertTrue((source/'out/main.o').is_file())
+
+    def test_stub_include_flags_do_not_import_a_stale_or_future_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            (root/'build.ninja').write_text('rule stub\n'
+                '  command = mkdir -p out/gen && printf "void symbol(void) {}\\n" > $out\n'
+                'rule header\n  command = mkdir -p out/future && touch $out\n'
+                'rule g.cc.cc\n  command = cc -c $in -Iout/future -o $out\n'
+                'build out/gen/stub.c: stub\n'
+                'build out/stub.o: g.cc.cc out/gen/stub.c\n'
+                'build out/future/unrelated.h: header out/stub.o\n')
+            (root/'out/future').mkdir(parents=True)
+            (root/'out/future/old-unselected.h').write_text('old output must not become an input')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            for targets in (['out/stub.o'],['out/future/unrelated.h']):
+                with self.subTest(targets=targets):
+                    destination=root/('unselected' if len(targets)==1 and targets[0]=='out/stub.o' else 'future')
+                    plan=graph.Graph(db).shard(targets,destination,max_actions=1,out_root=root/'out')
+                    job=next(j for wave in plan['waves'] for j in wave if 'out/stub.o' in j['targets'])
+                    manifest=json.loads((destination/job['manifest']).read_text())
+                    contract=manifest['generated_include_contract']
+                    self.assertEqual(contract['search_roots'],[str(root/'out/future')])
+                    self.assertEqual(contract['required_headers'],[])
+                    self.assertEqual(contract['owned_dirs'],[])
+                    self.assertEqual(job['external_inputs'],['out/gen/stub.c'])
+            if shutil.which('ninja') and shutil.which('cc'):
+                shutil.rmtree(root/'out/future')
+                subprocess.run(['ninja','-f','build.ninja','out/gen/stub.c'],cwd=root,
+                    check=True,capture_output=True,text=True)
+                result=subprocess.run(['ninja','-f','unselected/'+job['id']+'/build.ninja','out/stub.o'],
+                    cwd=root,capture_output=True,text=True)
+                # The raw stub command tolerates the absent inherited include directory.
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_reviewed_generated_tree_is_bound_to_its_ancestor_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            (root/'build.ninja').write_text('rule generate\n'
+                '  command = mkdir -p out/gen && printf payload > out/gen/generated.h && touch $out\n'
+                'rule g.cc.cc\n  command = cc -c source.c -Iout/gen -o $out\n'
+                'build out/stamp: generate\nbuild out/result.o: g.cc.cc || out/stamp\n')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            graph.augment_graph(db,{'side_output_dirs':[{'producer':'out/stamp','dirs':['out/gen'],
+                'rationale':'generator owns the complete generated include tree',
+                'evidence':['generator recipe:1']}]})
+            plan=graph.Graph(db).shard(['out/result.o'],root/'shards',max_actions=1,out_root=root/'out')
+            producer,consumer=(wave[0] for wave in plan['waves'])
+            self.assertIn('out/gen',producer['export_outputs'])
+            self.assertEqual(consumer['external_inputs'],['out/gen','out/stamp'])
+            self.assertEqual(consumer['generated_include_contract']['owned_dirs'],['out/gen'])
+
+    def test_retained_header_stamp_keeps_a_local_header_ready_after_a_cut(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            (root/'main.c').write_text('#include <generated.h>\nint value(void) { return VALUE; }\n')
+            (root/'build.ninja').write_text('rule header\n'
+                '  command = mkdir -p out/include && printf "#define VALUE 7\\n" > $out\n'
+                'rule ready\n  command = touch $out\n'
+                'rule g.cc.cc\n  command = cc -c $in -Iout/include -o $out\n'
+                'build out/include/generated.h: header\n'
+                'build out/stamp: ready out/include/generated.h\n'
+                'build out/result.o: g.cc.cc main.c || out/stamp\n')
+            (root/'out').mkdir();(root/'out/stamp').write_text('retained readiness')
+            db=root/'index.sqlite';graph.index_graph(root/'build.ninja',root,db)
+            indexed=graph.Graph(db)
+            manifest=indexed.slice(['out/result.o','out/include/generated.h'],root/'.crux-task/graph',
+                external=['out/stamp'],out_root=root/'out')
+            self.assertEqual(manifest['external_inputs'],['out/stamp'])
+            self.assertEqual(manifest['generated_include_contract']['required_headers'],
+                ['out/include/generated.h'])
+            self.assertEqual(list(manifest['runtime_order_inputs'].values()),[['out/include/generated.h']])
+            self.assertEqual(next(e for e in manifest['edges'] if e['rule']=='g.cc.cc')['command'],
+                'cc -c main.c -Iout/include -o out/result.o')
+            if shutil.which('ninja') and shutil.which('cc'):
+                native=subprocess.run(['ninja','-f','.crux-task/graph/build.ninja','-j1',
+                    'out/result.o','out/include/generated.h'],cwd=root,capture_output=True,text=True)
+                self.assertEqual(native.returncode,0,native.stdout+native.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
