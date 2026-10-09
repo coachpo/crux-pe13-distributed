@@ -19,6 +19,122 @@ class SchedulerTests(unittest.TestCase):
         return {'name': f'compile ({identity}, remote-source-profile.json, capsule.tar.zst',
                 'status': 'completed', 'conclusion': conclusion}
 
+    def supersession_fixture(self, root):
+        revision, legacy = 'a' * 40, 'b' * 40
+        context = {'source_root': '/source', 'out_root': '/out'}
+        path = '/out/generated/version.txt'
+        state = {'worker_sha': revision, 'accepted_worker_commits': [revision, legacy],
+                 'task_runs': {}, 'dependency_supersession_admission': {
+                     'approved': True, 'worker_commits': [revision], **context,
+                     'allowed_paths': [path], 'receipts': {}}}
+        endpoints = {}
+        for index, (role, content, worker) in enumerate([('old', b'', legacy), ('new', b'1791434921', revision)]):
+            binding = {'id': role, 'run_id': index + 101, 'artifact': 'shard-' + role,
+                       'expected_worker_commit': worker, 'expected_manifest_sha256': str(index + 1) * 64}
+            member = {'path': path, 'type': 'file', 'mode': 0o664, 'size': len(content),
+                      'sha256': hashlib.sha256(content).hexdigest()}
+            receipt = {'schema_version': 1, 'status': 'success', 'id': role,
+                       'run_id': str(binding['run_id']), 'worker_commit': worker,
+                       'manifest_sha256': binding['expected_manifest_sha256'], **context,
+                       'archive_sha256': str(index + 3) * 64, 'outputs': [member]}
+            receipt_path, proof_path = root / (role + '-receipt.json'), root / (role + '-proof.json')
+            receipt_path.write_text(json.dumps(receipt))
+            proof = {key: receipt[key] for key in ('status', 'id', 'run_id', 'worker_commit',
+                     'manifest_sha256', 'source_root', 'out_root', 'archive_sha256')}
+            proof.update(receipt_sha256=scheduler.digest(receipt_path),
+                         all_member_bytes_types_modes_match_receipt=True)
+            proof_path.write_text(json.dumps(proof))
+            state['task_runs'][role] = {'run_id': binding['run_id'], 'headSha': worker,
+                'manifest_sha256': binding['expected_manifest_sha256'], 'artifact': binding['artifact'],
+                'conclusion': 'success'}
+            state['dependency_supersession_admission']['receipts'][role] = {
+                'verified': True, 'binding': binding,
+                'receipt': {'path': str(receipt_path), 'sha256': scheduler.digest(receipt_path)},
+                'verification': {'path': str(proof_path), 'sha256': scheduler.digest(proof_path)}}
+            endpoints[role] = {'binding': binding, 'receipt_sha256': scheduler.digest(receipt_path),
+                               'member': member}
+        declaration = {'approved': True, 'path': path, **endpoints, 'reason': 'Admitted cold frontend correction'}
+        state['input_corrections'] = {'task': {'approved': True, 'dependency_supersessions': [declaration]}}
+        task = {'id': 'task', 'capsule_assets': ['task.tar.zst'],
+                'dependencies': [endpoints[role]['binding'] for role in ('old', 'new')]}
+        return state, task, context, declaration
+
+    def test_supersession_control_retains_exact_proof_and_success_lineage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, task, context, declaration = self.supersession_fixture(root)
+            corrected = scheduler.apply_input_correction(state, task, context=context)
+            self.assertEqual(corrected['dependency_supersessions'], [declaration])
+            self.assertEqual(corrected['dependencies'], task['dependencies'])
+            self.assertNotIn('dependency_supersessions', task)
+            run = {'run_id': 201, 'url': 'https://github.com/run/201', 'headSha': state['worker_sha'],
+                   'jobs': [self.compile_job('task', 'success')],
+                   'input_corrections': state['input_corrections']}
+            scheduler.record_successful_tasks(state, {'id': 1, 'tasks': [task]}, run)
+            self.assertEqual(state['task_runs']['task']['dependency_supersessions'], [declaration])
+
+    def test_supersession_is_admitted_before_dispatch_and_saved_in_wave_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, task, context, declaration = self.supersession_fixture(root)
+            task['dependencies'] = [{'wave': 0, 'shard': role} for role in ('old', 'new')]
+            graph = root / 'graph-plan.json'
+            graph.write_text('{}')
+            plan_path, state_path = root / 'plan.json', root / 'state.json'
+            plan_path.write_text(json.dumps({'schema_version': 2, 'source_root': context['source_root'],
+                'preparation': {'out_root': context['out_root'],
+                    'graph_plan': {'path': str(graph), 'sha256': scheduler.digest(graph)}},
+                'waves': [{'id': 1, 'tasks': [task]}]}))
+            original_plan = plan_path.read_bytes()
+            state.update(repo='owner/project', tag='inputs', worker_ref='fixed-worker', runs={},
+                         plan_sha256=scheduler.digest(plan_path))
+            state_path.write_text(json.dumps(state))
+            argv = ['scheduler', '--plan', str(plan_path), '--state', str(state_path),
+                    '--repo', 'owner/project', '--tag', 'inputs']
+            with patch.object(sys, 'argv', argv), patch.object(scheduler, 'gh', return_value=state['worker_sha']), \
+                    patch.object(scheduler, 'dispatch', return_value={'databaseId': 201,
+                        'url': 'https://github.com/run/201', 'headSha': state['worker_sha']}), \
+                    patch.object(scheduler, 'wait', return_value={'conclusion': 'success',
+                        'jobs': [self.compile_job('task', 'success')]}):
+                scheduler.main()
+            control = json.loads((root / 'wave-1.json').read_text())['include'][0]
+            self.assertEqual(control['dependency_supersessions'], [declaration])
+            self.assertEqual(control['dependencies'], [declaration[role]['binding'] for role in ('old', 'new')])
+            self.assertEqual(json.loads(state_path.read_text())['task_runs']['task']['dependency_supersessions'],
+                             [declaration])
+            self.assertEqual(plan_path.read_bytes(), original_plan)
+
+    def test_supersession_admission_rejects_unbuilt_or_unbound_replacements_and_legacy_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for change, message in [
+                (lambda s, t, c, d: s['task_runs']['new'].update(conclusion='failure'), 'canonical successful'),
+                (lambda s, t, c, d: d['new']['binding'].update(expected_manifest_sha256='f' * 64), 'canonical successful'),
+                (lambda s, t, c, d: d['new']['binding'].update(run_id=None), 'complete producer binding'),
+                (lambda s, t, c, d: t['dependencies'].pop(), 'ordinary dependencies'),
+                (lambda s, t, c, d: t['dependencies'].append(t['dependencies'][1]), 'ordinary dependencies'),
+                (lambda s, t, c, d: s.update(worker_sha='b' * 40), 'capable worker'),
+                (lambda s, t, c, d: c.update(out_root='/other'), 'consumer source/OUT'),
+                (lambda s, t, c, d: s['dependency_supersession_admission']['receipts']['new'].update(verified=False), 'verified receipt evidence')]:
+                state, task, context, declaration = self.supersession_fixture(Path(directory))
+                change(state, task, context, declaration)
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    scheduler.apply_input_correction(state, task, context=context)
+
+    def test_supersession_admission_rejects_scope_member_and_frozen_evidence_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for change, message in [
+                (lambda s, t, c, d: d.update(path='/out/generated'), 'exact regular OUT file'),
+                (lambda s, t, c, d: d.update(path='/out/generated/*'), 'exact regular OUT file'),
+                (lambda s, t, c, d: d['new']['member'].update(type='symlink'), 'exact verified regular member'),
+                (lambda s, t, c, d: d['new']['member'].update(sha256='f' * 64), 'exact verified regular member'),
+                (lambda s, t, c, d: d['new'].update(receipt_sha256='f' * 64), 'verification identity'),
+                (lambda s, t, c, d: s['input_corrections']['task']['dependency_supersessions'].append(d), 'exact regular OUT file'),
+                (lambda s, t, c, d: (Path(s['dependency_supersession_admission']['receipts']['new']['verification']['path']).write_text('{}')), 'Frozen input changed')]:
+                state, task, context, declaration = self.supersession_fixture(Path(directory))
+                change(state, task, context, declaration)
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    scheduler.apply_input_correction(state, task, context=context)
+
     def test_partial_wave_retry_preserves_successes_and_uses_each_producer_run(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -453,6 +569,77 @@ class SchedulerTests(unittest.TestCase):
                    'jobs': [self.compile_job('task', 'success')], 'input_corrections': {'task': correction}}
             scheduler.record_successful_tasks(state, {'id': 0, 'tasks': [task]}, run)
             self.assertEqual(state['task_runs']['task']['manifest_sha256'], final['manifest_sha256'])
+
+    def source_augmentation_fixture(self, root):
+        task, plan, base, final, graph_envelope, correction = self.graph_overlay_fixture(root)
+        added = {'path': '/source/schema-included.fbs', 'type': 'file', 'mode': 0o644,
+                 'size': 157, 'sha256': 'c' * 64, 'reasons': ['flatbuffers-recursive-include']}
+        augmented = json.loads(json.dumps(final))
+        augmented['files'].append(added)
+        final_path = root / 'augmented-bundle.json'
+        final_path.write_text(json.dumps(augmented))
+        final_sha = scheduler.digest(final_path)
+        envelope = {'schema_version': 1, 'kind': 'source-bundle-augmentation',
+            'baseline': graph_envelope['final'],
+            'final': {'manifest_sha256': final['manifest_sha256'], 'metadata_path': str(final_path),
+                      'metadata_sha256': final_sha, 'bundle_sha256': final_sha},
+            'added_source_specs': [added],
+            'source_identity': {'base_source_specs_preserved': True,
+                                'new_source_paths': [added['path']], 'changed_source_paths': []},
+            'changed_members': [
+                {'path': added['path'], 'type': 'file', 'mode': added['mode'], 'size': added['size'],
+                 'baseline_sha256': None, 'final_sha256': added['sha256']},
+                {'path': '/source/.crux-task/graph/bundle.json', 'type': 'file', 'mode': 0o644,
+                 'size': final_path.stat().st_size, 'baseline_sha256': graph_envelope['final']['bundle_sha256'],
+                 'final_sha256': final_sha}],
+            'archive': {'name': 'source-augmentation.tar.zst', 'size': 5, 'sha256': 'e' * 64}}
+        envelope_path = root / 'source-envelope.json'
+        envelope_path.write_text(json.dumps(envelope))
+        correction['source_bundle_augmentation'] = {
+            'verified': True, 'approved_added_source_specs': [added],
+            'proof': correction['variant_provenance']['proof'],
+            'envelope': {'path': str(envelope_path), 'sha256': scheduler.digest(envelope_path)},
+            'parts': [{'name': 'source-augmentation.tar.zst', 'size': 5, 'sha256': 'e' * 64,
+                       'uploaded': True, 'api_size': 5, 'api_digest': 'sha256:' + 'e' * 64}]}
+        state = {'input_corrections': {'task': correction}, 'worker_sha': 'a' * 40}
+        return task, plan, state, correction, envelope, augmented
+
+    def test_source_augmentation_preserves_primary_and_restores_after_graph_overlay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, state, correction, envelope, augmented = self.source_augmentation_fixture(root)
+            prepared = scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            control = scheduler.apply_input_correction(state, prepared, task)
+            self.assertEqual(control['source_overlays'], [{'assets': ['earlier-source-overlay.tar.zst']},
+                {'assets': ['graph-overlay.tar.zst']}, {'assets': ['source-augmentation.tar.zst']}])
+            self.assertEqual(state['inputs']['task']['effective_bundle_sha256'], envelope['final']['bundle_sha256'])
+            self.assertIn('/source/schema-included.fbs', state['frozen_inputs'])
+            self.assertEqual(state['inputs']['task']['metadata_sha256'], correction['primary_input']['metadata']['sha256'])
+            self.assertEqual(state['inputs']['task']['manifest_sha256'], augmented['manifest_sha256'])
+
+    def test_source_augmentation_rejects_unprepared_control_unverified_assets_and_changed_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task, plan, state, correction, envelope, augmented = self.source_augmentation_fixture(root)
+            descriptor = correction['source_bundle_augmentation']
+            prepared = {'id': 'task', 'capsule_assets': [correction['primary_input']['parts'][0]['name']]}
+            correction.pop('graph_bundle_overlay')
+            with self.assertRaisesRegex(ValueError, 'augmentation has not been prepared'):
+                scheduler.apply_input_correction(state, prepared, task)
+            task, plan, state, correction, envelope, augmented = self.source_augmentation_fixture(root)
+            descriptor = correction['source_bundle_augmentation']
+            descriptor['parts'][0]['uploaded'] = False
+            with self.assertRaisesRegex(ValueError, 'not API verified'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
+            descriptor['parts'][0]['uploaded'] = True
+            augmented['files'][1]['sha256'] = '0' * 64
+            Path(envelope['final']['metadata_path']).write_text(json.dumps(augmented))
+            new_sha = scheduler.digest(envelope['final']['metadata_path'])
+            envelope['final'].update(metadata_sha256=new_sha, bundle_sha256=new_sha)
+            Path(descriptor['envelope']['path']).write_text(json.dumps(envelope))
+            descriptor['envelope']['sha256'] = scheduler.digest(descriptor['envelope']['path'])
+            with self.assertRaisesRegex(ValueError, 'preserve and append exact approved specs'):
+                scheduler.prepare_task(plan, task, state, root / 'state.json', 'owner/project', 'inputs')
 
     def test_graph_overlay_rejects_source_changes_unverified_asset_and_unprepared_control(self):
         with tempfile.TemporaryDirectory() as directory:

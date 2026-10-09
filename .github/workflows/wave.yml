@@ -217,6 +217,10 @@ jobs:
                      '--bundle', str(source / '.crux-task/graph/bundle.json'),
                      '--output-dir', str(staging / 'result'), '--jobs', '4',
                      '--dependency-bindings', str(bindings)]
+          if 'dependency_supersessions' in task:
+              supersessions = staging / 'result/dependency-supersessions.json'
+              supersessions.write_text(json.dumps(task['dependency_supersessions'], indent=2) + '\n')
+              command += ['--dependency-supersessions', str(supersessions)]
           for index, dependency in enumerate(task.get('dependencies', [])):
               command += ['--dependency-dir', str(staging / 'dependencies' / str(index))]
           raise SystemExit(subprocess.run(command).returncode)

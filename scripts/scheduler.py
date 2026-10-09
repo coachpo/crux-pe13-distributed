@@ -9,6 +9,7 @@ import copy
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -119,6 +120,9 @@ def record_successful_tasks(state, wave, run):
                 producer[target] = job[source]
         if identity in run.get('input_corrections', {}):
             producer['input_correction'] = copy.deepcopy(run['input_corrections'][identity])
+            if 'dependency_supersessions' in producer['input_correction']:
+                producer['dependency_supersessions'] = copy.deepcopy(
+                    producer['input_correction']['dependency_supersessions'])
         state.setdefault('task_runs', {})[identity] = producer
         changed = True
     return changed
@@ -171,7 +175,112 @@ def waiting_for_inputs(state, state_path, wave):
     say('Wave ' + str(wave['id']) + ' successful subset retained; waiting for remaining inputs.')
 
 
-def apply_input_correction(state, task, original_task=None, verify_proof=True):
+def dependency_binding_key(binding):
+    fields = {'id', 'run_id', 'artifact', 'expected_worker_commit', 'expected_manifest_sha256'}
+    if not isinstance(binding, dict) or set(binding) != fields \
+            or not isinstance(binding.get('id'), str) \
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', binding['id']) \
+            or binding['artifact'] != 'shard-' + binding['id'] \
+            or not str(binding['run_id']).isdigit() or int(binding['run_id']) <= 0 \
+            or not re.fullmatch(r'[a-f0-9]{40}', str(binding['expected_worker_commit'])) \
+            or not re.fullmatch(r'[a-f0-9]{64}', str(binding['expected_manifest_sha256'])):
+        raise ValueError('Supersession endpoint has no complete producer binding')
+    return tuple(str(binding[field]) for field in sorted(fields))
+
+
+def admitted_dependency_supersessions(state, task, declarations, context):
+    """Admit only pinned, independently verified producer members and an approved worker."""
+    if not isinstance(declarations, list):
+        raise ValueError('Dependency supersessions must be an explicit array')
+    if not declarations:
+        return []
+    policy = state.get('dependency_supersession_admission', {})
+    if not isinstance(policy, dict):
+        raise ValueError('Dependency supersessions require an explicitly admitted capable worker')
+    workers = policy.get('worker_commits', [])
+    if policy.get('approved') is not True or not isinstance(workers, list) or not workers \
+            or any(not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha) for sha in workers) \
+            or state.get('worker_sha') not in workers:
+        raise ValueError('Dependency supersessions require an explicitly admitted capable worker')
+    validate_worker(state, state['worker_sha'], 'Supersession consumer')
+    if not context or any(not isinstance(context.get(field), str) or not Path(context[field]).is_absolute()
+                          or context[field] != os.path.abspath(context[field])
+                          or policy.get(field) != context[field] for field in ('source_root', 'out_root')):
+        raise ValueError('Supersession admission differs from consumer source/OUT context')
+    allowed = policy.get('allowed_paths', [])
+    if not isinstance(allowed, list) or any(not isinstance(path, str) for path in allowed) \
+            or len(set(allowed)) != len(allowed):
+        raise ValueError('Invalid explicitly admitted supersession path scope')
+    receipts = policy.get('receipts', {})
+    if not isinstance(receipts, dict):
+        raise ValueError('Supersession endpoint lacks independently verified receipt evidence')
+    dependencies = [dependency_binding_key(dep) for dep in task.get('dependencies', [])]
+    seen = set()
+    for declaration in declarations:
+        if not isinstance(declaration, dict) or declaration.get('approved') is not True \
+                or not isinstance(declaration.get('reason'), str) or not declaration['reason'].strip():
+            raise ValueError('Dependency supersession lacks explicit approval/reason')
+        path = declaration.get('path')
+        if not isinstance(path, str) or path not in allowed or path != os.path.abspath(path) \
+                or any(char in path for char in '*?[]') or path in seen \
+                or not Path(path).is_relative_to(context['out_root']) or path == context['out_root']:
+            raise ValueError('Supersession must name one admitted exact regular OUT file')
+        seen.add(path)
+        endpoints = []
+        for role in ('old', 'new'):
+            endpoint = declaration.get(role, {})
+            binding = endpoint.get('binding') if isinstance(endpoint, dict) else None
+            key = dependency_binding_key(binding)
+            if dependencies.count(key) != 1:
+                raise ValueError('Supersession endpoint must occur exactly once in ordinary dependencies')
+            producer = successful_task(state, binding['id'])
+            if not producer or dependency_binding_key({
+                    'id': binding['id'], 'run_id': producer.get('run_id'),
+                    'artifact': producer.get('artifact'), 'expected_worker_commit': producer.get('headSha'),
+                    'expected_manifest_sha256': producer.get('manifest_sha256')}) != key:
+                raise ValueError('Supersession endpoint differs from canonical successful binding')
+            evidence = receipts.get(binding['id'], {})
+            if not isinstance(evidence, dict) or evidence.get('verified') is not True \
+                    or dependency_binding_key(evidence.get('binding')) != key:
+                raise ValueError('Supersession endpoint lacks independently verified receipt evidence')
+            for field in ('receipt', 'verification'):
+                spec = evidence.get(field, {})
+                if not isinstance(spec, dict) or not Path(spec.get('path', '')).is_absolute() \
+                        or not re.fullmatch(r'[a-f0-9]{64}', str(spec.get('sha256'))):
+                    raise ValueError('Supersession endpoint lacks frozen ' + field + ' evidence')
+                validate_frozen_file(spec)
+            receipt = json.loads(Path(evidence['receipt']['path']).read_text())
+            verification = json.loads(Path(evidence['verification']['path']).read_text())
+            expected = {'id': binding['id'], 'run_id': str(binding['run_id']),
+                        'worker_commit': binding['expected_worker_commit'],
+                        'manifest_sha256': binding['expected_manifest_sha256'], **context}
+            if receipt.get('schema_version') != 1 or receipt.get('status') != 'success' \
+                    or verification.get('status') != 'success' \
+                    or verification.get('all_member_bytes_types_modes_match_receipt') is not True \
+                    or any(str(receipt.get(field)) != value or str(verification.get(field)) != value
+                           for field, value in expected.items()) \
+                    or endpoint.get('receipt_sha256') != evidence['receipt']['sha256'] \
+                    or verification.get('receipt_sha256') != evidence['receipt']['sha256'] \
+                    or not re.fullmatch(r'[a-f0-9]{64}', str(receipt.get('archive_sha256'))) \
+                    or verification.get('archive_sha256') != receipt['archive_sha256'] \
+                    or ('archive_sha256' in endpoint and endpoint['archive_sha256'] != receipt['archive_sha256']):
+                raise ValueError('Supersession endpoint receipt/member verification identity mismatch')
+            member = endpoint.get('member', {})
+            matches = [item for item in receipt.get('outputs', []) if item.get('path') == path]
+            if not isinstance(member, dict) or set(member) != {'path', 'type', 'mode', 'size', 'sha256'} \
+                    or member.get('path') != path or member.get('type') != 'file' \
+                    or type(member.get('mode')) is not int or not 0 <= member['mode'] <= 0o7777 \
+                    or type(member.get('size')) is not int or member['size'] < 0 \
+                    or not re.fullmatch(r'[a-f0-9]{64}', str(member.get('sha256'))) \
+                    or matches != [member]:
+                raise ValueError('Supersession endpoint does not pin its exact verified regular member')
+            endpoints.append(key)
+        if endpoints[0] == endpoints[1]:
+            raise ValueError('Supersession old/new producer bindings must differ')
+    return copy.deepcopy(declarations)
+
+
+def apply_input_correction(state, task, original_task=None, verify_proof=True, context=None):
     correction = state.get('input_corrections', {}).get(task['id'])
     if not correction:
         return task
@@ -224,6 +333,9 @@ def apply_input_correction(state, task, original_task=None, verify_proof=True):
             dependencies.append(dict(dependency))
             bound[identity] = dependency
         result['dependencies'] = dependencies
+    if 'dependency_supersessions' in correction:
+        result['dependency_supersessions'] = admitted_dependency_supersessions(
+            state, result, correction['dependency_supersessions'], context)
     if 'graph_bundle_overlay' in correction:
         record = state.get('inputs', {}).get(task['id'], {})
         primary = correction.get('primary_input', {})
@@ -236,6 +348,14 @@ def apply_input_correction(state, task, original_task=None, verify_proof=True):
             raise ValueError('Graph bundle overlay has not been prepared against this primary input: ' + task['id'])
         layer = {'assets': [part['name'] for part in correction['graph_bundle_overlay']['parts']]}
         result['source_overlays'] = [*result.get('source_overlays', []), layer]
+    if 'source_bundle_augmentation' in correction:
+        record = state.get('inputs', {}).get(task['id'], {})
+        descriptor = correction['source_bundle_augmentation']
+        if record.get('source_bundle_augmentation') != descriptor or record.get('uploaded') is not True \
+                or task.get('capsule_assets') != [part['name'] for part in record.get('parts', [])]:
+            raise ValueError('Source bundle augmentation has not been prepared: ' + task['id'])
+        result['source_overlays'] = [*result.get('source_overlays', []),
+                                     {'assets': [part['name'] for part in descriptor['parts']]}]
     return result
 
 
@@ -383,6 +503,77 @@ def graph_bundle_overlay(plan, task, correction, base, primary, variant):
     return metadata, {'path': str(final_path), 'sha256': final_sha}
 
 
+def source_bundle_augmentation(task, descriptor, base, base_spec):
+    """Append explicitly approved source specs without changing frozen source or graph bytes."""
+    if descriptor.get('verified') is not True or base_spec is None:
+        raise ValueError('Source augmentation requires a verified current inline bundle')
+    for field in ('envelope', 'proof'):
+        spec = descriptor.get(field, {})
+        if not Path(spec.get('path', '')).is_absolute() \
+                or not re.fullmatch(r'[a-f0-9]{64}', str(spec.get('sha256'))):
+            raise ValueError('Source augmentation lacks frozen ' + field + ' evidence')
+        validate_frozen_file(spec)
+    envelope = json.loads(Path(descriptor['envelope']['path']).read_text())
+    baseline, final = envelope['baseline'], envelope['final']
+    if envelope.get('schema_version') != 1 or envelope.get('kind') != 'source-bundle-augmentation' \
+            or not Path(baseline.get('metadata_path', '')).is_absolute() \
+            or Path(baseline['metadata_path']).resolve() != Path(base_spec['path']).resolve() \
+            or baseline.get('metadata_sha256') != base_spec['sha256'] \
+            or baseline.get('bundle_sha256') != base_spec['sha256'] \
+            or baseline.get('manifest_sha256') != base['manifest_sha256']:
+        raise ValueError('Source augmentation baseline differs from current verified bundle')
+    spec = {'path': final['metadata_path'], 'sha256': final['metadata_sha256']}
+    if not Path(spec['path']).is_absolute():
+        raise ValueError('Source augmentation final bundle path must be absolute')
+    validate_frozen_file(spec)
+    final_bytes = Path(spec['path']).read_bytes()
+    metadata = json.loads(final_bytes)
+    counters = {'input_bytes', 'task_archive_input_bytes', 'file_count'}
+    if final.get('bundle_sha256') != spec['sha256'] \
+            or final.get('manifest_sha256') != base['manifest_sha256'] \
+            or {key: value for key, value in metadata.items() if key not in counters | {'files'}} != {
+                key: value for key, value in base.items() if key not in counters | {'files'}}:
+        raise ValueError('Source augmentation changes existing bundle/graph context')
+    added = descriptor.get('approved_added_source_specs')
+    if not isinstance(added, list) or not added or added != envelope.get('added_source_specs') \
+            or metadata['files'] != [*base['files'], *added]:
+        raise ValueError('Source augmentation does not preserve and append exact approved specs')
+    source, runtime = Path(base['source_root']), Path(base['slice_path'])
+    paths = {item['path'] for item in base['files']}
+    for item in added:
+        path = Path(item['path'])
+        if not path.is_absolute() or str(path) != os.path.abspath(path) \
+                or not path.is_relative_to(source) or path.is_relative_to(runtime) \
+                or path.is_relative_to(base['out_root']) or item['path'] in paths \
+                or item.get('type') != 'file' or type(item.get('mode')) is not int \
+                or not 0 <= item['mode'] <= 0o7777 or type(item.get('size')) is not int or item['size'] < 0 \
+                or not re.fullmatch(r'[a-f0-9]{64}', str(item.get('sha256'))) \
+                or 'task-graph' in item.get('reasons', []):
+            raise ValueError('Source augmentation adds an invalid or non-source regular file')
+        paths.add(item['path'])
+    for counter in counters:
+        increment = len(added) if counter == 'file_count' else sum(item['size'] for item in added)
+        if counter in base or counter in metadata:
+            if type(base.get(counter)) is not int or metadata.get(counter) != base[counter] + increment:
+                raise ValueError('Source augmentation counters differ from exact added source scope')
+    identity = envelope.get('source_identity', {})
+    if identity.get('base_source_specs_preserved') is not True \
+            or identity.get('new_source_paths') != [item['path'] for item in added] \
+            or identity.get('changed_source_paths') != []:
+        raise ValueError('Source augmentation preservation proof differs from approved source scope')
+    bundle_path = str(runtime / 'bundle.json')
+    expected = [{'path': item['path'], 'type': 'file', 'mode': item['mode'], 'size': item['size'],
+                 'baseline_sha256': None, 'final_sha256': item['sha256']} for item in added]
+    expected.append({'path': bundle_path, 'type': 'file', 'mode': 0o644, 'size': len(final_bytes),
+                     'baseline_sha256': base_spec['sha256'], 'final_sha256': spec['sha256']})
+    members = envelope.get('changed_members', [])
+    if len(members) != len(expected) or {item['path']: item for item in members} != {
+            item['path']: item for item in expected}:
+        raise ValueError('Source augmentation payload differs from exact source/bundle members')
+    verified_parts(envelope['archive'], descriptor['parts'], 'Source augmentation')
+    return metadata, spec
+
+
 def prepare_primary_variant(plan, task, correction, state, state_path):
     variant, original = correction_manifest(task, correction, verify_proof=True)
     if not original:
@@ -416,6 +607,9 @@ def prepare_primary_variant(plan, task, correction, state, state_path):
         effective, effective_spec = graph_bundle_overlay(plan, task, correction, metadata, primary, variant)
     elif primary['manifest_sha256'] != variant:
         raise ValueError('Approved primary input has a different final manifest identity: ' + task['id'])
+    if 'source_bundle_augmentation' in correction:
+        effective, effective_spec = source_bundle_augmentation(
+            task, correction['source_bundle_augmentation'], effective, effective_spec)
     current = checked_source_inputs(state, effective)
     record = {'status': 'ready', 'uploaded': True, 'primary_variant': True,
               'archive_sha256': primary['archive_sha256'], 'metadata': spec['path'],
@@ -426,6 +620,8 @@ def prepare_primary_variant(plan, task, correction, state, state_path):
         record.update(primary_manifest_sha256=primary['manifest_sha256'], effective_metadata=effective_spec,
                       effective_bundle_sha256=effective_spec['sha256'],
                       graph_bundle_overlay=copy.deepcopy(correction['graph_bundle_overlay']))
+    if 'source_bundle_augmentation' in correction:
+        record['source_bundle_augmentation'] = copy.deepcopy(correction['source_bundle_augmentation'])
     frozen = state.setdefault('frozen_inputs', {})
     changed = any(path not in frozen for path in current)
     frozen.update(current)
@@ -644,7 +840,9 @@ def main():
             prepared = prepare_task(plan, task, state, state_path, args.repo, args.tag)
             correction = state.get('input_corrections', {}).get(task['id'], {})
             prepared = apply_input_correction(state, {**prepared, 'dependencies': dependencies}, task,
-                                              verify_proof='primary_input' not in correction)
+                                              verify_proof='primary_input' not in correction,
+                                              context={'source_root': plan.get('source_root'),
+                                                       'out_root': plan.get('preparation', {}).get('out_root')})
             tasks.append(prepared)
         if not tasks and wave['tasks']:
             if not all(successful_task(state, task['id']) for task in wave['tasks']):
