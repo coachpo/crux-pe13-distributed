@@ -10,8 +10,7 @@ jobs:
     steps:
       - name: Record disk space before cleanup
         run: |
-          mkdir -p probe
-          df -B1 > probe/disks-before-cleanup.txt
+          df -B1 > "$RUNNER_TEMP/disks-before-cleanup.txt"
       - name: Free disk space
         continue-on-error: true
         uses: AdityaGarg8/remove-unwanted-software@v5
@@ -29,6 +28,7 @@ jobs:
       - name: Record actual standard runner resources
         run: |
           mkdir -p probe
+          cp "$RUNNER_TEMP/disks-before-cleanup.txt" probe/
           uname -a | tee probe/uname.txt
           lscpu | tee probe/cpu.txt
           free -b | tee probe/memory.txt
