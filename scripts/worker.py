@@ -119,25 +119,95 @@ def archive_path(name):
     return "/" + str(path)
 
 
-def merge_dependencies(directories, bindings=None, source_root=None, out_root=None):
-    """Validate the producer receipt before accepting any compiled output."""
+def binding_key(binding):
+    fields = ("id", "run_id", "artifact", "expected_worker_commit", "expected_manifest_sha256")
+    return tuple(str(binding[field]) for field in fields)
+
+
+def validate_supersessions(prepared, bindings, supersessions, out_root):
+    if not isinstance(supersessions, list):
+        raise ValueError("dependency supersessions must be an explicit array")
+    if supersessions and (bindings is None or out_root is None):
+        raise ValueError("supersessions require complete dependency bindings and consumer OUT context")
+    policies, audits = {}, []
+    for declaration in supersessions:
+        if (not isinstance(declaration, dict) or declaration.get("approved") is not True or
+                not isinstance(declaration.get("reason"), str) or not declaration["reason"].strip()):
+            raise ValueError("supersession is not explicitly approved with a reason")
+        path = declaration.get("path")
+        if (not isinstance(path, str) or not Path(path).is_absolute() or path != os.path.abspath(path)
+                or any(character in path for character in "*?[]")):
+            raise ValueError("supersession must name one normalized absolute regular OUT file")
+        try:
+            relative = Path(path).relative_to(Path(out_root))
+        except ValueError:
+            raise ValueError("supersession path is outside consumer OUT: " + path) from None
+        if not relative.parts or path in policies:
+            raise ValueError("duplicate or non-file supersession path: " + path)
+        endpoints = {}
+        for role in ("old", "new"):
+            endpoint = declaration.get(role)
+            if not isinstance(endpoint, dict) or not isinstance(endpoint.get("binding"), dict):
+                raise ValueError("supersession endpoint has no complete binding: " + role)
+            try:
+                key = binding_key(endpoint["binding"])
+            except (KeyError, TypeError):
+                raise ValueError("supersession endpoint has no complete binding: " + role) from None
+            matches = [index for index, binding in enumerate(bindings) if binding_key(binding) == key]
+            if len(matches) != 1:
+                raise ValueError("supersession endpoint must occur exactly once in dependencies: " + role)
+            index = matches[0]; producer = prepared[index]
+            expected_receipt = endpoint.get("receipt_sha256")
+            if (not isinstance(expected_receipt, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_receipt)
+                    or expected_receipt != producer["receipt_sha256"]):
+                raise ValueError("supersession endpoint receipt integrity mismatch: " + role)
+            member = endpoint.get("member")
+            if (not isinstance(member, dict) or set(member) != {"path", "type", "mode", "size", "sha256"}
+                    or member.get("path") != path or member.get("type") != "file"
+                    or type(member.get("mode")) is not int or member["mode"] != stat.S_IMODE(member["mode"])
+                    or type(member.get("size")) is not int or member["size"] < 0
+                    or not isinstance(member.get("sha256"), str) or not re.fullmatch(r'[a-f0-9]{64}', member["sha256"])
+                    or member != producer["specs"].get(path)):
+                raise ValueError("supersession endpoint does not pin its exact regular member: " + role)
+            if "archive_sha256" in endpoint and endpoint["archive_sha256"] != producer["receipt"]["archive_sha256"]:
+                raise ValueError("supersession endpoint archive identity mismatch: " + role)
+            endpoints[role] = {"index": index, "binding": dict(bindings[index]),
+                               "receipt_sha256": producer["receipt_sha256"],
+                               "archive_sha256": producer["receipt"]["archive_sha256"],
+                               "member": dict(member), "integrity_verified": False}
+        if endpoints["old"]["index"] == endpoints["new"]["index"]:
+            raise ValueError("supersession old and new producers must be distinct")
+        policies[path] = endpoints
+        audits.append({"approved": True, "path": path, "reason": declaration["reason"],
+                       "old": {key: value for key, value in endpoints["old"].items() if key != "index"},
+                       "new": {key: value for key, value in endpoints["new"].items() if key != "index"},
+                       "result": "metadata_verified_pending_member_validation"})
+    return policies, audits
+
+
+def merge_dependencies(directories, bindings=None, source_root=None, out_root=None,
+                       supersessions=None, supersession_audit=None, forbidden_outputs=()):
+    """Materialize fully validated providers, with only explicitly pinned file supersessions."""
     directories = list(directories)
     if bindings is not None and (not isinstance(bindings, list) or len(bindings) != len(directories)):
         raise ValueError("dependency bindings must align with every dependency directory")
     prepared = []
-    # Preflight all declared producers before installing even the first member.
+    # All headers, receipt identities, archive digests, membership conflicts and
+    # supersession endpoints are checked before any dependency installation.
     for index, directory in enumerate(directories):
-        directory = Path(directory)
-        receipt = read_json(directory / "receipt.json")
+        directory = Path(directory); receipt_path = directory / "receipt.json"
+        receipt = read_json(receipt_path)
         if receipt.get("schema_version") != 1 or receipt.get("status") != "success":
             raise ValueError(f"dependency did not complete successfully: {directory}")
         if bindings is not None:
             binding = bindings[index]
-            if (not isinstance(binding, dict) or not binding.get("id") or
+            if (not isinstance(binding, dict) or not isinstance(binding.get("id"), str) or not binding["id"] or
                     binding.get("artifact") != "shard-" + binding["id"] or
                     not str(binding.get("run_id", "")).isdigit() or
-                    not re.fullmatch(r'[a-f0-9]{40}', binding.get("expected_worker_commit", "")) or
-                    not re.fullmatch(r'[a-f0-9]{64}', binding.get("expected_manifest_sha256", ""))):
+                    not isinstance(binding.get("expected_worker_commit"), str) or
+                    not re.fullmatch(r'[a-f0-9]{40}', binding["expected_worker_commit"]) or
+                    not isinstance(binding.get("expected_manifest_sha256"), str) or
+                    not re.fullmatch(r'[a-f0-9]{64}', binding["expected_manifest_sha256"])):
                 raise ValueError(f"dependency has no complete controller binding: {directory}")
             for field, expected in (("id", binding["id"]), ("run_id", str(binding["run_id"])),
                                     ("worker_commit", binding["expected_worker_commit"]),
@@ -148,21 +218,44 @@ def merge_dependencies(directories, bindings=None, source_root=None, out_root=No
             for field, expected in (("source_root", source_root), ("out_root", out_root)):
                 if expected is None or receipt.get(field) != str(expected):
                     raise ValueError(f"dependency receipt {field} differs from consumer context: {directory}")
-        prepared.append((directory, receipt))
-    accepted = {}
-    receipts = []
-    for directory, receipt in prepared:
-        receipt_path = directory / "receipt.json"
         archive = directory / "outputs.tar.zst"
         if digest(archive) != receipt["archive_sha256"]:
             raise ValueError(f"dependency archive integrity mismatch: {directory}")
         specs = {item["path"]: item for item in receipt["outputs"]}
         if len(specs) != len(receipt["outputs"]):
             raise ValueError(f"duplicate dependency output: {directory}")
-        for path, spec in specs.items():
-            if path in accepted and accepted[path] != spec:
-                raise ValueError(f"conflicting dependency output: {path}")
-        process = subprocess.Popen(["zstd", "-dc", str(archive)], stdout=subprocess.PIPE)
+        prepared.append({"directory": directory, "receipt": receipt, "receipt_sha256": digest(receipt_path),
+                         "archive": archive, "specs": specs})
+    policies, audits = validate_supersessions(prepared, bindings, [] if supersessions is None else supersessions, out_root)
+    providers = {}
+    for index, producer in enumerate(prepared):
+        for path in producer["specs"]:
+            providers.setdefault(path, []).append(index)
+    accepted = {}
+    forbidden = set(forbidden_outputs)
+    for path, indexes in providers.items():
+        if path in forbidden:
+            raise ValueError("dependency supplies a declared consumer output: " + path)
+        if path in policies:
+            policy = policies[path]
+            if set(indexes) != {policy["old"]["index"], policy["new"]["index"]} or len(indexes) != 2:
+                raise ValueError("superseded path has an undeclared producer: " + path)
+            accepted[path] = prepared[policy["new"]["index"]]["specs"][path]
+        else:
+            accepted[path] = prepared[indexes[0]]["specs"][path]
+            if any(prepared[index]["specs"][path] != accepted[path] for index in indexes[1:]):
+                raise ValueError("conflicting dependency output: " + path)
+        destination = Path(path)
+        if destination.is_symlink() or (destination.exists() and (path in policies or accepted[path]["type"] != "directory")):
+            raise ValueError("dependency destination already exists before merge: " + path)
+        if destination.exists():
+            verify_spec(accepted[path])
+    if supersession_audit is not None:
+        supersession_audit.extend(audits)
+    installed = set(); receipts = []
+    for index, producer in enumerate(prepared):
+        directory, receipt, specs = producer["directory"], producer["receipt"], producer["specs"]
+        process = subprocess.Popen(["zstd", "-dc", str(producer["archive"])], stdout=subprocess.PIPE)
         seen = set()
         try:
             with tarfile.open(fileobj=process.stdout, mode="r|") as stream:
@@ -170,8 +263,7 @@ def merge_dependencies(directories, bindings=None, source_root=None, out_root=No
                     path = archive_path(member.name)
                     if path in seen or path not in specs:
                         raise ValueError(f"unrecorded or duplicate archive member: {path}")
-                    seen.add(path)
-                    spec = specs[path]
+                    seen.add(path); spec = specs[path]
                     kind = "file" if member.isfile() else "symlink" if member.issym() else "directory" if member.isdir() else None
                     if kind != spec["type"] or stat.S_IMODE(member.mode) != spec["mode"]:
                         raise ValueError(f"dependency member metadata mismatch: {path}")
@@ -179,48 +271,63 @@ def merge_dependencies(directories, bindings=None, source_root=None, out_root=No
                         raise ValueError(f"dependency member size mismatch: {path}")
                     if kind == "symlink" and member.linkname != spec["target"]:
                         raise ValueError(f"dependency member link mismatch: {path}")
+                    excluded = path in policies and index == policies[path]["old"]["index"]
                     destination = Path(path)
-                    if destination.exists() or destination.is_symlink():
-                        verify_spec(spec)
-                        # Still consume and check the archived bytes rather than
-                        # trusting an identical pre-existing destination alone.
-                    elif kind == "directory":
-                        destination.mkdir(parents=True, exist_ok=True)
-                        destination.chmod(spec["mode"])
-                    elif kind == "symlink":
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        destination.symlink_to(spec["target"])
+                    if not excluded:
+                        if path in installed or destination.exists() or destination.is_symlink():
+                            verify_spec(spec)
+                        elif kind == "directory":
+                            destination.mkdir(parents=True, exist_ok=True); destination.chmod(spec["mode"])
+                        elif kind == "symlink":
+                            destination.parent.mkdir(parents=True, exist_ok=True); destination.symlink_to(spec["target"])
                     if kind == "file":
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        content = stream.extractfile(member)
-                        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temporary:
-                            temp_path = Path(temporary.name)
-                            try:
-                                shutil.copyfileobj(content, temporary, 1024 * 1024)
-                            except BaseException:
-                                temp_path.unlink(missing_ok=True)
-                                raise
+                        content = stream.extractfile(member); checksum = hashlib.sha256()
+                        temporary = None
+                        if not excluded:
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            temporary = tempfile.NamedTemporaryFile(dir=destination.parent, delete=False)
                         try:
-                            if digest(temp_path) != spec["sha256"]:
+                            for block in iter(lambda: content.read(1024 * 1024), b""):
+                                checksum.update(block)
+                                if temporary is not None:
+                                    temporary.write(block)
+                            if temporary is not None:
+                                temporary.close()
+                            if checksum.hexdigest() != spec["sha256"]:
                                 raise ValueError(f"dependency member integrity mismatch: {path}")
-                            temp_path.chmod(spec["mode"])
-                            if not destination.exists():
-                                temp_path.replace(destination)
+                            if temporary is not None:
+                                temporary_path = Path(temporary.name); temporary_path.chmod(spec["mode"])
+                                if path not in installed:
+                                    if destination.exists() or destination.is_symlink():
+                                        raise ValueError("dependency destination appeared during merge: " + path)
+                                    temporary_path.replace(destination)
                         finally:
-                            temp_path.unlink(missing_ok=True)
-                    verify_spec(spec)
+                            if temporary is not None:
+                                temporary.close(); Path(temporary.name).unlink(missing_ok=True)
+                    if not excluded:
+                        verify_spec(spec); installed.add(path)
+                # Drain the stream after the tar terminator as well. Only tar
+                # padding is allowed; zstd must consume and validate every frame.
+                for block in iter(lambda: stream.fileobj.read(1024 * 1024), b""):
+                    if any(block):
+                        raise ValueError("non-padding data after dependency tar terminator")
             if seen != set(specs):
                 raise ValueError(f"dependency archive missing outputs: {sorted(set(specs) - seen)}")
             if process.wait() != 0:
-                raise ValueError(f"dependency decompression failed: {archive}")
+                raise ValueError(f"dependency decompression failed: {producer['archive']}")
         finally:
             process.stdout.close()
             if process.poll() is None:
                 process.terminate()
             process.wait()
-        accepted.update(specs)
+        for audit in audits:
+            for role in ("old", "new"):
+                if policies[audit["path"]][role]["index"] == index:
+                    audit[role]["integrity_verified"] = True
         receipts.append({"id": receipt["id"], "manifest_sha256": receipt["manifest_sha256"],
-                         "receipt_sha256": digest(receipt_path), "archive_sha256": receipt["archive_sha256"]})
+                         "receipt_sha256": producer["receipt_sha256"], "archive_sha256": receipt["archive_sha256"]})
+    for audit in audits:
+        audit["result"] = "materialized"
     return accepted, receipts
 
 
@@ -290,7 +397,7 @@ def retain_abi_diagnostics(source_root, build_environment, output_dir):
 
 
 def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4,
-              dependency_bindings=None):
+              dependency_bindings=None, dependency_supersessions=None):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed", "outputs": [],
@@ -328,7 +435,13 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                     raise ValueError(f"cold capsule contains a producer input: {resolved}")
             if dependency_bindings is not None:
                 receipt["declared_dependencies"] = dependency_bindings
-            accepted, receipts = merge_dependencies(dependency_dirs, dependency_bindings, source_root, out_root)
+            if dependency_supersessions is not None:
+                receipt["declared_dependency_supersessions"] = dependency_supersessions
+            supersession_audit = []
+            receipt["dependency_supersessions"] = supersession_audit
+            forbidden = [str(absolute(path, source_root)) for path in manifest["outputs"]]
+            accepted, receipts = merge_dependencies(dependency_dirs, dependency_bindings, source_root, out_root,
+                                                     dependency_supersessions, supersession_audit, forbidden)
             receipt["dependencies"] = receipts
             for path in manifest["external_inputs"]:
                 resolved = str(absolute(path, source_root))
@@ -414,12 +527,14 @@ def main():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dependency-dir", action="append", default=[])
     parser.add_argument("--dependency-bindings", help="JSON controller bindings aligned with dependency directory arguments")
+    parser.add_argument("--dependency-supersessions", help="JSON exact regular-OUT old/new supersession declarations")
     parser.add_argument("--ninja")
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     receipt = run_shard(args.manifest, args.bundle, args.id, args.output_dir,
                         args.dependency_dir, args.ninja, args.jobs,
-                        read_json(args.dependency_bindings) if args.dependency_bindings else None)
+                        read_json(args.dependency_bindings) if args.dependency_bindings else None,
+                        read_json(args.dependency_supersessions) if args.dependency_supersessions else None)
     print(json.dumps({key: receipt.get(key) for key in ("id", "status", "elapsed_seconds", "error")}))
     return 0 if receipt["status"] == "success" else 1
 
