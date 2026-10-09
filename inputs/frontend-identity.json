@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "required_buildinfo": {
+    "ro.build.version.incremental": "1791434921",
+    "ro.build.description": "aosp_crux-userdebug 13 TQ3A.230901.001.B1 1791434921 release-keys",
+    "ro.build.id": "TQ3A.230901.001.B1",
+    "ro.build.date.utc": "1791434831",
+    "ro.build.date": "Thu Oct  8 04:47:11 UTC 2026",
+    "ro.build.tags": "release-keys",
+    "ro.build.type": "userdebug",
+    "ro.build.flavor": "aosp_crux-userdebug",
+    "org.pixelexperience.device": "crux"
+  },
+  "required_final_keys": {
+    "ro.build.version.incremental": "1791434921",
+    "ro.build.fingerprint": "Xiaomi/crux/crux:13/TQ3A.230901.001.B1/0448:userdebug/test-keys",
+    "ro.system.build.version.incremental": "1791434921",
+    "ro.system.build.fingerprint": "Xiaomi/crux/crux:13/TQ3A.230901.001.B1/0448:userdebug/test-keys",
+    "ro.system.build.date.utc": "1791434831"
+  },
+  "branding_keys": {
+    "org.pixelexperience.build_date": "20261008-0448",
+    "org.pixelexperience.build_date_utc": "1791434880"
+  },
+  "frontend_thumbprint": "13/TQ3A.230901.001.B1/1791434921:userdebug/release-keys\n"
+}
