@@ -20,6 +20,21 @@ All thirteen succeeded across the original run and its
 Verified assembler inputs and the native Python binding corrected four failures;
 the other nine successful producers were reused.
 
+The next wave has two verified successful tasks. Its remaining task exposed
+transitive Rust libraries that were omitted at a shard boundary. A
+[cold 38-command Rust supplement](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37875108284)
+now succeeds, with all 38 exported members verified and zero annotations.
+The repair retains the original commands and restores their original ordering
+after an imported `std` library cuts the dependency path to a locally rebuilt
+`core` library. Evidence is in
+[`rust-transitive-runtime.json`](results/diagnostics/rust-transitive-runtime.json).
+
+Frontend version metadata also needs explicit cold generation: the original
+Ninja `touch` rule created an empty build-number file, which left one exported
+property file with an empty incremental version. Its repair and final image
+property checks are still in progress. A successful task status alone does not
+certify complete ROM images.
+
 After updating Actions dependencies to Node.js 24, the repeated resource probe
 succeeded with zero annotations. Actual resource receipts are in
 `results/resource-probe/`; the successful compilation exchange is recorded in

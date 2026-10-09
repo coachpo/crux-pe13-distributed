@@ -1,0 +1,23 @@
+{
+  "status": "success",
+  "logical_task_id": "rust-transitive-libraries-v1",
+  "run_url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/37875108284",
+  "worker_commit": "78b3f65d61333f9e0e8a1f426f80491e86b001f9",
+  "manifest_sha256": "183b96e241977066bd4790a89fadc7cfd4742b88948c9e8120b885800ee272f3",
+  "native_command_count": 38,
+  "native_commands_rsp_dep_metadata_preserved": true,
+  "native_elapsed_seconds": 40.72408486400002,
+  "verified_output_count": 38,
+  "all_member_bytes_types_modes_match_receipt": true,
+  "archive_sha256": "ee8e8778fd72e30381d85caff63acea475a29fdb1a3ef67beef4f6a55555a705",
+  "annotations_count": 0,
+  "repair": {
+    "missing_runtime_library_paths": "Derived from original Rust crate producers and -L search paths.",
+    "post_cut_ordering": "Retaining std removes its original ancestry through local core. Restore those original ancestor constraints as order-only inputs.",
+    "affected_actions": 10,
+    "added_order_only_inputs": 101,
+    "post_cut_dag_cycle_free": true,
+    "all_post_cut_local_runtime_inputs_ready": true
+  },
+  "qualification": "This verifies the cold Rust supplemental build and its output transfer. Full ROM image compilation and property validation are still in progress."
+}
