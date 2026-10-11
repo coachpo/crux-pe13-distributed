@@ -128,6 +128,45 @@ class PropertyByteTests(unittest.TestCase):
         self.assertEqual(self.validate(extra=(("system_ext", "system.img:/system_ext/build.prop", encoded(wrong)),))["status"],
                          "failed")
 
+    def test_declared_absent_partition_namespace_must_be_absent(self):
+        expected = expected_identity()
+        expected["absent_partition_namespaces"] = {
+            "product": {"reason": "no product partition; the frozen rules skip the common /product properties"}}
+        product = encoded({"ro.product.name": "aosp_crux"})
+        base = [("system", "system.img:/system/build.prop", encoded(system_values())),
+                ("vendor", "vendor.img:/build.prop", encoded(native_partition("vendor")))]
+        members = [*base, ("product", "system.img:/system/product/etc/build.prop", product)]
+        result = properties.validate_property_bytes(expected, encoded(expected["required_buildinfo"]), members,
+                                                    expected["frontend_thumbprint"].encode())
+        self.assertEqual(result["status"], "success")
+        present = encoded({"ro.product.build.version.incremental": "1791434921"})
+        result = properties.validate_property_bytes(
+            expected, encoded(expected["required_buildinfo"]),
+            [*base, ("product", "system.img:/system/product/etc/build.prop", present)],
+            expected["frontend_thumbprint"].encode())
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("declared-absent" in entry["scope"] for entry in result["errors"]))
+        plain = expected_identity()
+        result = properties.validate_property_bytes(plain, encoded(plain["required_buildinfo"]), members,
+                                                    plain["frontend_thumbprint"].encode())
+        self.assertEqual(result["status"], "failed")
+
+    def test_unreasoned_absent_partition_namespace_is_rejected(self):
+        expected = expected_identity()
+        expected["absent_partition_namespaces"] = {"product": {}}
+        with self.assertRaisesRegex(properties.PropertyError, "declared-absent namespace"):
+            properties.validate_property_bytes(expected, encoded(expected["required_buildinfo"]),
+                                               [("system", "member", encoded(system_values()))],
+                                               expected["frontend_thumbprint"].encode())
+
+    def test_absent_partition_namespace_outside_native_partitions_is_rejected(self):
+        expected = expected_identity()
+        expected["absent_partition_namespaces"] = {"cache": {"reason": "not a property partition"}}
+        with self.assertRaisesRegex(properties.PropertyError, "declared-absent namespace"):
+            properties.validate_property_bytes(expected, encoded(expected["required_buildinfo"]),
+                                               [("system", "member", encoded(system_values()))],
+                                               expected["frontend_thumbprint"].encode())
+
     def test_emitted_thumbprint_is_conditional_but_exact(self):
         self.assertEqual(self.validate()["status"], "success")
         correct = expected_identity()["frontend_thumbprint"].rstrip("\n")

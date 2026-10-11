@@ -22,5 +22,15 @@
     "org.pixelexperience.build_date": "20261008-0448",
     "org.pixelexperience.build_date_utc": "1791434880"
   },
+  "absent_partition_namespaces": {
+    "product": {
+      "reason": "aosp_crux has no product partition (no BOARD_USES_PRODUCTIMAGE and no product.img in the frozen plan), so build/make/core/sysprop.mk deliberately skips the common /product build properties; the product member must not carry the ro.product.build.* namespace.",
+      "evidence": [
+        "build/make/core/sysprop.mk:407-419 (_skip_common_properties for a device released before R with no product partition)",
+        "frozen dispatch plan contains no target/product/crux/product.img target",
+        "accepted installed baseline: target/product/crux/system/product/etc/build.prop has no ro.product.build.* assignment and system.img carries the namespace only in the SELinux property contexts"
+      ]
+    }
+  },
   "frontend_thumbprint": "13/TQ3A.230901.001.B1/1791434921:userdebug/release-keys\n"
 }

@@ -88,6 +88,15 @@ def validate_expected(expected):
                 (buildinfo, "ro.build.date"), (final, "ro.build.fingerprint"))
     if any(key not in mapping for mapping, key in required):
         raise PropertyError("Expected identity lacks native partition incremental/fingerprint/date values")
+    # Partitions whose common build properties the frozen build rules deliberately skip
+    # (for example /product on a device without a product partition) are declared here so the
+    # namespace is required to be absent instead of required to be present.
+    absent = expected.get("absent_partition_namespaces", {})
+    if not isinstance(absent, dict) or any(
+            partition not in NATIVE_PARTITIONS or not isinstance(declaration, dict)
+            or not isinstance(declaration.get("reason"), str) or not declaration["reason"].strip()
+            for partition, declaration in absent.items()):
+        raise PropertyError("Expected a reasoned declared-absent namespace for a native partition")
     return expected
 
 
@@ -146,7 +155,16 @@ def validate_property_bytes(expected, buildinfo_data, members, frontend_thumbpri
         check_values(final, identity, errors, "partition " + partition + " observations", required=False)
         if partition in member_partitions:
             own_members = [source for source in final if source["partition"] == partition]
-            check_values(own_members, identity, errors, "partition " + partition + " native members")
+            if partition in expected.get("absent_partition_namespaces", {}):
+                for key in identity:
+                    observed = [entry for source in own_members for entry in source["assignments"]
+                                if entry["key"] == key]
+                    for entry in observed:
+                        errors.append({"scope": "partition " + partition + " declared-absent namespace",
+                                       "key": key, "reason": "declared-absent namespace property is present",
+                                       "assignment": entry})
+            else:
+                check_values(own_members, identity, errors, "partition " + partition + " native members")
     return {"schema_version": 1, "status": "success" if not errors else "failed", "errors": errors,
             "buildinfo": buildinfo, "property_members": final, "native_partitions_checked": sorted(present),
             "frontend_thumbprint": {"size": len(frontend_thumbprint_data),
