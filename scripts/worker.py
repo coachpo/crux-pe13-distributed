@@ -469,8 +469,10 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                 alias_dir = str(source_root / ".crux-task/host-bin")
                 build_environment["PATH"] = alias_dir + os.pathsep + build_environment.get("PATH", os.environ.get("PATH", os.defpath))
             receipt["runtime_aliases"] = runtime_aliases
+            # Soong declares some depfiles as cooutputs; retain them after
+            # Ninja records deps=gcc so they satisfy the output contract.
             command = [str(executable), "-f", str(manifest_path.parent / manifest["ninja"]),
-                       "-j", str(jobs), *manifest["targets"]]
+                       "-j", str(jobs), "-d", "keepdepfile", *manifest["targets"]]
             receipt["command"] = command
             receipt["build_environment"] = build_environment
             (output_dir / "command.json").write_text(json.dumps({"cwd": str(source_root), "argv": command,

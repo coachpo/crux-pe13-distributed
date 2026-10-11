@@ -67,6 +67,46 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(receipts[0]["id"], "producer")
         self.assertEqual(receipt["command"][3:5], ["-j", "4"])
 
+    @unittest.skipUnless(shutil.which("ninja"), "Ninja is required for native depfile handling")
+    def test_declared_gcc_depfile_is_retained_and_exchanged(self):
+        self.ninja = Path(shutil.which("ninja"))
+        generator = self.source / "generate.py"
+        generator.write_text(
+            "from pathlib import Path\n"
+            "output = Path('out/result.bin')\n"
+            "output.parent.mkdir(parents=True, exist_ok=True)\n"
+            "output.write_bytes(Path('source.txt').read_bytes() + b'compiled\\n')\n"
+            "Path('out/result.d').write_text('out/result.d: source.txt\\n')\n"
+        )
+        self.ninja_file.write_text(
+            "rule compile\n"
+            "  command = python3 generate.py\n"
+            "  depfile = out/result.d\n"
+            "  deps = gcc\n"
+            "build out/result.d | out/result.bin: compile source.txt generate.py\n"
+        )
+        self.write_manifests()
+        manifest = json.loads(self.manifest.read_text())
+        manifest["outputs"].append("out/result.d")
+        manifest["leaf_inputs"].append("generate.py")
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle["manifest_sha256"] = worker.digest(self.manifest)
+        bundle["files"].append(worker.describe(generator))
+        self.bundle.write_text(json.dumps(bundle))
+
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        depfile = self.source / "out/result.d"
+        expected = depfile.read_bytes()
+        self.assertEqual(expected, b"out/result.d: source.txt\n")
+        self.assertEqual(receipt["verified_output_count"], 2)
+        self.output.unlink()
+        depfile.unlink()
+        accepted, _ = worker.merge_dependencies([self.root / "producer"])
+        self.assertIn(str(depfile), accepted)
+        self.assertEqual(depfile.read_bytes(), expected)
+
     def test_missing_external_dependency_fails_before_compile(self):
         self.write_manifests(["out/upstream.bin"])
         receipt = self.run_worker()
