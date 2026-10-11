@@ -1132,6 +1132,56 @@ class CapsuleTests(unittest.TestCase):
         _, metadata, _ = self.collect()
         self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
 
+    def test_sourced_script_comments_preserve_literal_hash_inputs_and_run_cold(self):
+        inputs = {
+            "settings/#quoted.cfg": "quoted\n",
+            "settings/escaped #literal.cfg": "space\n",
+            "settings/escaped;#literal.cfg": "separator\n",
+            "settings/continued#literal.cfg": "continued\n",
+        }
+        for name, content in inputs.items():
+            self.write(self.source / name, content)
+        stale = self.out / "old.jar"
+        self.write(stale, b"PK\x03\x04old compiled input")
+        comment_only = self.source / "settings/comment-only.cfg"
+        self.write(comment_only, "not a shell input\n")
+        script = self.source / "scripts/helper.sh"
+        content = (
+            "# This helper doesn't read $(cat %s) or settings/comment-only.cfg\n"
+            "cat 'settings/#quoted.cfg' settings/escaped\\ #literal.cfg "
+            "settings/escaped\\;#literal.cfg settings/continued\\\n#literal.cfg "
+            "# This isn't another input: 'unterminated\n"
+        ) % stale
+        self.write(script, content)
+        native = "bash -eu -c " + shlex.quote("source scripts/helper.sh")
+        self.manifest["commands"] = [native]
+
+        _, metadata, archive = self.collect()
+        paths = {item["path"] for item in metadata["files"]}
+        self.assertTrue({str(self.source / name) for name in inputs} <= paths)
+        self.assertIn(str(script), paths)
+        self.assertNotIn(str(stale), paths)
+        self.assertNotIn(str(comment_only), paths)
+        self.assertEqual(archive.extractfile(str(script).lstrip("/")).read(), content.encode())
+        cold = self.base / "cold"
+        cold.mkdir()
+        archive.extractall(cold)
+        result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "".join(inputs.values()))
+
+    def test_protoc_response_hash_filename_is_argument_data(self):
+        schema = self.source / "#response.proto"
+        self.write(schema, 'syntax = "proto2"; message HashInput {}\n')
+        rsp = str(self.out / "schemas.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "descriptor.pb")],
+                                  "command": "aprotoc @%s --descriptor_set_out=%s" % (
+                                      rsp, self.out / "descriptor.pb"),
+                                  "rspfile": rsp, "rspfile_content": "#response.proto\n"}]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(schema), {item["path"] for item in metadata["files"]})
+
     def test_literal_bash_payload_decodes_outer_escaped_dollar(self):
         self.write(self.source / "settings/config", "active")
         self.manifest["commands"] = [r'bash --norc -c "echo \"\$(cat settings/config)\""']

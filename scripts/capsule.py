@@ -304,11 +304,9 @@ class ShellSubstitutionScanner:
             if marker not in self.text:
                 return marker
 
-    def comment_start(self, index):
-        return index == 0 or self.text[index - 1].isspace() or self.text[index - 1] in ';|&()<> '
-
     def scan(self, start=0, closing=None):
         text, result, index, quote, depth = self.text, [], start, None, 0
+        word_start = True
         while index < len(text):
             char = text[index]
             if quote == "'":
@@ -320,44 +318,57 @@ class ShellSubstitutionScanner:
             if char == '\\':
                 # In double quotes only these escapes suppress shell meaning.
                 if quote != '"' or (index + 1 < len(text) and text[index + 1] in '$`"\\\n'):
+                    if index + 1 < len(text) and text[index + 1] == '\n':
+                        # Shell line continuation preserves the current word.
+                        index += 2
+                        continue
                     result.append(text[index:index + 2])
+                    word_start = False
                     index += 2
                     continue
             if char == "'" and quote is None:
                 quote = "'"
+                word_start = False
                 result.append(char)
                 index += 1
                 continue
             if char == '"':
                 quote = None if quote == '"' else '"'
+                word_start = False
                 result.append(char)
                 index += 1
                 continue
-            if char == '#' and quote is None and self.comment_start(index):
+            if char == '#' and quote is None and word_start:
                 end = text.find('\n', index)
                 end = len(text) if end < 0 else end
-                result.append(text[index:end])
+                # Keep native SOURCE bytes and offsets; comments are absent
+                # only from evaluated analysis, never from response data.
+                result.append(' ' * (end - index))
                 index = end
                 continue
             if char == '`':
                 marker, end = self.scan_backtick(index, quote == '"')
                 result.append(marker)
+                word_start = False
                 index = end
                 continue
             if quote is None and text.startswith('<<', index):
                 self.limitations.append({'offset': index, 'kind': 'here-document/here-string grammar not certified'})
             if text.startswith('$$', index):
                 result.append('$$')
+                word_start = False
                 index += 2
                 continue
             if text.startswith('$((', index):
                 marker, end = self.scan_arithmetic(index)
                 result.append(self.arithmetic[marker]['analysis_carrier'])
+                word_start = False
                 index = end
                 continue
             if text.startswith('$(', index):
                 marker, end = self.scan_substitution(index)
                 result.append(marker)
+                word_start = False
                 index = end
                 continue
             if quote is None and closing is not None:
@@ -368,6 +379,8 @@ class ShellSubstitutionScanner:
                         return ''.join(result), index
                     depth -= 1
             result.append(char)
+            if quote is None:
+                word_start = char.isspace() or char in ';|&()<>'
             index += 1
         if quote is not None:
             raise ShellSubstitutionParseError('Unclosed quote at offset %d' % start)
