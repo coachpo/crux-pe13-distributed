@@ -685,6 +685,56 @@ class ShellAnalysisToken(str):
         return ShellAnalysisToken(result, self.shell_children) if any(marker in result for marker in self.shell_children) else result
 
 
+
+SHELL_ASSIGNMENT = re.compile(
+    r"(?:^|[;&|(]|\s)([A-Za-z_][A-Za-z_0-9]*)="
+    r"((?:'[^']*')|(?:\"[^\"]*\")|(?:[^\s;&|()<>\"'\\]+))")
+
+
+def shell_assignment_values(command):
+    """Map simple assignment words to the literal values the shell would use."""
+    values = {}
+    for match in SHELL_ASSIGNMENT.finditer(command):
+        raw = match.group(2)
+        values[match.group(1)] = raw[1:-1] if raw[:1] in "'\"" else raw
+    return values
+
+
+def expand_shell_variables(command, values, depth=0):
+    """Expand ``$NAME``/``${NAME}`` for names assigned in this same command.
+
+    Soong delivers many flag sets as shell variables (``FLAGS=' -I...' && aidl
+    $FLAGS ...``). The command that runs under Ninja expands them, so input
+    discovery has to see the same words; unknown names and single-quoted text
+    stay untouched, and only names assigned earlier in the same command expand.
+    """
+    if not values or depth > 4:
+        return command
+    result = []
+    index = 0
+    quote = None
+    while index < len(command):
+        character = command[index]
+        if character == "\\" and quote != "'" and index + 1 < len(command):
+            result.append(command[index:index + 2])
+            index += 2
+            continue
+        if character == "'" and quote != '"':
+            quote = None if quote == "'" else "'"
+        elif character == '"' and quote != "'":
+            quote = None if quote == '"' else '"'
+        elif character == "$" and quote != "'":
+            match = re.match(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?", command[index:])
+            if match and match.group(1) in values:
+                result.append(values[match.group(1)])
+                index += match.end()
+                continue
+        result.append(character)
+        index += 1
+    expanded = "".join(result)
+    return expanded if expanded == command else expand_shell_variables(expanded, values, depth + 1)
+
+
 def shell_analysis_words(command, evaluated):
     analysis = analyze_shell_substitutions(command, evaluated=evaluated)
     children = {marker: {**node, 'kind': 'substitution'} for marker, node in analysis.substitutions.items()}
@@ -1947,6 +1997,7 @@ class Collector:
     def command(self, command, context=None, cpp_reader=None, evaluated_shell=None, abi_reader=None):
         if evaluated_shell is None:
             evaluated_shell = context is None or context == "shell-source"
+        command = expand_shell_variables(command, shell_assignment_values(command))
         analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
         if context and not evaluated_shell:
             tokens = command_tokens(context) + tokens

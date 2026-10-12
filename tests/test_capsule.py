@@ -1009,7 +1009,10 @@ class CapsuleTests(unittest.TestCase):
         self.write(self.source / "interfaces/aidl/android/media/IPlayer.aidl",
                    "package android.media;\nimport android.media.VolumeShaperConfiguration;\n"
                    "interface IPlayer {}\n")
-        self.manifest["commands"] = ["prebuilts/.../aidl --lang=java -Iinterfaces/aidl "
+        # Soong passes import roots through a shell variable, so the analyzer
+        # expands the same words the shell would.
+        self.manifest["commands"] = ["FLAGS=' -Iinterfaces/aidl --min_sdk_version=current' && "
+                                     "prebuilts/.../aidl --lang=java $FLAGS "
                                      "-o " + str(self.out / "IPlayer.java")
                                      + " interfaces/aidl/android/media/IPlayer.aidl"]
         _, _, archive = self.collect()
