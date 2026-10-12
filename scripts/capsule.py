@@ -877,8 +877,11 @@ class ActionTemporaries:
 
 class Collector:
     def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
-                 selection_roots=None, scan_cache=None):
+                 selection_roots=None, scan_cache=None, graph_index=None):
         self.manifest = manifest
+        self.graph_index = Path(graph_index).resolve() if graph_index else None
+        self.graph_module = None
+        self.graph_database = None
         self.source_root = Path(source_root).resolve()
         self.out_root = Path(out_root).resolve()
         self.entries = {}
@@ -1300,6 +1303,78 @@ class Collector:
             self.add(dependency, "assembler-" + directive + ":" + str(path))
             if directive == "include":
                 self.assembler_inputs(dependency, include_paths)
+
+    def graph_support(self):
+        """Load the frozen graph helpers that decode original action payloads."""
+        if self.graph_module is None:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "crux_graph_index", Path(__file__).with_name("graph.py"))
+            self.graph_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.graph_module)
+        return self.graph_module
+
+    def writefile_payload(self, path):
+        """Recover the literal payload Soong's writeFile rule wrote to a path.
+
+        The graph index retains the original action, so its evaluated command
+        still carries the literal the runner writes into OUT.
+        """
+        if self.graph_index is None or not self.graph_index.is_file():
+            return None
+        module = self.graph_support()
+        if self.graph_database is None:
+            self.graph_database = module.Graph(self.graph_index)
+        rows = list(self.graph_database.db.execute(
+            "SELECT edge FROM outputs WHERE path=?", (str(path),)))
+        for row in rows:
+            try:
+                records, _ = self.graph_database.edge_records([row["edge"]])
+                metadata = self.graph_database.native_metadata(records)
+                command = metadata[row["edge"]]["command"]
+                _, payload = module.soong_writefile_literal(command, str(path))
+            except Exception:
+                continue
+            if payload:
+                return payload
+        return None
+
+    def sandbox_inner_commands(self, command):
+        """Recover the native commands an Sbox action actually executes.
+
+        Soong hides the tool invocation inside a writeFile-generated sandbox
+        manifest, so the recorded action alone cannot describe its inputs.
+        """
+        manifests = []
+        tokens = command_tokens(command)
+        for program, end in command_invocations(tokens):
+            if Path(tokens[program]).name != "sbox":
+                continue
+            for position in range(program + 1, end):
+                flag, separator, value = tokens[position].partition("=")
+                if flag != "--manifest":
+                    continue
+                value = value if separator else (tokens[position + 1] if position + 1 < end else "")
+                if value:
+                    manifests.append(self.path(value))
+        commands = []
+        for manifest in manifests:
+            payload = self.writefile_payload(manifest)
+            if payload is None:
+                continue
+            try:
+                parsed = self.graph_support().sbox_textproto(payload)
+            except Exception:
+                continue
+            for block in parsed.get("commands", []):
+                inner = block.get("command")
+                # The sandbox records one or more command lines per block.
+                values = inner if isinstance(inner, list) else [inner]
+                values = [value for value in values if isinstance(value, str) and value and "\x00" not in value]
+                commands.extend(values)
+                if len(values) > 1:
+                    commands.append(" && ".join(values))
+        return commands
 
     def compiler_input(self, value, include_paths):
         """Follow the same preprocessor search a compiler performs.
@@ -2243,6 +2318,11 @@ class Collector:
                                      reader == "shell-source", reader == "header-abi-linker" and edge.get("command") in self.abi_commands))
         for command, context, cpp_reader, evaluated_shell, abi_reader in dict.fromkeys(commands):
             self.command(command, context, cpp_reader, evaluated_shell, abi_reader)
+        for command in dict.fromkeys(entry[0] for entry in commands):
+            if not command or "sbox" not in command:
+                continue
+            for inner in self.sandbox_inner_commands(command):
+                self.command(inner, evaluated_shell=True)
         # A leaf source can be declared by an edge without appearing in a command
         # line. Follow its own includes with the shard's declared search paths.
         for value in self.manifest.get("leaf_inputs", []):
@@ -2428,7 +2508,7 @@ def shared_inputs(metadata, shared_manifest, digester=digest):
 
 
 def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None,
-         shared_manifest=None):
+         shared_manifest=None, graph_index=None):
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != 1:
@@ -2436,7 +2516,8 @@ def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_gener
     if Path(manifest.get("source_root", source_root)) != Path(source_root):
         raise CapsuleError("--source-root differs from manifest source_root")
     digester = DigestCache(digest_cache)
-    collector = Collector(manifest, source_root, out_root, allowed_generated, digester)
+    collector = Collector(manifest, source_root, out_root, allowed_generated, digester,
+                          graph_index=graph_index)
     task_path = collector.collect(manifest_path.parent)
     metadata = collector.metadata(manifest_path, task_path)
     omitted = shared_inputs(metadata, shared_manifest, digester)
@@ -2503,6 +2584,7 @@ def main():
     pack_parser.add_argument("--allow-generated", action="append", default=[], metavar="PATH=REASON")
     pack_parser.add_argument("--digest-cache", help="local digest cache; source paths and stat identity only")
     pack_parser.add_argument("--shared-manifest", help="frozen shared source layer JSON restored by the worker")
+    pack_parser.add_argument("--graph-index", help="frozen Ninja graph index used to recover Sbox command payloads")
     layer_parser = commands.add_parser("build-layer")
     layer_parser.add_argument("--manifests", nargs="+", required=True, help="slice manifest paths or directories")
     layer_parser.add_argument("--source-root", default=DEFAULT_SOURCE)
@@ -2516,7 +2598,7 @@ def main():
         if arguments.command == "pack":
             metadata_path, metadata = pack(arguments.manifest, arguments.source_root, arguments.output,
                                            arguments.out_root, arguments.allow_generated, arguments.digest_cache,
-                                           arguments.shared_manifest)
+                                           arguments.shared_manifest, arguments.graph_index)
         else:
             metadata_path, metadata = build_layer(arguments.manifests, arguments.source_root, arguments.output,
                                                   arguments.out_root, arguments.shared_root, arguments.digest_cache,

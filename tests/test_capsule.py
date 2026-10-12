@@ -1003,6 +1003,29 @@ class CapsuleTests(unittest.TestCase):
                          "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_sbox_manifest_payload_reveals_inner_tool_inputs(self):
+        self.write(self.source / "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                   "package android.media;\nparcelable VolumeShaperConfiguration;\n")
+        self.write(self.source / "interfaces/aidl/android/media/IPlayer.aidl",
+                   "package android.media;\nimport android.media.VolumeShaperConfiguration;\n"
+                   "interface IPlayer {}\n")
+        manifest_path = str(self.out / "gen/aidl.sbox.textproto")
+        payload = ('commands:{command:"prebuilts/.../aidl-cpp -Iinterfaces/aidl '
+                   'interfaces/aidl/android/media/IPlayer.aidl __SBOX_SANDBOX_DIR__/out" }')
+        self.manifest["commands"] = [
+            "host/sbox --sandbox-path " + str(self.out / "temp") + " --output-dir " + str(self.out / "gen")
+            + " --manifest " + manifest_path]
+        original = capsule.Collector.writefile_payload
+        capsule.Collector.writefile_payload = lambda self, path: payload
+        try:
+            _, _, archive = self.collect()
+        finally:
+            capsule.Collector.writefile_payload = original
+        names = archive.getnames()
+        for relative in ["interfaces/aidl/android/media/IPlayer.aidl",
+                         "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_aidl_import_closure_follows_package_and_search_paths(self):
         self.write(self.source / "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
                    "package android.media;\nparcelable VolumeShaperConfiguration;\n")
