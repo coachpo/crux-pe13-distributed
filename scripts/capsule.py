@@ -39,6 +39,27 @@ class CapsuleError(Exception):
     pass
 
 
+def strip_attributes(statement):
+    """Return what follows any leading Rust attribute groups on one line."""
+    index = 0
+    while statement.startswith("#[", index):
+        depth = 0
+        position = index + 1
+        while position < len(statement):
+            character = statement[position]
+            if character == "[":
+                depth += 1
+            elif character == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            position += 1
+        index = position + 1
+        while index < len(statement) and statement[index] in " \t":
+            index += 1
+    return statement[index:]
+
+
 def optional_probe(path, method="is_file"):
     # Commands such as Kati writeFile carry JSON as a quoted operand. Such text
     # can exceed a filename's byte limit and is never an input path.
@@ -1274,26 +1295,36 @@ class Collector:
         # directory named after that file, while `#[path]` and inline includes
         # stay relative to the declaring file itself.
         module_directory = directory if path.name in {"mod.rs", "lib.rs", "main.rs"} else directory / path.stem
-        pending_path = None
+        pending_paths = []
         inline = []
         for line in path.read_text(errors="replace").splitlines():
             statement = line.strip()
             attribute = re.match(r'#\[path\s*=\s*"([^"\n]+)"\s*\]\s*', statement)
             if attribute:
-                pending_path = attribute.group(1)
+                pending_paths = [attribute.group(1)]
                 statement = statement[attribute.end():]
-            if not statement:
+            elif re.match(r'#\[cfg_attr\s*\(', statement):
+                # cfg_attr(condition, path = "...") selects the file too, and a
+                # module can carry one conditional path per configuration.
+                conditional = re.findall(r'\bpath\s*=\s*"([^"\n]+)"', statement)
+                if conditional:
+                    pending_paths.extend(conditional)
                 continue
-            if statement.startswith("#["):
+            statement = strip_attributes(statement)
+            if not statement:
                 # Another attribute does not consume a recorded path override.
                 continue
-            if statement.startswith("//"):
+            # A declaration can carry a trailing line comment (`pub mod mock; // ...`).
+            statement = re.sub(r"\s+//.*$", "", statement)
+            if not statement or statement.startswith("//"):
                 continue
             inline_module = re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z_0-9]*\s*\{',
                                      statement)
             if inline_module:
-                inline.append(re.match(r'[^{]*\bmod\s+([A-Za-z_][A-Za-z_0-9]*)', statement).group(1))
-                pending_path = None
+                # An inline block that closes on its own line adds no nesting.
+                if statement.count("{") > statement.count("}"):
+                    inline.append(re.match(r'[^{]*\bmod\s+([A-Za-z_][A-Za-z_0-9]*)', statement).group(1))
+                pending_paths = []
                 continue
             if statement.startswith("}"):
                 if inline:
@@ -1304,23 +1335,37 @@ class Collector:
                 base = module_directory
                 for name in inline:
                     base = base / name
-                if pending_path:
-                    # An inline module extends the directory a path override is
-                    # relative to; the declaring file's own directory stays a
-                    # fallback for the flat layout.
-                    candidates = [base / pending_path]
-                    if directory / pending_path not in candidates:
-                        candidates.append(directory / pending_path)
-                else:
-                    candidates = [base / (module.group(1) + ".rs"), base / module.group(1) / "mod.rs"]
-                pending_path = None
+                candidates = []
+                overrides = pending_paths or [None]
+                for override in overrides:
+                    if override:
+                        # An inline module extends the directory a path override
+                        # is relative to; the declaring file's own directory
+                        # stays a fallback for the flat layout.
+                        candidates.append(base / override)
+                    else:
+                        candidates.append(base / (module.group(1) + ".rs"))
+                        candidates.append(base / module.group(1) / "mod.rs")
+                    # The same base directories remain valid fallbacks when an
+                    # inline block closed somewhere this line scan did not track.
+                    fallback = (directory / override,) if override else (
+                        directory / (module.group(1) + ".rs"),
+                        directory / module.group(1) / "mod.rs")
+                    for candidate in fallback:
+                        if candidate not in candidates:
+                            candidates.append(candidate)
+                pending_paths = []
             else:
                 names = re.findall(r'\b(?:include|include_str|include_bytes)!\s*\(\s*"([^"\n]+)"\s*\)',
                                    statement)
-                pending_path = None
+                pending_paths = []
                 if not names:
                     continue
+                base = module_directory
+                for name in inline:
+                    base = base / name
                 candidates = [directory / name for name in names]
+                candidates.extend(base / name for name in names if base / name not in candidates)
             for dependency in candidates:
                 if not (self.produced(dependency) or optional_probe(dependency)):
                     continue

@@ -1003,6 +1003,40 @@ class CapsuleTests(unittest.TestCase):
                          "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_rust_module_closure_follows_modules_sharing_a_line_with_attributes(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   '#[macro_use] mod macros;\n'
+                   '#[cfg(feature = "std")] pub mod rngs;\n'
+                   '#[cfg(all(feature = "std", feature = "std_rng"))] pub(crate) mod thread;\n')
+        self.write(self.source / "crate/src/macros.rs", "macro_rules! value { () => {}; }\n")
+        self.write(self.source / "crate/src/rngs/mod.rs", "pub mod adapter;\n")
+        self.write(self.source / "crate/src/rngs/adapter/mod.rs", "pub struct Adapter;\n")
+        self.write(self.source / "crate/src/thread.rs", "pub fn thread() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/macros.rs", "crate/src/rngs/mod.rs",
+                         "crate/src/rngs/adapter/mod.rs", "crate/src/thread.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_rust_module_closure_follows_conditional_path_attributes(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   '#[cfg_attr(not(feature = "human"), path = "shim_impl.rs")]\n'
+                   '#[cfg_attr(feature = "human", path = "extern_impl.rs")]\n'
+                   "mod imp;\n"
+                   "mod readme_doctest {}\n"
+                   "mod later;\n")
+        self.write(self.source / "crate/src/shim_impl.rs", "pub fn shim() {}\n")
+        self.write(self.source / "crate/src/extern_impl.rs", "pub fn external() {}\n")
+        self.write(self.source / "crate/src/later.rs", "pub fn later() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/shim_impl.rs", "crate/src/extern_impl.rs", "crate/src/later.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_rust_module_closure_follows_interleaved_attributes_and_inline_modules(self):
         self.write(self.source / "crate/src/lib.rs",
                    "#[cfg(not(feature = \"spin\"))]\n#[path=\"inline_lazy.rs\"]\n#[doc(hidden)]\npub mod lazy;\n"
