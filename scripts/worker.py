@@ -463,6 +463,16 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             build_environment = {**build_environment, "OUT_DIR": str(out_root), "ANDROID_BUILD_TOP": str(source_root),
                                  "NINJA_STATUS": "[%f/%t %e sec] ", "CCACHE_DISABLE": "1"}
             build_environment.setdefault("DIST_DIR", str(out_root / "dist"))
+            if "PATH" in build_environment:
+                # The frozen PATH is the source-derived Soong PATH. The real
+                # build keeps the host directories behind it, which is how a
+                # sandbox helper still finds a shell; a cold runner starts with
+                # the same environment, so retain that fallback explicitly.
+                entries = [entry for entry in build_environment["PATH"].split(os.pathsep) if entry]
+                for fallback in os.defpath.split(os.pathsep):
+                    if fallback not in entries:
+                        entries.append(fallback)
+                build_environment["PATH"] = os.pathsep.join(entries)
             receipt["out_root"] = str(out_root)
             runtime_aliases = prepare_python2_aliases(bundle, source_root)
             if runtime_aliases:

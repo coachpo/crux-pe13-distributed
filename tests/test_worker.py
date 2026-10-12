@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import copy
 from pathlib import Path
 import shutil
@@ -171,6 +172,20 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(receipt["outputs"], [])
         self.assertTrue(self.output.exists())
         self.assertEqual(receipt["build_environment"]["ANDROID_BUILD_TOP"], str(self.source))
+
+    def test_frozen_path_retains_host_fallback_directories(self):
+        manifest = json.loads(self.manifest.read_text())
+        manifest["build_environment"] = {"PATH": str(self.source / "prebuilts/build-tools/path/linux-x86")}
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle["manifest_sha256"] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker()
+        self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        entries = receipt["build_environment"]["PATH"].split(os.pathsep)
+        self.assertEqual(entries[0], str(self.source / "prebuilts/build-tools/path/linux-x86"))
+        for fallback in os.defpath.split(os.pathsep):
+            self.assertIn(fallback, entries)
 
     def test_ninja_failure_retains_log_without_publishing_outputs(self):
         self.ninja.write_text("#!/usr/bin/env python3\nprint('compiler failure')\nraise SystemExit(2)\n")
