@@ -1275,27 +1275,52 @@ class Collector:
         # stay relative to the declaring file itself.
         module_directory = directory if path.name in {"mod.rs", "lib.rs", "main.rs"} else directory / path.stem
         pending_path = None
+        inline = []
         for line in path.read_text(errors="replace").splitlines():
             statement = line.strip()
-            attribute = re.fullmatch(r'#\[path\s*=\s*"([^"\n]+)"\s*\]', statement)
+            attribute = re.match(r'#\[path\s*=\s*"([^"\n]+)"\s*\]\s*', statement)
             if attribute:
                 pending_path = attribute.group(1)
+                statement = statement[attribute.end():]
+            if not statement:
+                continue
+            if statement.startswith("#["):
+                # Another attribute does not consume a recorded path override.
+                continue
+            if statement.startswith("//"):
+                continue
+            inline_module = re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z_0-9]*\s*\{',
+                                     statement)
+            if inline_module:
+                inline.append(re.match(r'[^{]*\bmod\s+([A-Za-z_][A-Za-z_0-9]*)', statement).group(1))
+                pending_path = None
+                continue
+            if statement.startswith("}"):
+                if inline:
+                    inline.pop()
                 continue
             module = re.fullmatch(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;', statement)
             if module:
+                base = module_directory
+                for name in inline:
+                    base = base / name
                 if pending_path:
-                    candidates = [directory / pending_path]
+                    # An inline module extends the directory a path override is
+                    # relative to; the declaring file's own directory stays a
+                    # fallback for the flat layout.
+                    candidates = [base / pending_path]
+                    if directory / pending_path not in candidates:
+                        candidates.append(directory / pending_path)
                 else:
-                    candidates = [module_directory / (module.group(1) + ".rs"),
-                                  module_directory / module.group(1) / "mod.rs"]
+                    candidates = [base / (module.group(1) + ".rs"), base / module.group(1) / "mod.rs"]
+                pending_path = None
             else:
                 names = re.findall(r'\b(?:include|include_str|include_bytes)!\s*\(\s*"([^"\n]+)"\s*\)',
                                    statement)
+                pending_path = None
                 if not names:
-                    pending_path = None
                     continue
                 candidates = [directory / name for name in names]
-            pending_path = None
             for dependency in candidates:
                 if not (self.produced(dependency) or optional_probe(dependency)):
                     continue

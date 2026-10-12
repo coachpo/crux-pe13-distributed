@@ -1003,6 +1003,21 @@ class CapsuleTests(unittest.TestCase):
                          "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_rust_module_closure_follows_interleaved_attributes_and_inline_modules(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   "#[cfg(not(feature = \"spin\"))]\n#[path=\"inline_lazy.rs\"]\n#[doc(hidden)]\npub mod lazy;\n"
+                   "mod group {\n    #[path = \"platform_impl.rs\"] mod imp;\n    mod sibling;\n}\n")
+        self.write(self.source / "crate/src/inline_lazy.rs", "pub fn value() {}\n")
+        self.write(self.source / "crate/src/group/platform_impl.rs", "pub fn imp() {}\n")
+        self.write(self.source / "crate/src/group/sibling.rs", "pub fn sibling() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/inline_lazy.rs", "crate/src/group/platform_impl.rs",
+                         "crate/src/group/sibling.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_assembler_include_recurses_through_command_search_paths_and_opaque_data(self):
         self.write(self.source / "asm/main.s", '.include "outer.s"\n.incbin "payload.bin"\n')
         self.write(self.source / "macros/outer.s", '.include "inner.S"\n')

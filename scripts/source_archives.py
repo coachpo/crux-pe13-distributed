@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import random
 import shutil
 import stat
 import tarfile
@@ -239,7 +240,7 @@ def main():
                         help="Frozen capsule/shared-layer JSON; may be repeated")
     parser.add_argument("--receipt", required=True)
     parser.add_argument("--list", action="store_true", help="Show only the archives this capsule needs")
-    parser.add_argument("--attempts", type=int, default=3)
+    parser.add_argument("--attempts", type=int, default=6)
     parser.add_argument("--timeout", type=float, default=60, help="Per network-read timeout in seconds")
     args = parser.parse_args()
     if args.attempts < 1 or args.timeout <= 0:
@@ -264,6 +265,13 @@ def main():
                 except (urllib.error.URLError, TimeoutError, tarfile.ReadError, EOFError) as error:
                     if attempt == args.attempts:
                         raise
+                    # Public archive hosts throttle bursts of identical large
+                    # fetches; back off exponentially with jitter rather than
+                    # failing every shard at the same moment.
+                    delay = min(60.0, 5.0 * (2 ** (attempt - 1))) + random.uniform(0, 5)
+                    print("Retry source download " + descriptor["id"] + " in %.1fs: %s" % (delay, error),
+                          flush=True)
+                    time.sleep(delay)
                     print("Retry source download " + descriptor["id"] + ": " + str(error), flush=True)
                     time.sleep(2 * attempt)
             print("Verified %d frozen inputs: %s" % (len(specs), descriptor["id"]), flush=True)
