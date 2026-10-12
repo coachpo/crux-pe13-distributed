@@ -1003,6 +1003,24 @@ class CapsuleTests(unittest.TestCase):
                          "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_tablegen_include_closure_follows_declared_search_paths(self):
+        self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",
+                   'include "llvm/Option/Record.td"\n')
+        self.write(self.source / "external/llvm/include/llvm/Option/Record.td",
+                   "def Record : Value;\n")
+        self.write(self.source / "external/clang/include/clang/Driver/Options.td",
+                   'include "llvm/Option/OptParser.td"\n')
+        self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/llvm-tblgen "
+                                     "-Iexternal/clang -Iexternal/llvm/include -gen-opt-parser-defs "
+                                     "-o " + str(self.out / "Options.inc")
+                                     + " external/clang/include/clang/Driver/Options.td"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["external/clang/include/clang/Driver/Options.td",
+                         "external/llvm/include/llvm/Option/OptParser.td",
+                         "external/llvm/include/llvm/Option/Record.td"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_rust_module_closure_follows_modules_sharing_a_line_with_attributes(self):
         self.write(self.source / "crate/src/lib.rs",
                    '#[macro_use] mod macros;\n'

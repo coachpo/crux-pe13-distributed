@@ -33,6 +33,9 @@ SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
 # RenderScript .rsh interface. These scanners follow the compiler's own search
 # instead of filtering by header suffix.
 COMPILER_SCAN_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES | {".ipp", ".rsh", ".tcc", ".cuh"}
+# TableGen descriptions pull in further .td files through their own include
+# directives, and llvm-tblgen resolves them against the declared -I paths.
+TABLEGEN_SUFFIXES = {".td"}
 
 
 class CapsuleError(Exception):
@@ -858,6 +861,7 @@ class Collector:
         self.proto_scan_cache = set()
         self.flatbuffer_scan_cache = set()
         self.compiler_scan_cache = set()
+        self.tablegen_scan_cache = set()
         self.rust_scan_cache = set()
         self.compiler_search_paths = []
         self.command_temporaries = None
@@ -1273,6 +1277,32 @@ class Collector:
             self.add(dependency, "compiler-include:" + str(path), required=False)
             if dependency.suffix in COMPILER_SCAN_SUFFIXES:
                 self.compiler_input(dependency, include_paths)
+
+    def tablegen_input(self, value, include_paths):
+        """Follow the TableGen include search llvm-tblgen performs.
+
+        A .td description names further records through ``include "path"``, and
+        the tool resolves those against its declared -I directories. A cold
+        capsule has to walk them the same way.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.tablegen_scan_cache:
+            return
+        self.tablegen_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for name in re.findall(r'^[ \t]*include[ \t]+"([^"\n]+)"', text, re.MULTILINE):
+            candidates = [path.parent / name]
+            candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "tablegen-include:" + str(path), required=False)
+            if dependency.suffix in TABLEGEN_SUFFIXES:
+                self.tablegen_input(dependency, include_paths)
 
     def rust_module_inputs(self, value):
         """Follow the Rust module tree a crate root declares.
@@ -2093,6 +2123,8 @@ class Collector:
                             self.assembler_inputs(path, assembler_paths)
                         if path.suffix in COMPILER_SCAN_SUFFIXES:
                             self.compiler_input(path, include_paths)
+                        if path.suffix in TABLEGEN_SUFFIXES:
+                            self.tablegen_input(path, include_paths)
                         if path.suffix == '.rs':
                             self.rust_module_inputs(path)
                         self.tool_package(path)
