@@ -1003,6 +1003,21 @@ class CapsuleTests(unittest.TestCase):
                          "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_aidl_import_closure_follows_package_and_search_paths(self):
+        self.write(self.source / "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                   "package android.media;\nparcelable VolumeShaperConfiguration;\n")
+        self.write(self.source / "interfaces/aidl/android/media/IPlayer.aidl",
+                   "package android.media;\nimport android.media.VolumeShaperConfiguration;\n"
+                   "interface IPlayer {}\n")
+        self.manifest["commands"] = ["prebuilts/.../aidl --lang=java -Iinterfaces/aidl "
+                                     "-o " + str(self.out / "IPlayer.java")
+                                     + " interfaces/aidl/android/media/IPlayer.aidl"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["interfaces/aidl/android/media/IPlayer.aidl",
+                         "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_tablegen_include_closure_follows_declared_search_paths(self):
         self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",
                    'include "llvm/Option/Record.td"\n')

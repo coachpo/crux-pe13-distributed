@@ -36,6 +36,9 @@ COMPILER_SCAN_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES | {".ipp", ".rsh", ".
 # TableGen descriptions pull in further .td files through their own include
 # directives, and llvm-tblgen resolves them against the declared -I paths.
 TABLEGEN_SUFFIXES = {".td"}
+# AIDL interfaces import each other by package name; the tool resolves them
+# against its declared -I roots.
+AIDL_SUFFIXES = {".aidl"}
 
 
 class CapsuleError(Exception):
@@ -862,6 +865,7 @@ class Collector:
         self.flatbuffer_scan_cache = set()
         self.compiler_scan_cache = set()
         self.tablegen_scan_cache = set()
+        self.aidl_scan_cache = set()
         self.rust_scan_cache = set()
         self.compiler_search_paths = []
         self.command_temporaries = None
@@ -1303,6 +1307,33 @@ class Collector:
             self.add(dependency, "tablegen-include:" + str(path), required=False)
             if dependency.suffix in TABLEGEN_SUFFIXES:
                 self.tablegen_input(dependency, include_paths)
+
+    def aidl_input(self, value, include_paths):
+        """Follow AIDL package imports through the declared import roots.
+
+        Soong names only the interface being generated; ``import a.b.C;`` pulls
+        another .aidl file from an ``-I`` root, so a cold capsule has to resolve
+        the package path itself.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.aidl_scan_cache:
+            return
+        self.aidl_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for name in re.findall(r'^[ \t]*import[ \t]+([A-Za-z_][\w.]*)[ \t]*;', text, re.MULTILINE):
+            relative = name.replace(".", "/") + ".aidl"
+            candidates = [directory / relative for directory in include_paths]
+            candidates.append(path.parent / (name.rsplit(".", 1)[-1] + ".aidl"))
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "aidl-import:" + str(path), required=False)
+            if dependency.suffix in AIDL_SUFFIXES:
+                self.aidl_input(dependency, include_paths)
 
     def rust_module_inputs(self, value):
         """Follow the Rust module tree a crate root declares.
@@ -2125,6 +2156,8 @@ class Collector:
                             self.compiler_input(path, include_paths)
                         if path.suffix in TABLEGEN_SUFFIXES:
                             self.tablegen_input(path, include_paths)
+                        if path.suffix in AIDL_SUFFIXES:
+                            self.aidl_input(path, include_paths)
                         if path.suffix == '.rs':
                             self.rust_module_inputs(path)
                         self.tool_package(path)
@@ -2167,6 +2200,10 @@ class Collector:
                 self.compiler_input(path, self.compiler_search_paths)
             elif path.suffix == ".rs":
                 self.rust_module_inputs(path)
+            elif path.suffix in TABLEGEN_SUFFIXES:
+                self.tablegen_input(path, self.compiler_search_paths)
+            elif path.suffix in AIDL_SUFFIXES:
+                self.aidl_input(path, self.compiler_search_paths)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         depfile_owners = {}
