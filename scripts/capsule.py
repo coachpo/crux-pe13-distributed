@@ -28,6 +28,11 @@ COMPILED_SUFFIXES = {
 }
 HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
+# A preprocessor include can name a body whose suffix is not a header, such as
+# BoringSSL's fipsmodule/aes/aes.c, libc++'s exception_libcxxabi.ipp or a
+# RenderScript .rsh interface. These scanners follow the compiler's own search
+# instead of filtering by header suffix.
+COMPILER_SCAN_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES | {".ipp", ".rsh", ".tcc", ".cuh"}
 
 
 class CapsuleError(Exception):
@@ -831,6 +836,9 @@ class Collector:
         self.assembler_scan_cache = set()
         self.proto_scan_cache = set()
         self.flatbuffer_scan_cache = set()
+        self.compiler_scan_cache = set()
+        self.rust_scan_cache = set()
+        self.compiler_search_paths = []
         self.command_temporaries = None
         self.cpp_reader = False
         self.cpp_binding = False
@@ -1213,6 +1221,87 @@ class Collector:
             self.add(dependency, "assembler-" + directive + ":" + str(path))
             if directive == "include":
                 self.assembler_inputs(dependency, include_paths)
+
+    def compiler_input(self, value, include_paths):
+        """Follow the same preprocessor search a compiler performs.
+
+        Ninja names a compile command, not the bodies its ``#include``
+        directives pull in, and a cold source tree has no retained depfile to
+        observe them. A quoted name is resolved against the includer's own
+        directory first and then every declared search directory in command
+        order; an angled name only uses the search directories. Recursion keeps
+        nested includes under the same contract.
+        """
+        path = self.path(value)
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or not self.selected(path) \
+                or not optional_probe(path):
+            return
+        key = (resolved, tuple(include_paths))
+        if key in self.compiler_scan_cache:
+            return
+        self.compiler_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for quote, name in re.findall(r'^[ \t]*#[ \t]*include[ \t]*([<"])([^">\n]+)[">]', text, re.MULTILINE):
+            candidates = [path.parent / name] if quote == '"' else []
+            candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "compiler-include:" + str(path), required=False)
+            if dependency.suffix in COMPILER_SCAN_SUFFIXES:
+                self.compiler_input(dependency, include_paths)
+
+    def rust_module_inputs(self, value):
+        """Follow the Rust module tree a crate root declares.
+
+        Soong names only the crate root on a rustc edge; ``mod`` members,
+        ``#[path]`` overrides and inline ``include!`` files are found by the
+        compiler. A cold tree without retained dep-info has to walk them here,
+        resolving each member beside its declaring file the way rustc does.
+        """
+        path = self.path(value)
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or not self.selected(path) \
+                or not optional_probe(path):
+            return
+        if resolved in self.rust_scan_cache:
+            return
+        self.rust_scan_cache.add(resolved)
+        directory = path.parent
+        # rustc resolves a plain `mod name;` inside a non-mod-rs file under a
+        # directory named after that file, while `#[path]` and inline includes
+        # stay relative to the declaring file itself.
+        module_directory = directory if path.name in {"mod.rs", "lib.rs", "main.rs"} else directory / path.stem
+        pending_path = None
+        for line in path.read_text(errors="replace").splitlines():
+            statement = line.strip()
+            attribute = re.fullmatch(r'#\[path\s*=\s*"([^"\n]+)"\s*\]', statement)
+            if attribute:
+                pending_path = attribute.group(1)
+                continue
+            module = re.fullmatch(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;', statement)
+            if module:
+                if pending_path:
+                    candidates = [directory / pending_path]
+                else:
+                    candidates = [module_directory / (module.group(1) + ".rs"),
+                                  module_directory / module.group(1) / "mod.rs"]
+            else:
+                names = re.findall(r'\b(?:include|include_str|include_bytes)!\s*\(\s*"([^"\n]+)"\s*\)',
+                                   statement)
+                if not names:
+                    pending_path = None
+                    continue
+                candidates = [directory / name for name in names]
+            pending_path = None
+            for dependency in candidates:
+                if not (self.produced(dependency) or optional_probe(dependency)):
+                    continue
+                self.add(dependency, "rust-module:" + str(path), required=False)
+                if dependency.suffix == ".rs":
+                    self.rust_module_inputs(dependency)
 
     def proto_input(self, value, search_paths):
         path = self.path(value)
@@ -1844,6 +1933,9 @@ class Collector:
                         assembler_paths.append(directory)
                     if token.startswith(("--sysroot=", "-isysroot")):
                         include_paths.extend([directory / "usr/include", directory / "include"])
+        for directory in include_paths:
+            if directory not in self.compiler_search_paths:
+                self.compiler_search_paths.append(directory)
         index = 0
         while index < len(tokens):
             temporary_outputs.position = index
@@ -1906,6 +1998,7 @@ class Collector:
                         candidates.extend(directory / value for directory in include_paths)
                     found = next((path for path in candidates if path.is_file() or self.produced(path)), candidates[0])
                     self.add(found, "command-input:" + token)
+                    self.compiler_input(found, include_paths)
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
@@ -1928,6 +2021,10 @@ class Collector:
                         self.add(path, "command-file", required=False)
                         if path.suffix in {".s", ".S", ".asm"}:
                             self.assembler_inputs(path, assembler_paths)
+                        if path.suffix in COMPILER_SCAN_SUFFIXES:
+                            self.compiler_input(path, include_paths)
+                        if path.suffix == '.rs':
+                            self.rust_module_inputs(path)
                         self.tool_package(path)
                         self.python_package(path)
             index += 1
@@ -1960,6 +2057,14 @@ class Collector:
                                      reader == "shell-source", reader == "header-abi-linker" and edge.get("command") in self.abi_commands))
         for command, context, cpp_reader, evaluated_shell, abi_reader in dict.fromkeys(commands):
             self.command(command, context, cpp_reader, evaluated_shell, abi_reader)
+        # A leaf source can be declared by an edge without appearing in a command
+        # line. Follow its own includes with the shard's declared search paths.
+        for value in self.manifest.get("leaf_inputs", []):
+            path = self.path(value)
+            if path.suffix in COMPILER_SCAN_SUFFIXES:
+                self.compiler_input(path, self.compiler_search_paths)
+            elif path.suffix == ".rs":
+                self.rust_module_inputs(path)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         depfile_owners = {}

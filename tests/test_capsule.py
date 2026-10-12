@@ -962,6 +962,47 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive=self.collect()
         self.assertIn(str(self.source / "app/assets/nested/data.bin").lstrip("/"),archive.getnames())
 
+    def test_compiler_include_closure_follows_quoted_search_paths_and_nested_bodies(self):
+        self.write(self.source / "lib/body.c", '#include "inner.c"\n')
+        self.write(self.source / "lib/inner.c", "int inner_body;\n")
+        self.write(self.source / "lib/table.ipp", "#define TABLE 1\n")
+        self.write(self.source / "api/api.rsh", "#pragma version(1)\n")
+        self.write(self.source / "lib/unit.c",
+                   '#include "body.c"\n#include "table.ipp"\n#include <api.rsh>\n#include "absent.h"\n')
+        self.manifest["commands"] = ["clang -Iapi -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["lib/body.c", "lib/inner.c", "lib/table.ipp", "api/api.rsh"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_compiler_include_closure_uses_the_includer_directory_before_search_paths(self):
+        self.write(self.source / "lib/body.c", "int local_body;\n")
+        self.write(self.source / "other/body.c", "int search_path_body;\n")
+        self.write(self.source / "lib/unit.c", '#include "body.c"\n')
+        self.manifest["commands"] = ["clang -Iother -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        self.assertIn(str(self.source / "lib/body.c").lstrip("/"), names)
+        self.assertNotIn(str(self.source / "other/body.c").lstrip("/"), names)
+
+    def test_rust_module_closure_follows_mod_path_and_inline_include(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   "pub mod buf;\nmod fmt;\ninclude!(\"generated.rs\");\n"
+                   '#[path = "alt/renamed.rs"]\nmod renamed;\n')
+        self.write(self.source / "crate/src/buf.rs", "mod inner;\n")
+        self.write(self.source / "crate/src/buf/inner.rs", "pub fn value() {}\n")
+        self.write(self.source / "crate/src/fmt/mod.rs", "pub mod write;\n")
+        self.write(self.source / "crate/src/fmt/write.rs", "pub fn write() {}\n")
+        self.write(self.source / "crate/src/generated.rs", "pub const GENERATED: u8 = 1;\n")
+        self.write(self.source / "crate/src/alt/renamed.rs", "pub const RENAMED: u8 = 1;\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/buf.rs", "crate/src/buf/inner.rs", "crate/src/fmt/mod.rs",
+                         "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
     def test_assembler_include_recurses_through_command_search_paths_and_opaque_data(self):
         self.write(self.source / "asm/main.s", '.include "outer.s"\n.incbin "payload.bin"\n')
         self.write(self.source / "macros/outer.s", '.include "inner.S"\n')
