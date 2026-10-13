@@ -26,7 +26,7 @@ COMPILED_SUFFIXES = {
     ".o", ".a", ".so", ".jar", ".apk", ".dex", ".class", ".art",
     ".odex", ".vdex", ".img", ".dtb", ".dtbo", ".ko", ".bc", ".zip",
 }
-HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def"}
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
 # A preprocessor include can name a body whose suffix is not a header, such as
 # BoringSSL's fipsmodule/aes/aes.c, libc++'s exception_libcxxabi.ipp or a
@@ -1186,6 +1186,10 @@ class Collector:
         if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
             return
         resolved = self.symlink_ancestors(path, reason)
+        if resolved in {self.source_root, self.out_root}:
+            # `-I .` resolves explicit imports against the whole tree; walking it
+            # for every suffix would carry the entire repository.
+            return
         if self.allowed_path(resolved):
             self.scan_directory(resolved, reason, headers_only=True)
 
@@ -1468,9 +1472,14 @@ class Collector:
         self.aidl_scan_cache.add(key)
         text = path.read_text(errors="replace")
         for name in re.findall(r'^[ \t]*import[ \t]+([A-Za-z_][\w.]*)[ \t]*;', text, re.MULTILINE):
-            relative = name.replace(".", "/") + ".aidl"
-            candidates = [directory / relative for directory in include_paths]
-            candidates.append(path.parent / (name.rsplit(".", 1)[-1] + ".aidl"))
+            # A nested type (android.app.ActivityManager.RunningTaskInfo) lives
+            # in its outer class file, so try progressively shorter prefixes.
+            components = name.split(".")
+            candidates = []
+            for length in range(len(components), 1, -1):
+                relative = "/".join(components[:length]) + ".aidl"
+                candidates.extend(directory / relative for directory in include_paths)
+                candidates.append(path.parent / (components[length - 1] + ".aidl"))
             dependency = next((candidate for candidate in candidates
                                if self.produced(candidate) or optional_probe(candidate)), None)
             if dependency is None:
@@ -2130,6 +2139,19 @@ class Collector:
             self.command_temporaries = previous
 
     def inspect_command(self, command, tokens, temporary_outputs):
+        # `bash -c '<script>'` bodies carry real tool invocations (Sbox wraps
+        # commands this way); analyze each body like the shell would run it.
+        for program, end in command_invocations(tokens):
+            if Path(tokens[program]).name not in {"bash", "sh", "dash", "zsh"}:
+                continue
+            for position in range(program + 1, end - 1):
+                token = tokens[position]
+                if not isinstance(token, str) or not token.startswith("-") or "c" not in token[1:]:
+                    continue
+                script = tokens[position + 1]
+                if isinstance(script, str) and script.strip():
+                    self.command(script, evaluated_shell=True)
+                break
         tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
         # Expanded response arguments have native caller order; recompute their
         # output positions before inspecting any subsequent readers.
@@ -2200,6 +2222,17 @@ class Collector:
                     assembler_paths.append(directory)
                 if token in {"--sysroot", "-isysroot"}:
                     include_paths.extend([directory / "usr/include", directory / "include"])
+            elif token == "-r" and index + 1 < len(tokens):
+                # hidl-gen package roots are `-r<package>:<root>` mappings; the
+                # tool scans that root for the .hal files it imports.
+                root = tokens[index + 1].split(":", 1)[-1]
+                index += 1
+                if root:
+                    self.include_directory(root, "command-include:-r")
+            elif token.startswith("-r") and ":" in token:
+                root = token.split(":", 1)[1]
+                if root:
+                    self.include_directory(root, "command-include:-r")
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
