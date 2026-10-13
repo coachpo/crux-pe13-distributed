@@ -131,9 +131,9 @@ jobs:
           remove-haskell: "true"
           remove-codeql: "true"
           remove-docker-images: "true"
-          remove-large-packages: "false"
+          remove-large-packages: "true"
           remove-cached-tools: "false"
-          remove-swapfile: "false"
+          remove-swapfile: "true"
           verbose: "false"
       - uses: actions/checkout@v7.0.1
       - name: Record actual runner resources
