@@ -2283,12 +2283,17 @@ class Collector:
                     else:
                         self.include_directory(match[1], "command-include")
             elif token.startswith("@"):
-                # Ninja writes declared rspfiles; their content is inspected separately.
-                path = self.path(token[1:])
-                if not beneath(path, self.out_root):
-                    self.add(path, "command-response")
+                # Ninja writes declared rspfiles; their content is inspected
+                # separately. Tools also use @name@ placeholders (config
+                # templates, sed scripts), which are never input paths.
+                value = token[1:]
+                path = self.path(value)
+                declared = path in self.aux_outputs or path in self.response_contents
+                if value and "@" not in value and not beneath(path, self.out_root) \
+                        and (declared or path.is_file() or self.produced(path)):
+                    self.add(path, "command-response", required=False)
                     if not self.produced(path) and path.is_file():
-                        self.command(path.read_text(), response_context(command, token[1:]))
+                        self.command(path.read_text(), response_context(command, value))
             elif token not in {"&&", "||", ";", "|", "(", ")", ">", "<"}:
                 value = command_operand(token)
                 if value and not value.startswith("-"):
