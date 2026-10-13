@@ -1198,6 +1198,22 @@ class Collector:
         if self.allowed_path(resolved):
             self.scan_directory(resolved, reason, headers_only=True)
 
+    def package_directory(self, value, reason):
+        """Scan a HIDL package root completely.
+
+        hidl-gen decides whether an interface is frozen from the package's
+        ``current.txt`` hash list, which a header-only scan would drop, so these
+        roots take every file they hold (.hal interfaces, hash lists, Android.bp).
+        """
+        path = self.path(value)
+        if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
+            return
+        resolved = self.symlink_ancestors(path, reason)
+        if resolved in {self.source_root, self.out_root}:
+            return
+        if self.allowed_path(resolved):
+            self.scan_directory(resolved, reason)
+
     def tool_package(self, value):
         path = self.path(value)
         if not self.selected(path) or not beneath(path, self.source_root):
@@ -2273,11 +2289,11 @@ class Collector:
                 root = tokens[index + 1].split(":", 1)[-1]
                 index += 1
                 if root:
-                    self.include_directory(root, "command-include:-r")
+                    self.package_directory(root, "command-package:-r")
             elif token.startswith("-r") and ":" in token:
                 root = token.split(":", 1)[1]
                 if root:
-                    self.include_directory(root, "command-include:-r")
+                    self.package_directory(root, "command-package:-r")
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
