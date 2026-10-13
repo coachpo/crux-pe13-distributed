@@ -1359,6 +1359,34 @@ class Collector:
             return command
         return command.replace("__SBOX_SANDBOX_DIR__", str(self.sandbox_root))
 
+    def insertkeys_certificates(self, value, root):
+        """Add the certificates a keys.conf maps for an insertkeys run.
+
+        `insertkeys` replaces alias tags in mac_permissions.xml with the signing
+        certificates named by a keys.conf. The configuration is generated, but
+        the same directory layout keeps the source keys.conf beside the policy
+        XML it describes.
+        """
+        path = self.path(value)
+        directory = path.parent
+        candidates = [directory / "keys.conf"]
+        if self.produced(path):
+            # A generated key list (m4 output) still descends from source config.
+            candidates.append(directory.parent / "keys.conf")
+        for config in candidates:
+            if not self.selected(config) or self.produced(config) or not optional_probe(config):
+                continue
+            text = config.read_text(errors="replace")
+            for line in text.splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line or line.startswith("["):
+                    continue
+                key, separator, certificate = line.partition(":")
+                if not separator or not certificate.strip():
+                    continue
+                self.add(root / certificate.strip(), "insertkeys-certificate:" + str(config),
+                         required=False)
+
     def sandbox_inner_commands(self, command):
         """Recover the native commands an Sbox action actually executes.
 
@@ -2140,6 +2168,25 @@ class Collector:
         # `bash -c '<script>'` bodies carry real tool invocations (Sbox wraps
         # commands this way); analyze each body like the shell would run it.
         for program, end in command_invocations(tokens):
+            if Path(tokens[program]).name == "insertkeys":
+                root = self.source_root
+                position = program + 1
+                while position < end:
+                    token = tokens[position]
+                    if token in {"-c", "--cwd"} and position + 1 < end:
+                        root = self.path(tokens[position + 1])
+                        position += 2
+                        continue
+                    if token in {"-t", "--target-build-variant", "-d", "--key-directory",
+                                 "-o", "--output"} and position + 1 < end:
+                        position += 2
+                        continue
+                    if not isinstance(token, str) or token.startswith("-"):
+                        position += 1
+                        continue
+                    if token.endswith(".xml"):
+                        self.insertkeys_certificates(token, root)
+                    position += 1
             if Path(tokens[program]).name not in {"bash", "sh", "dash", "zsh"}:
                 continue
             for position in range(program + 1, end - 1):
