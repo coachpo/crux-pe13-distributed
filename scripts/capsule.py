@@ -26,7 +26,7 @@ COMPILED_SUFFIXES = {
     ".o", ".a", ".so", ".jar", ".apk", ".dex", ".class", ".art",
     ".odex", ".vdex", ".img", ".dtb", ".dtbo", ".ko", ".bc", ".zip",
 }
-HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal"}
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal", ".rsh"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
 # A preprocessor include can name a body whose suffix is not a header, such as
 # BoringSSL's fipsmodule/aes/aes.c, libc++'s exception_libcxxabi.ipp or a
