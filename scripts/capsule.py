@@ -1441,7 +1441,19 @@ class Collector:
                     commands.append(self.scrub_sandbox_paths(" && ".join(values)))
         return commands
 
-    def compiler_input(self, value, include_paths):
+    def compiler_defines(self, tokens):
+        """Map command-line string defines a macro include can name."""
+        defines = {}
+        for token in tokens:
+            if not isinstance(token, str) or not token.startswith("-D"):
+                continue
+            name, separator, value = token[2:].partition("=")
+            value = value.strip()
+            if separator and len(value) >= 2 and value[0] in "\"'\"" and value[-1] == value[0]:
+                defines.setdefault(name, value[1:-1])
+        return defines
+
+    def compiler_input(self, value, include_paths, defines=None):
         """Follow the same preprocessor search a compiler performs.
 
         Ninja names a compile command, not the bodies its ``#include``
@@ -1461,7 +1473,14 @@ class Collector:
             return
         self.compiler_scan_cache.add(key)
         text = path.read_text(errors="replace")
-        for quote, name in re.findall(r'^[ \t]*#[ \t]*include[ \t]*([<"])([^">\n]+)[">]', text, re.MULTILINE):
+        includes = re.findall(r'^[ \t]*#[ \t]*include[ \t]*([<"])([^">\n]+)[">]', text, re.MULTILINE)
+        # `#include NAME` takes the string literal a -D option supplied.
+        for name in re.findall(r'^[ \t]*#[ \t]*include[ \t]+([A-Za-z_][A-Za-z_0-9]*)[ \t]*$',
+                               text, re.MULTILINE):
+            literal = (defines or {}).get(name)
+            if literal:
+                includes.append(('"', literal))
+        for quote, name in includes:
             candidates = [path.parent / name] if quote == '"' else []
             candidates.extend(directory / name for directory in include_paths)
             dependency = next((candidate for candidate in candidates
@@ -1470,7 +1489,7 @@ class Collector:
                 continue
             self.add(dependency, "compiler-include:" + str(path), required=False)
             if dependency.suffix in COMPILER_SCAN_SUFFIXES:
-                self.compiler_input(dependency, include_paths)
+                self.compiler_input(dependency, include_paths, defines)
 
     def tablegen_input(self, value, include_paths):
         """Follow the TableGen include search llvm-tblgen performs.
@@ -2368,7 +2387,7 @@ class Collector:
                         candidates.extend(directory / value for directory in include_paths)
                     found = next((path for path in candidates if path.is_file() or self.produced(path)), candidates[0])
                     self.add(found, "command-input:" + token)
-                    self.compiler_input(found, include_paths)
+                    self.compiler_input(found, include_paths, self.compiler_defines(tokens))
             elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
                 match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
                 if match:
@@ -2397,7 +2416,7 @@ class Collector:
                         if path.suffix in {".s", ".S", ".asm"}:
                             self.assembler_inputs(path, assembler_paths)
                         if path.suffix in COMPILER_SCAN_SUFFIXES:
-                            self.compiler_input(path, include_paths)
+                            self.compiler_input(path, include_paths, self.compiler_defines(tokens))
                         if path.suffix in TABLEGEN_SUFFIXES:
                             self.tablegen_input(path, include_paths)
                         if path.suffix in AIDL_SUFFIXES:
