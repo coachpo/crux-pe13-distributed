@@ -1339,6 +1339,24 @@ class Collector:
                 return payload
         return None
 
+    def scrub_sandbox_paths(self, command):
+        """Drop sandbox-internal paths the runner substitutes at execution.
+
+        Sbox rewrites ``__SBOX_SANDBOX_DIR__`` to a temporary OUT directory for
+        outputs, copied tools and depfiles. Those tokens say nothing about
+        source inputs, and treating them as frozen paths makes packing fail.
+        """
+        if "__SBOX_SANDBOX_DIR__" not in command:
+            return command
+        kept = []
+        for token in command_tokens(command):
+            if "__SBOX_SANDBOX_DIR__" in token:
+                if kept and kept[-1] in {"-o", "-d", "-include", "-imacros", "-I", "-MF", "-MT", "-MQ"}:
+                    kept.pop()
+                continue
+            kept.append(token)
+        return " ".join(kept)
+
     def sandbox_inner_commands(self, command):
         """Recover the native commands an Sbox action actually executes.
 
@@ -1371,9 +1389,10 @@ class Collector:
                 # The sandbox records one or more command lines per block.
                 values = inner if isinstance(inner, list) else [inner]
                 values = [value for value in values if isinstance(value, str) and value and "\x00" not in value]
+                values = [self.scrub_sandbox_paths(value) for value in values]
                 commands.extend(values)
                 if len(values) > 1:
-                    commands.append(" && ".join(values))
+                    commands.append(self.scrub_sandbox_paths(" && ".join(values)))
         return commands
 
     def compiler_input(self, value, include_paths):
