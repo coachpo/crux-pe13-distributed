@@ -920,6 +920,7 @@ class Collector:
         self.proto_scan_cache = set()
         self.flatbuffer_scan_cache = set()
         self.compiler_scan_cache = set()
+        self.linker_scan_cache = set()
         self.tablegen_scan_cache = set()
         self.aidl_scan_cache = set()
         self.rust_scan_cache = set()
@@ -1197,6 +1198,29 @@ class Collector:
             return
         if self.allowed_path(resolved):
             self.scan_directory(resolved, reason, headers_only=True)
+
+    def linker_script(self, value):
+        """Carry a linker script and the scripts it includes.
+
+        Link actions name version scripts and linker scripts through -Wl, and
+        -T options (`-Wl,--version-script,build/soong/cc/config/cfi_exports.map`),
+        which are inputs like any source file; those scripts can INCLUDE others.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        if path.resolve() in self.linker_scan_cache:
+            return
+        self.linker_scan_cache.add(path.resolve())
+        self.add(path, "linker-script", required=False)
+        if path.suffix not in {".map", ".lds", ".ld", ".script", ".ver"}:
+            return
+        for name in re.findall(r'^[ \t]*(?:INCLUDE|include)[ \t]+(\S+)', path.read_text(errors="replace"), re.MULTILINE):
+            candidates = [path.parent / name, self.source_root / name]
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is not None:
+                self.linker_script(dependency)
 
     def package_directory(self, value, reason):
         """Scan a HIDL package root completely.
@@ -2302,6 +2326,31 @@ class Collector:
                     assembler_paths.append(directory)
                 if token in {"--sysroot", "-isysroot"}:
                     include_paths.extend([directory / "usr/include", directory / "include"])
+            elif token.startswith("-Wl,") or token in {"-T", "--version-script", "--dynamic-list"} \
+                    or re.match(r"^--(?:version-script|dynamic-list|script|retain-symbols-file|just-symbols)=", token):
+                values = []
+                if token.startswith("-Wl,"):
+                    parts = token[4:].split(",")
+                    position = 0
+                    while position < len(parts):
+                        part = parts[position]
+                        match = re.match(r"^--(?:version-script|dynamic-list|script|retain-symbols-file|just-symbols)=(.*)$",
+                                         part)
+                        if match:
+                            values.append(match.group(1))
+                        elif part in {"-T", "--version-script", "--dynamic-list", "--script"} \
+                                and position + 1 < len(parts):
+                            position += 1
+                            values.append(parts[position])
+                        position += 1
+                elif token in {"-T", "--version-script", "--dynamic-list"} and index + 1 < len(tokens):
+                    index += 1
+                    values.append(str(tokens[index]))
+                else:
+                    values.append(token.split("=", 1)[1])
+                for value in values:
+                    if value:
+                        self.linker_script(value)
             elif token == "-r" and index + 1 < len(tokens):
                 # hidl-gen package roots are `-r<package>:<root>` mappings; the
                 # tool scans that root for the .hal files it imports.
