@@ -884,6 +884,9 @@ class Collector:
         self.graph_database = None
         self.source_root = Path(source_root).resolve()
         self.out_root = Path(out_root).resolve()
+        # Sbox substitutes __SBOX_SANDBOX_DIR__ with a temporary runtime tree in
+        # OUT; nothing under it is a frozen source input.
+        self.sandbox_root = self.out_root / ".crux-sbox"
         self.entries = {}
         self.virtual_files = {}
         self.errors = set()
@@ -1070,6 +1073,8 @@ class Collector:
 
     def add(self, value, reason, required=True):
         path = self.path(value)
+        if beneath(path, self.sandbox_root):
+            return
         if not self.selected(path) or self.excluded(path) or self.produced(path):
             return
         if not path.exists() and not path.is_symlink():
@@ -1352,14 +1357,7 @@ class Collector:
         """
         if "__SBOX_SANDBOX_DIR__" not in command:
             return command
-        kept = []
-        for token in command_tokens(command):
-            if "__SBOX_SANDBOX_DIR__" in token:
-                if kept and kept[-1] in {"-o", "-d", "-include", "-imacros", "-I", "-MF", "-MT", "-MQ"}:
-                    kept.pop()
-                continue
-            kept.append(token)
-        return " ".join(kept)
+        return command.replace("__SBOX_SANDBOX_DIR__", str(self.sandbox_root))
 
     def sandbox_inner_commands(self, command):
         """Recover the native commands an Sbox action actually executes.
