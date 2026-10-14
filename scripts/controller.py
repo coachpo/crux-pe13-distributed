@@ -168,7 +168,13 @@ def command_wave(args):
         if recorded and recorded.get('conclusion') == 'success' and task['id'] not in args.force.split():
             if recorded.get('manifest_sha256') and task.get('manifest_sha256') \
                     and recorded['manifest_sha256'] != task['manifest_sha256']:
-                raise SystemExit('Reused producer manifest differs from the frozen plan: ' + task['id'])
+                # An approved input correction replaces a shard's manifest; the reuse
+                # state has to say so explicitly, otherwise the producer is refused.
+                if recorded.get('approved_variant') is not True:
+                    raise SystemExit('Reused producer manifest differs from the frozen plan: '
+                                     + task['id'])
+                say('Reusing %s with its approved variant manifest %s'
+                    % (task['id'], recorded['manifest_sha256'][:12]))
             say('Reusing %s from run %s' % (task['id'], recorded['run_id']))
             continue
         row = {'id': task['id'],

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "build_number": "2026101104",
-  "note": "Accepted 2026101104 producers. w004-s000 is the approved variant-manifest run that declares the ramdisk mount points; all other shards are the first successful frozen producers.",
+  "note": "Accepted 2026101104 producers. w004-s000 is the approved variant-manifest run that declares the ramdisk mount points; all other shards are the first successful frozen producers. w004-s000 is marked as an approved variant-manifest producer; the terminal wave recompiles on top of its repaired artifact.",
   "tasks": {
     "w000-s009": {
       "run_id": 38284508801,
@@ -298,7 +298,9 @@
       "conclusion": "success",
       "artifact": "shard-w004-s000",
       "wave": 4,
-      "manifest_sha256": "f25bafca970cd2fc836ebe4df4a4d4d1bd3436977c24a0e5145aa905d9e164f6"
+      "manifest_sha256": "f25bafca970cd2fc836ebe4df4a4d4d1bd3436977c24a0e5145aa905d9e164f6",
+      "approved_variant": true,
+      "variant_reason": "The accepted build replaced this shard with an approved input correction: its variant manifest declares the seven boot-ramdisk mount-point directories that the frozen manifest lost, which is what makes the terminal boot image carry them. Run 38505229489 produced the repaired artifact."
     },
     "w005-s000": {
       "run_id": 38379078673,
