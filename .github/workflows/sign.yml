@@ -94,6 +94,16 @@ jobs:
       SOURCE_ROOT: /home/qingli/crux-pe13-offline-2026-09-25/pe13
       HOST_TOOLS: /home/qingli/crux-pe13-release-tier1-2026-10-09/android-out/host/linux-x86
       IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
+      RUN_ID: ${{ inputs.run_id }}
+      TASK_ID: ${{ inputs.task_id }}
+      ARTIFACT: ${{ inputs.artifact }}
+      KERNEL_RUN_ID: ${{ inputs.kernel_run_id }}
+      KERNEL_TASK_ID: ${{ inputs.kernel_task_id }}
+      KERNEL_ARTIFACT: ${{ inputs.kernel_artifact }}
+      WORKER_COMMIT: ${{ inputs.worker_commit }}
+      TOOLS_TAG: ${{ inputs.tools_tag }}
+      CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - name: Configure runner paths
         shell: bash
@@ -460,9 +470,6 @@ jobs:
 
       - name: Publish the signed candidate release
         shell: bash
-        env:
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
-          BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
           exec > >(tee -a "$OUTPUT_ROOT/result/signing.log") 2>&1
