@@ -332,18 +332,21 @@ jobs:
                     '-isystem', 'external/libcxx/include', '-isystem', 'external/libcxxabi/include',
                     '-I', 'bootable/recovery', '-I', 'bootable/recovery/otautil/include',
                     '-I', 'system/libbase/include', '-I', 'system/libziparchive/include',
-                    '-I', 'external/boringssl/src/include',
-                    str(retained / 'soong/.intermediates/bootable/recovery/otautil/libotautil/'
-                                   'linux_glibc_x86_64_static/libotautil.a')]
+                    '-I', 'external/boringssl/src/include']
+          # Static archives stay after the translation units: the retained tier 1
+          # compile commands rely on the linker resolving in that order.
+          otatil = str(retained / 'soong/.intermediates/bootable/recovery/otautil/libotautil/'
+                                  'linux_glibc_x86_64_static/libotautil.a')
+          gtest = str(retained / 'soong/.intermediates/external/googletest/googletest/'
+                                'libgtest/linux_glibc_x86_64_static/libgtest.a')
           commands = [
-              ['verifier', common + ['-Wall', '-Werror', str(Path('signing/gates/ota-verifier-host.cpp').resolve())]
+              ['verifier', common + ['-Wall', '-Werror',
+                                     str(Path('signing/gates/ota-verifier-host.cpp').resolve()), otatil]
                + libs + ['-o', str(build / 'ota-verifier-host')]],
               ['tests', common + ['-I', 'bootable/recovery/tests',
                                   '-I', 'external/googletest/googletest/include',
                                   'bootable/recovery/tests/unit/verifier_test.cpp',
-                                  'external/googletest/googletest/src/gtest_main.cc',
-                                  str(retained / 'soong/.intermediates/external/googletest/googletest/'
-                                                 'libgtest/linux_glibc_x86_64_static/libgtest.a')]
+                                  'external/googletest/googletest/src/gtest_main.cc', otatil, gtest]
                + libs + ['-o', str(build / 'verifier_host_test')]],
           ]
           for label, command in commands:
