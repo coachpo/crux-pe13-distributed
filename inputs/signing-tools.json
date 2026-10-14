@@ -14,6 +14,10 @@
     "device-scripts.tar.zst": {
       "sha256": "71dbca147bf984bc46321eeb4f82abfb43066c32c4ad65b48f3ca86c5c67e841",
       "bytes": 32353
+    },
+    "signing-sources.tar.zst": {
+      "sha256": "3c1b9b8fb5cbe2c315bb5f7336fc43513f32ca04f6ec14e37b08fb4f42bd67c3",
+      "bytes": 75798
     }
   },
   "clang_mirror": {
@@ -21,5 +25,6 @@
     "asset": "prebuilts-clang-host-linux-x86-clang-r450784d.tar.gz",
     "sha256": "c4eb5d3225080021253110d9ad8defe27f4fc314dd0ec3942b7dfc1f5c864d01",
     "bytes": 622839780
-  }
+  },
+  "note": "archives hold the retained host tools, the verifier sources with their retained static and shared libraries plus the public verification material, and the device packaging scripts with the 38 source certificates the release packager remaps SELinux labels from."
 }
