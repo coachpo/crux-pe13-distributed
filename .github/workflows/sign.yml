@@ -236,14 +236,13 @@ jobs:
                   raise SystemExit('Artifact has expired: ' + name)
               directory = output / record_name
               directory.mkdir(parents=True, exist_ok=True)
-              subprocess.run(['gh', 'run', 'download', str(run_id), '--repo', repository,
-                              '--name', name, '--dir', str(directory)], check=True)
+              # `gh run download` extracts without exposing the archive, so the
+              # artifact is fetched as its raw zip and hashed before extraction.
               archive = directory / (name + '.zip')
-              if not archive.is_file():
-                  candidates = list(directory.glob('*.zip'))
-                  if len(candidates) != 1:
-                      raise SystemExit('Downloaded artifact zip is ambiguous for ' + name)
-                  archive = candidates[0]
+              with archive.open('wb') as destination:
+                  subprocess.run(['gh', 'api',
+                                  'repos/%s/actions/artifacts/%s/zip' % (repository, row['id'])],
+                                 stdout=destination, check=True)
               hasher = hashlib.sha256()
               with archive.open('rb') as stream:
                   for block in iter(lambda: stream.read(1 << 22), b''):
@@ -251,8 +250,8 @@ jobs:
               actual = 'sha256:' + hasher.hexdigest()
               if actual != row['digest']:
                   raise SystemExit('Artifact digest mismatch: ' + name)
-              with zipfile.ZipFile(archive) as bundle:
-                  bundle.extractall(directory)
+              subprocess.run(['unzip', '-q', str(archive), '-d', str(directory)], check=True)
+              archive.unlink()
               run = run_record(record_name, run_id)
               records[record_name] = {'artifact': name, 'digest': actual, 'run_id': int(run_id),
                                       'head_sha': run['head_sha'], 'run_url': run['url']}
