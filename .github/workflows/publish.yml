@@ -78,8 +78,6 @@ jobs:
     env:
       REPOSITORY: coachpo/crux-pe13-ota
       PAGES_URL: https://coachpo.github.io/crux-pe13-ota
-      RUNNER_WORK: ${{ runner.temp }}/publish
-      OTA_REPO: ${{ runner.temp }}/publish/ota
       IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
       CANDIDATE_TAG: ${{ inputs.candidate_tag }}
       OTA_TAG: ${{ inputs.ota_tag }}
@@ -94,6 +92,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "RUNNER_WORK=$RUNNER_TEMP/publish" >> "$GITHUB_ENV"
+          echo "OTA_REPO=$RUNNER_TEMP/publish/ota" >> "$GITHUB_ENV"
+          export RUNNER_WORK="$RUNNER_TEMP/publish"
+          export OTA_REPO="$RUNNER_TEMP/publish/ota"
           mkdir -p "$RUNNER_WORK/result" "$RUNNER_WORK/assets"
           sudo apt-get update
           sudo apt-get install -y zstd

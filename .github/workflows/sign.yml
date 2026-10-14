@@ -93,9 +93,16 @@ jobs:
       GH_REPO: ${{ github.repository }}
       SOURCE_ROOT: /home/qingli/crux-pe13-offline-2026-09-25/pe13
       HOST_TOOLS: /home/qingli/crux-pe13-release-tier1-2026-10-09/android-out/host/linux-x86
-      OUTPUT_ROOT: ${{ runner.temp }}/signing
       IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
     steps:
+      - name: Configure runner paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `runner.temp` is not available to job-level env, so the working root is
+          # exported where the shells can read it.
+          echo "OUTPUT_ROOT=$RUNNER_TEMP/signing" >> "$GITHUB_ENV"
+
       - name: Record runner resources
         shell: bash
         run: |
