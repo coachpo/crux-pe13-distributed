@@ -49,8 +49,9 @@ on:
         default: shard-w001-s001
         type: string
       worker_commit:
-        description: Worker commit both artifacts were compiled with
-        required: true
+        description: Optional assertion; the dispatched run heads are read from the API
+        required: false
+        default: ""
         type: string
       build_number:
         description: Frozen build number
@@ -178,7 +179,7 @@ jobs:
           print('Restored compiler ' + mirror['asset'], flush=True)
           PY
 
-      - name: Download and verify both compile artifacts
+      - name: Verify both compile runs and download their artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -190,6 +191,21 @@ jobs:
           output = Path(os.environ['OUTPUT_ROOT'])
           repository = os.environ['GH_REPO']
           records = {}
+
+          def run_record(record_name, run_id):
+              payload = json.loads(subprocess.run(
+                  ['gh', 'api', 'repos/%s/actions/runs/%s' % (repository, run_id)],
+                  capture_output=True, text=True, check=True).stdout)
+              if payload.get('conclusion') != 'success' or payload.get('event') != 'workflow_dispatch':
+                  raise SystemExit(record_name + ' run is not a successful dispatch')
+              if not str(payload.get('path', '')).endswith('.github/workflows/wave.yml'):
+                  raise SystemExit(record_name + ' run is not a cold wave run')
+              head = payload['head_sha']
+              if os.environ.get('WORKER_COMMIT') and os.environ['WORKER_COMMIT'] != head:
+                  raise SystemExit(record_name + ' run head differs from the asserted worker commit')
+              print('Run %s %s head %s' % (record_name, run_id, head), flush=True)
+              return {'run_id': int(run_id), 'head_sha': head, 'url': payload['html_url'],
+                      'conclusion': payload['conclusion'], 'path': payload['path']}
 
           def artifact(record_name, run_id, name):
               payload = json.loads(subprocess.run(
@@ -220,7 +236,9 @@ jobs:
                   raise SystemExit('Artifact digest mismatch: ' + name)
               with zipfile.ZipFile(archive) as bundle:
                   bundle.extractall(directory)
-              records[record_name] = {'artifact': name, 'digest': actual, 'run_id': int(run_id)}
+              run = run_record(record_name, run_id)
+              records[record_name] = {'artifact': name, 'digest': actual, 'run_id': int(run_id),
+                                      'head_sha': run['head_sha'], 'run_url': run['url']}
               print('Verified artifact %s %s' % (name, actual), flush=True)
               return directory
 
@@ -263,7 +281,8 @@ jobs:
                      '--kernel-task-id', os.environ['KERNEL_TASK_ID'],
                      '--kernel-artifact', os.environ['KERNEL_ARTIFACT'],
                      '--kernel-artifact-digest', records['kernel']['digest'],
-                     '--worker-commit', os.environ['WORKER_COMMIT'],
+                     '--worker-commit', records['terminal']['head_sha'],
+                     '--kernel-worker-commit', records['kernel']['head_sha'],
                      '--identity', os.environ['IDENTITY'],
                      '--target-files', identity['target_files']['artifact_path'],
                      '--kernel-root', identity['kernel']['base'],

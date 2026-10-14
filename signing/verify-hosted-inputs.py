@@ -86,7 +86,10 @@ def main():
     parser.add_argument('--kernel-task-id', required=True)
     parser.add_argument('--kernel-artifact', required=True)
     parser.add_argument('--kernel-artifact-digest', required=True)
-    parser.add_argument('--worker-commit', required=True)
+    parser.add_argument('--worker-commit', required=True,
+                        help='head SHA of the terminal compile run')
+    parser.add_argument('--kernel-worker-commit',
+                        help='head SHA of the kernel compile run; defaults to --worker-commit')
     parser.add_argument('--identity', type=Path, required=True)
     parser.add_argument('--target-files', type=Path, required=True)
     parser.add_argument('--kernel-root', type=Path, required=True)
@@ -96,15 +99,17 @@ def main():
     identity = read(args.identity)
     receipt = read(args.receipt)
     kernel_receipt = read(args.kernel_receipt)
-    for label, record, run_id, task_id, digest_value in (
-            ('Terminal', receipt, args.run_id, args.task_id, args.artifact_digest),
-            ('Kernel', kernel_receipt, args.kernel_run_id, args.kernel_task_id, args.kernel_artifact_digest)):
+    kernel_worker = args.kernel_worker_commit or args.worker_commit
+    for label, record, run_id, task_id, digest_value, worker in (
+            ('Terminal', receipt, args.run_id, args.task_id, args.artifact_digest, args.worker_commit),
+            ('Kernel', kernel_receipt, args.kernel_run_id, args.kernel_task_id,
+             args.kernel_artifact_digest, kernel_worker)):
         require(record.get('schema_version') == 1 and record.get('status') == 'success',
                 label + ' worker receipt is not a successful schema 1 record')
         require(record.get('id') == task_id, label + ' receipt belongs to another task')
         require(record.get('run_id') == run_id, label + ' receipt run id differs from the dispatched run')
-        require(record.get('worker_commit') == args.worker_commit,
-                label + ' receipt worker commit differs from the pinned worker')
+        require(record.get('worker_commit') == worker,
+                label + ' receipt worker commit differs from the dispatched run head')
         require(isinstance(record.get('manifest_sha256'), str)
                 and re.fullmatch('[0-9a-f]{64}', record['manifest_sha256']),
                 label + ' receipt does not identify its slice manifest')
@@ -141,6 +146,7 @@ def main():
             'run_id': args.run_id,
             'run_url': args.run_url,
             'worker_commit': args.worker_commit,
+            'kernel_worker_commit': kernel_worker,
             'conclusion': 'success',
             'runner_type': 'public_standard',
             'artifact': args.artifact,
