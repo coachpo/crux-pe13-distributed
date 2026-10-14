@@ -482,32 +482,37 @@ jobs:
                        'seconds': round(time.time() - started, 1)}
               if metadata['manifest_sha256'] != row['manifest_sha256']:
                   raise SystemExit('Packed capsule manifest differs: ' + row['id'])
-              if row.get('payload') and (mode == 'probe' or not entry['sha256_match']):
+              if row.get('payload'):
                   identity = payload_identity(output, staging)
                   entry['payload'] = identity
                   entry['payload_matches_frozen'] = (
                       identity['uncompressed_sha256'] == row['payload']['uncompressed_sha256']
-                      and identity['member_table_sha256'] == row['payload']['member_table_sha256'])
+                      and identity['member_table_sha256'] == row['payload']['member_table_sha256']
+                      and identity['uncompressed_bytes'] == row['payload']['uncompressed_bytes']
+                      and identity['member_count'] == row['payload']['member_count'])
                   if not entry['payload_matches_frozen']:
                       report['failures'].append(row['id'] + ':payload')
                       raise SystemExit('Packed capsule payload differs from the frozen record: '
                                        + json.dumps(identity, sort_keys=True))
-              if not (entry['bytes_match'] and entry['sha256_match']):
+              elif not (entry['bytes_match'] and entry['sha256_match']):
                   report['failures'].append(row['id'])
               report['shards'].append(entry)
               print(json.dumps(entry, sort_keys=True), flush=True)
               (staging / 'result/pack-comparison.json').write_text(json.dumps(report, indent=2) + '\n')
           exact = [row['id'] for row in report['shards'] if row['sha256_match']]
           report['archive_digest_matches'] = exact
+          report['payload_verified'] = [row['id'] for row in report['shards']
+                                        if row.get('payload_matches_frozen')]
           (staging / 'result/pack-comparison.json').write_text(json.dumps(report, indent=2) + '\n')
+          # The payload is the contract: the compressed digest additionally depends on
+          # the host that ran zstd, because a streamed tar is split into compression
+          # jobs differently on a 4-core runner than on the 17-core build host.
+          print(json.dumps({'archive_digest_matches': exact,
+                            'archive_digest_differs': [row['id'] for row in report['shards']
+                                                       if not row['sha256_match']],
+                            'payload_verified': report['payload_verified'],
+                            'failures': report['failures']}, indent=2))
           if report['failures']:
-              # A packer revision that annotates the same payload differently is
-              # reported, not hidden: the payload identity above is the payload gate.
-              print(json.dumps({'archive_digest_matches': exact,
-                                'archive_digest_differs': [row['id'] for row in report['shards']
-                                                           if not row['sha256_match']],
-                                'payload_verified': [row['id'] for row in report['shards']
-                                                     if row.get('payload_matches_frozen')]}, indent=2))
               raise SystemExit('Packed capsules differ from the frozen assets: ' +
                                ' '.join(report['failures']))
           PY
