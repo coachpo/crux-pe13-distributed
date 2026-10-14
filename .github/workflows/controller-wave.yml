@@ -75,7 +75,12 @@ jobs:
             --control "$RUNNER_TEMP/result/wave-${{ inputs.wave }}.json" \
             --summary "$RUNNER_TEMP/result/wave-${{ inputs.wave }}-summary.json" \
             | tee "$RUNNER_TEMP/result/wave-${{ inputs.wave }}.log"
-          echo "summary=$(cat "$RUNNER_TEMP/result/wave-${{ inputs.wave }}-summary.json")" >> "$GITHUB_OUTPUT"
+          # GITHUB_OUTPUT needs the delimited form for a multi-line value.
+          {
+            echo "summary<<WAVE_SUMMARY"
+            cat "$RUNNER_TEMP/result/wave-${{ inputs.wave }}-summary.json"
+            echo "WAVE_SUMMARY"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
