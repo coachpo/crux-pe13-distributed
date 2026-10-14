@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "kind": "retained-signing-toolchain",
+  "build_number": "2026101104",
+  "archives": {
+    "host-linux-x86.tar.zst": {
+      "sha256": "1e92bbb5629ead8263cbc9c76f8138c3502ea09ab367f45138817e96fcc37829",
+      "bytes": 1512647955
+    },
+    "verifier-and-public.tar.zst": {
+      "sha256": "c4fdedf60423c252b2489c9f0dc09c33b393f71daf2289ee4621d58008b3f42e",
+      "bytes": 208734394
+    },
+    "device-scripts.tar.zst": {
+      "sha256": "71dbca147bf984bc46321eeb4f82abfb43066c32c4ad65b48f3ca86c5c67e841",
+      "bytes": 32353
+    }
+  },
+  "clang_mirror": {
+    "release_tag": "toolchain-mirror-2026101104",
+    "asset": "prebuilts-clang-host-linux-x86-clang-r450784d.tar.gz",
+    "sha256": "c4eb5d3225080021253110d9ad8defe27f4fc314dd0ec3942b7dfc1f5c864d01",
+    "bytes": 622839780
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "apex": {
+    "com.android.adbd.apex": {
+      "container_key": "apex/containers/com.android.adbd",
+      "payload_key": "apex/payloads/com.android.adbd.pem"
+    },
+    "com.android.adservices.apex": {
+      "container_key": "apex/containers/com.android.adservices",
+      "payload_key": "apex/payloads/com.android.adservices.pem"
+    },
+    "com.android.apex.cts.shim.apex": {
+      "container_key": "PRESIGNED",
+      "payload_key": "PRESIGNED"
+    },
+    "com.android.appsearch.apex": {
+      "container_key": "apex/containers/com.android.appsearch",
+      "payload_key": "apex/payloads/com.android.appsearch.pem"
+    },
+    "com.android.art.apex": {
+      "container_key": "apex/containers/com.android.art",
+      "payload_key": "apex/payloads/com.android.art.pem"
+    },
+    "com.android.btservices.apex": {
+      "container_key": "apex/containers/com.android.btservices",
+      "payload_key": "apex/payloads/com.android.btservices.pem"
+    },
+    "com.android.cellbroadcast.apex": {
+      "container_key": "apex/containers/com.android.cellbroadcast",
+      "payload_key": "apex/payloads/com.android.cellbroadcast.pem"
+    },
+    "com.android.conscrypt.apex": {
+      "container_key": "apex/containers/com.android.conscrypt",
+      "payload_key": "apex/payloads/com.android.conscrypt.pem"
+    },
+    "com.android.extservices.apex": {
+      "container_key": "apex/containers/com.android.extservices",
+      "payload_key": "apex/payloads/com.android.extservices.pem"
+    },
+    "com.android.i18n.apex": {
+      "container_key": "apex/containers/com.android.i18n",
+      "payload_key": "apex/payloads/com.android.i18n.pem"
+    },
+    "com.android.ipsec.apex": {
+      "container_key": "apex/containers/com.android.ipsec",
+      "payload_key": "apex/payloads/com.android.ipsec.pem"
+    },
+    "com.android.media.apex": {
+      "container_key": "apex/containers/com.android.media",
+      "payload_key": "apex/payloads/com.android.media.pem"
+    },
+    "com.android.media.swcodec.apex": {
+      "container_key": "apex/containers/com.android.media.swcodec",
+      "payload_key": "apex/payloads/com.android.media.swcodec.pem"
+    },
+    "com.android.mediaprovider.apex": {
+      "container_key": "apex/containers/com.android.mediaprovider",
+      "payload_key": "apex/payloads/com.android.mediaprovider.pem"
+    },
+    "com.android.neuralnetworks.apex": {
+      "container_key": "apex/containers/com.android.neuralnetworks",
+      "payload_key": "apex/payloads/com.android.neuralnetworks.pem"
+    },
+    "com.android.ondevicepersonalization.apex": {
+      "container_key": "releasekey",
+      "payload_key": "apex/payloads/com.android.ondevicepersonalization.pem"
+    },
+    "com.android.os.statsd.apex": {
+      "container_key": "apex/containers/com.android.os.statsd",
+      "payload_key": "apex/payloads/com.android.os.statsd.pem"
+    },
+    "com.android.permission.apex": {
+      "container_key": "apex/containers/com.android.permission",
+      "payload_key": "apex/payloads/com.android.permission.pem"
+    },
+    "com.android.resolv.apex": {
+      "container_key": "apex/containers/testcert",
+      "payload_key": "apex/payloads/com.android.resolv.pem"
+    },
+    "com.android.runtime.apex": {
+      "container_key": "apex/containers/com.android.runtime",
+      "payload_key": "apex/payloads/com.android.runtime.pem"
+    },
+    "com.android.scheduling.apex": {
+      "container_key": "releasekey",
+      "payload_key": "apex/payloads/com.android.scheduling.pem"
+    },
+    "com.android.sdkext.apex": {
+      "container_key": "apex/containers/com.android.sdkext",
+      "payload_key": "apex/payloads/com.android.sdkext.pem"
+    },
+    "com.android.tethering.apex": {
+      "container_key": "releasekey",
+      "payload_key": "apex/payloads/com.android.tethering.pem"
+    },
+    "com.android.tzdata.apex": {
+      "container_key": "apex/containers/com.android.tzdata",
+      "payload_key": "apex/payloads/com.android.tzdata.pem"
+    },
+    "com.android.uwb.apex": {
+      "container_key": "apex/containers/com.android.uwb",
+      "payload_key": "apex/payloads/com.android.uwb.pem"
+    },
+    "com.android.vndk.current.apex": {
+      "container_key": "apex/containers/com.android.vndk.current",
+      "payload_key": "apex/payloads/com.android.vndk.current.pem"
+    },
+    "com.android.wifi.apex": {
+      "container_key": "apex/containers/com.android.wifi",
+      "payload_key": "apex/payloads/com.android.wifi.pem"
+    }
+  },
+  "avb": {
+    "recovery": {
+      "algorithm": "SHA256_RSA2048",
+      "key": "avb.pem"
+    },
+    "system": {
+      "algorithm": "SHA256_RSA2048",
+      "key": "avb.pem"
+    },
+    "vbmeta": {
+      "algorithm": "SHA256_RSA4096",
+      "key": "avb-4096.pem"
+    }
+  },
+  "key_map": {
+    "art/build/apex/com.android.art": "apex/containers/com.android.art",
+    "bionic/apex/com.android.runtime": "apex/containers/com.android.runtime",
+    "build/make/target/product/security/bluetooth": "bluetooth",
+    "build/make/target/product/security/media": "media",
+    "build/make/target/product/security/networkstack": "networkstack",
+    "build/make/target/product/security/platform": "platform",
+    "build/make/target/product/security/sdk_sandbox": "sdk_sandbox",
+    "build/make/target/product/security/shared": "shared",
+    "build/make/target/product/security/testkey": "releasekey",
+    "external/conscrypt/apex/com.android.conscrypt": "apex/containers/com.android.conscrypt",
+    "frameworks/av/apex/com.android.media": "apex/containers/com.android.media",
+    "frameworks/av/apex/com.android.media.swcodec": "apex/containers/com.android.media.swcodec",
+    "packages/apps/CellBroadcastReceiver/apex/com.android.cellbroadcast": "apex/containers/com.android.cellbroadcast",
+    "packages/modules/AdServices/adservices/apk/com.android.adservices.api": "apk-resources/com.android.adservices.api",
+    "packages/modules/AdServices/apex/com.android.adservices": "apex/containers/com.android.adservices",
+    "packages/modules/AppSearch/com.android.appsearch": "apex/containers/com.android.appsearch",
+    "packages/modules/Bluetooth/apex/com.android.btservices": "apex/containers/com.android.btservices",
+    "packages/modules/Connectivity/nearby/halfsheet/apk-certs/com.android.nearby.halfsheet": "apk-resources/com.android.nearby.halfsheet",
+    "packages/modules/Connectivity/service/ServiceConnectivityResources/resources-certs/com.android.connectivity.resources": "apk-resources/com.android.connectivity.resources",
+    "packages/modules/DnsResolver/apex/testcert": "apex/containers/testcert",
+    "packages/modules/ExtServices/apex/com.android.extservices": "apex/containers/com.android.extservices",
+    "packages/modules/IPsec/apex/com.android.ipsec": "apex/containers/com.android.ipsec",
+    "packages/modules/NeuralNetworks/apex/com.android.neuralnetworks": "apex/containers/com.android.neuralnetworks",
+    "packages/modules/Permission/SafetyCenter/Resources/com.android.safetycenter.resources": "apk-resources/com.android.safetycenter.resources",
+    "packages/modules/Permission/com.android.permission": "apex/containers/com.android.permission",
+    "packages/modules/RuntimeI18n/apex/com.android.i18n": "apex/containers/com.android.i18n",
+    "packages/modules/SdkExtensions/com.android.sdkext": "apex/containers/com.android.sdkext",
+    "packages/modules/StatsD/apex/com.android.os.statsd": "apex/containers/com.android.os.statsd",
+    "packages/modules/Uwb/apex/com.android.uwb": "apex/containers/com.android.uwb",
+    "packages/modules/Uwb/service/ServiceUwbResources/resources-certs/com.android.uwb.resources": "apk-resources/com.android.uwb.resources",
+    "packages/modules/Wifi/OsuLogin/certs/com.android.hotspot2.osulogin": "apk-resources/com.android.hotspot2.osulogin",
+    "packages/modules/Wifi/WifiDialog/certs/com.android.wifi.dialog": "apk-resources/com.android.wifi.dialog",
+    "packages/modules/Wifi/apex/com.android.wifi": "apex/containers/com.android.wifi",
+    "packages/modules/Wifi/service/ServiceWifiResources/resources-certs/com.android.wifi.resources": "apk-resources/com.android.wifi.resources",
+    "packages/modules/adb/apex/com.android.adbd": "apex/containers/com.android.adbd",
+    "packages/modules/vndk/apex/com.android.vndk.current": "apex/containers/com.android.vndk.current",
+    "packages/providers/MediaProvider/apex/com.android.mediaprovider": "apex/containers/com.android.mediaprovider",
+    "system/timezone/apex/com.android.tzdata": "apex/containers/com.android.tzdata"
+  },
+  "ota_package_key": "releasekey",
+  "schema_version": 1
+}
