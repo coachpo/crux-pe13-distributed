@@ -216,6 +216,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ github.workspace }}/${{ inputs.plan }}
+          REUSE: ${{ github.workspace }}/${{ inputs.reuse_state }}
         run: |
           set -euo pipefail
           python3 scripts/controller.py summary --plan "$PLAN" --state "$RUNNER_TEMP/state/state.json" \
@@ -227,9 +229,6 @@ jobs:
           print('terminal=' + json.dumps(summary['terminal']))
           print('kernel=' + json.dumps(summary['kernel']))
           PY
-        env:
-          PLAN: ${{ github.workspace }}/${{ inputs.plan }}
-          REUSE: ${{ github.workspace }}/${{ inputs.reuse_state }}
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: controller-summary
@@ -253,6 +252,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TERMINAL: ${{ needs.summary.outputs.terminal }}
           KERNEL: ${{ needs.summary.outputs.kernel }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          IDENTITY: ${{ inputs.identity }}
+          TOOLS_TAG: signing-tools-2026101104-v1
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
         run: |
           set -euo pipefail
           python3 - "$RUNNER_TEMP" <<'PY'
@@ -308,11 +311,6 @@ jobs:
               raise SystemExit('Signing failed: ' + state['url'])
           print('Signed candidate ' + os.environ['CANDIDATE_TAG'], flush=True)
           PY
-        env:
-          BUILD_NUMBER: ${{ inputs.build_number }}
-          IDENTITY: ${{ inputs.identity }}
-          TOOLS_TAG: signing-tools-2026101104-v1
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
 
   publish:
     needs: [summary, sign]
@@ -325,6 +323,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          IDENTITY: ${{ inputs.identity }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          OTA_TAG: ${{ inputs.ota_tag }}
+          SIGN_RUN_ID: ${{ needs.sign.outputs.run_id }}
         run: |
           set -euo pipefail
           python3 - "$RUNNER_TEMP" <<'PY'
@@ -368,9 +371,3 @@ jobs:
               raise SystemExit('Publication failed: ' + state['url'])
           print('Published ' + os.environ['OTA_TAG'], flush=True)
           PY
-        env:
-          BUILD_NUMBER: ${{ inputs.build_number }}
-          IDENTITY: ${{ inputs.identity }}
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
-          OTA_TAG: ${{ inputs.ota_tag }}
-          SIGN_RUN_ID: ${{ needs.sign.outputs.run_id }}
