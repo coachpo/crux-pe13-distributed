@@ -89,6 +89,10 @@ jobs:
           verbose: "false"
 
       - uses: actions/checkout@v7.0.1
+        with:
+          # The recorded packer revision is read out of history, so the checkout
+          # cannot be the default single-commit clone.
+          fetch-depth: 0
 
       - name: Configure the frozen source layout and host packages
         shell: bash

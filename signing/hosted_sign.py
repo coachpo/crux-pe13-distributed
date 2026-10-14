@@ -86,7 +86,7 @@ class Signing:
         host = self.args.host_tools
         signer = Path(self.args.source_root) / 'device/xiaomi/crux/scripts/package_release.py'
         require(signer.is_file(), 'missing nested signer: ' + str(signer))
-        self.args.key_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        Path(self.args.key_dir).mkdir(mode=0o700, parents=True, exist_ok=True)
         base = [sys.executable, '-B', signer]
         run(self.output / 'inspect.log', 'signing inventory',
             base + ['inspect', '--target-files', self.unsigned_path(), '--host-tools', host,
