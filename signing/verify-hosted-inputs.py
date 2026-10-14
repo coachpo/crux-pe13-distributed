@@ -107,7 +107,9 @@ def main():
         require(record.get('schema_version') == 1 and record.get('status') == 'success',
                 label + ' worker receipt is not a successful schema 1 record')
         require(record.get('id') == task_id, label + ' receipt belongs to another task')
-        require(record.get('run_id') == run_id, label + ' receipt run id differs from the dispatched run')
+        # The worker records the run id as the GITHUB_RUN_ID string.
+        require(str(record.get('run_id')) == str(run_id),
+                label + ' receipt run id differs from the dispatched run')
         require(record.get('worker_commit') == worker,
                 label + ' receipt worker commit differs from the dispatched run head')
         require(isinstance(record.get('manifest_sha256'), str)
