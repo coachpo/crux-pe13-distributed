@@ -1,0 +1,465 @@
+name: Prepare cold PE13 inputs
+run-name: PE13 prepare ${{ inputs.mode }} ${{ inputs.registry }}
+
+# Produces the cold shard inputs of a frozen release graph inside GitHub
+# Actions, with no local upload, download or compilation:
+#
+#   * the closure-pruned graph index and the exact Ninja files `graph.py` reads
+#     are restored from the `graph` release recorded in the registry,
+#   * the frozen source tree is reconstructed from the capsules that are already
+#     published, and every reconstructed file is verified against its recorded
+#     digest before anything is sliced,
+#   * toolchain directories are restored from their pinned public archives and
+#     verified against the same frozen identities,
+#   * `graph.py shard` and `finalize_slices.py` regenerate the slice set, and the
+#     run fails unless every regenerated `manifest.json` digest equals the frozen
+#     one,
+#   * `capsule.py pack` regenerates the capsules and, for every shard, the packed
+#     archive digest must equal the frozen published asset digest.
+#
+# `probe` slices and packs the shards named in `probe_shards` (default: one) and
+# only reports. `full` regenerates every shard and publishes the result to
+# `output_tag` so a later compile run can consume inputs this workflow produced.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: probe (verify a subset) or full (regenerate and publish)
+        required: true
+        default: probe
+        type: choice
+        options: [probe, full]
+      registry:
+        description: Frozen input registry inside this repository
+        required: true
+        default: inputs/frozen-inputs-2026101104.json
+        type: string
+      probe_shards:
+        description: Space separated shard ids for probe mode
+        required: false
+        default: w000-s000
+        type: string
+      output_tag:
+        description: Release tag for full mode (created when missing)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prepare-${{ inputs.registry }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      REGISTRY_PATH: ${{ github.workspace }}/${{ inputs.registry }}
+      MODE: ${{ inputs.mode }}
+      PROBE_SHARDS: ${{ inputs.probe_shards }}
+    steps:
+      - name: Record disk space before cleanup
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          df -B1 > "$RUNNER_TEMP/result/disks-before-cleanup.txt"
+
+      - name: Free disk space
+        continue-on-error: true
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "true"
+          remove-cached-tools: "false"
+          remove-swapfile: "true"
+          verbose: "false"
+
+      - uses: actions/checkout@v7.0.1
+
+      - name: Configure the frozen source layout and host packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/host-setup.log") 2>&1
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          nproc >> "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+          python3 -V >> "$RUNNER_TEMP/result/runner.txt"
+          sudo apt-get update
+          sudo apt-get install -y zstd python-is-python3
+          # Verbatim frozen paths, including the macOS firmlink paths this graph
+          # records for its three small cold Ninja frontends.
+          sudo mkdir -p /home/qingli /mnt/mac
+          sudo chown -R "$(id -u):$(id -g)" /home/qingli
+          # Capsule members carry uid/gid 501 named qingli on the build host;
+          # the packer records those names again, so the runner reproduces them.
+          sudo groupadd --gid 501 qingli
+          sudo useradd --uid 501 --gid 501 --no-create-home --home-dir /nonexistent qingli
+
+      - name: Download, verify and restore the frozen graph inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/graph-inputs.log") 2>&1
+          python3 - <<'PY'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          staging = Path(os.environ['RUNNER_TEMP'])
+          repository = registry['repository']
+          graph = registry['graph']
+          tag = graph['release_tag']
+
+          def digest(path):
+              result = hashlib.sha256()
+              with open(path, 'rb') as stream:
+                  for block in iter(lambda: stream.read(1 << 22), b''):
+                      result.update(block)
+              return result.hexdigest()
+
+          def download(tag, asset, directory):
+              directory.mkdir(parents=True, exist_ok=True)
+              subprocess.run(['gh', 'release', 'download', tag, '--repo', repository,
+                              '--pattern', asset, '--dir', str(directory)], check=True)
+              path = directory / asset
+              if not path.is_file():
+                  raise SystemExit('Missing release asset: ' + asset)
+              return path
+
+          def verify(path, expected, label):
+              actual = digest(path)
+              if actual != expected:
+                  raise SystemExit('%s digest mismatch: %s != %s' % (label, actual, expected))
+              return actual
+
+          payload = download(tag, graph['index']['asset'], staging / 'graph')
+          verify(payload, graph['index']['sha256'], 'Index archive')
+          subprocess.run(['zstd', '-d', '-q', '-f', str(payload),
+                          '-o', str(staging / 'index.sqlite')], check=True)
+          payload.unlink()
+          compressed = staging / 'index.sqlite'
+          if compressed.stat().st_size != graph['index']['raw_bytes']:
+              raise SystemExit('Restored index size differs from the frozen record')
+          verify(compressed, graph['index']['raw_sha256'], 'Pruned index')
+
+          payload = download(tag, graph['ninja']['asset'], staging / 'graph')
+          verify(payload, graph['ninja']['sha256'], 'Ninja archive')
+          subprocess.run(['sudo', 'tar', '--no-same-owner', '-xpf', str(payload), '-C', '/'], check=True)
+          payload.unlink()
+
+          # graph.py raw() refuses a Ninja file whose size or mtime_ns differ
+          # from the indexed values; the archive stores whole seconds only.
+          for record in graph['ninja']['files']:
+              path = Path(record['path'])
+              if not path.is_file() or path.stat().st_size != record['bytes']:
+                  raise SystemExit('Restored Ninja file differs: ' + str(path))
+              seconds, nanoseconds = divmod(record['mtime_ns'], 1_000_000_000)
+              subprocess.run(['sudo', 'touch', '-d', '@%d.%09d' % (seconds, nanoseconds),
+                              str(path)], check=True)
+              if path.stat().st_mtime_ns != record['mtime_ns']:
+                  raise SystemExit('Restored Ninja mtime differs: ' + str(path))
+              verify(path, record['sha256'], 'Ninja input')
+              print('Ninja input ' + str(path) + ' ' + str(record['bytes']), flush=True)
+
+          shared = download(tag, graph['shared_manifest']['asset'], staging / 'graph')
+          verify(shared, graph['shared_manifest']['sha256'], 'Shared layer manifest')
+          shutil.copy2(shared, staging / 'shared-prebuilts.json')
+
+          finalize = {}
+          for key, asset in (('source_closure', 'target-files-source-closure.json'),
+                             ('host_runtime', 'host-runtime.json'),
+                             ('integration_contract', 'integration-contract.json')):
+              path = download(tag, asset, staging / 'finalize')
+              verify(path, registry['finalize'][key]['sha256'], key)
+              finalize[key] = str(path)
+          (staging / 'finalize-inputs.json').write_text(json.dumps(finalize, indent=2) + '\n')
+          PY
+
+      - name: Reconstruct the frozen source tree from published capsules
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/source-restore.log") 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          staging = Path(os.environ['RUNNER_TEMP'])
+          repository = registry['repository']
+          mode = os.environ['MODE']
+          wanted = os.environ['PROBE_SHARDS'].split()
+          capsule_by_id = {row['id']: row for row in registry['capsules']}
+          if mode == 'probe':
+              selected = [capsule_by_id[name] for name in wanted]
+              selected += [row for row in registry['overlays'] if row['id'] in wanted]
+          else:
+              selected = list(registry['capsules'])
+              selected += list(registry['overlays'])
+          bundles = staging / 'bundles'
+          bundles.mkdir(parents=True, exist_ok=True)
+          for row in selected:
+              label = row['asset'].removesuffix('.tar.zst')
+              directory = staging / 'capsules' / label
+              directory.mkdir(parents=True, exist_ok=True)
+              subprocess.run(['gh', 'release', 'download', row['release_tag'], '--repo', repository,
+                              '--pattern', row['asset'], '--dir', str(directory)], check=True)
+              part = directory / row['asset']
+              if part.stat().st_size != row['bytes']:
+                  raise SystemExit('Capsule size differs from the frozen registry: ' + label)
+              with part.open('rb') as source:
+                  process = subprocess.Popen(['sudo', 'tar', '--zstd', '--same-owner', '--numeric-owner',
+                                              '-xpf', '-', '-C', '/'], stdin=source)
+                  if process.wait() != 0:
+                      raise SystemExit('Capsule extraction failed: ' + label)
+              source_root = Path(registry['source_root'])
+              bundle = source_root / '.crux-task/graph/bundle.json'
+              if not bundle.is_file():
+                  raise SystemExit('Capsule did not carry its bundle: ' + label)
+              (bundles / (label + '.json')).write_bytes(bundle.read_bytes())
+              part.unlink()
+              directory.rmdir()
+              print('Restored capsule ' + label, flush=True)
+          (staging / 'capsules').rmdir()
+          PY
+          # The capsule archive records each member's digest; the extraction
+          # above is the transport, and the packer re-derives every digest from
+          # the restored bytes, so any deviation fails the comparison step.
+
+      - name: Restore frozen toolchain directories from their public archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/source-archives.log") 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          staging = Path(os.environ['RUNNER_TEMP'])
+          profile = staging / 'profile' / registry['source_archives']['asset']
+          profile.parent.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['gh', 'release', 'download', registry['source_archives']['release_tag'],
+                          '--repo', registry['repository'], '--pattern', profile.name,
+                          '--dir', str(profile.parent)], check=True)
+          import hashlib
+          result = hashlib.sha256(profile.read_bytes()).hexdigest()
+          if result != registry['source_archives']['sha256']:
+              raise SystemExit('Source archive profile digest mismatch')
+          command = ['sudo', 'python3', 'scripts/source_archives.py', '--profile', str(profile)]
+          for bundle in sorted((staging / 'bundles').glob('*.json')):
+              command += ['--bundle', str(bundle)]
+          command += ['--receipt', str(staging / 'result/remote-source-receipt.json')]
+          raise SystemExit(subprocess.run(command).returncode)
+          PY
+
+      - name: Slice the frozen graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/slice.log") 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          command = ['python3', 'scripts/graph.py', 'shard',
+                     '--database', str(staging / 'index.sqlite'),
+                     '--output-dir', str(staging / 'shards'),
+                     '--max-actions', str(registry['max_actions']),
+                     '--max-parallel', str(registry['max_parallel'])]
+          for target in registry['targets']:
+              command += ['--target', target]
+          raise SystemExit(subprocess.run(command).returncode)
+          PY
+
+      - name: Finalize the cold transport contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/finalize.log") 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import hashlib, json, os, subprocess, sys
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          inputs = json.loads((staging / 'finalize-inputs.json').read_text())
+          command = ['python3', 'scripts/finalize_slices.py',
+                     '--shards', str(staging / 'shards'),
+                     '--source-closure', inputs['source_closure'],
+                     '--host-runtime', inputs['host_runtime'],
+                     '--integration-contract', inputs['integration_contract'],
+                     '--build-number', registry['build_number'],
+                     '--report', str(staging / 'result/slice-finalization.json')]
+          raise SystemExit(subprocess.run(command).returncode)
+          PY
+
+      - name: Compare every regenerated slice with the frozen record
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/slice-comparison.log") 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+
+          def digest(path):
+              result = hashlib.sha256()
+              with open(path, 'rb') as stream:
+                  for block in iter(lambda: stream.read(1 << 22), b''):
+                      result.update(block)
+              return result.hexdigest()
+
+          plan_bytes = (staging / 'shards/plan.json').read_bytes()
+          plan_digest = hashlib.sha256(plan_bytes).hexdigest()
+          plan = json.loads(plan_bytes)
+          if plan_digest != registry['slice_plan_sha256']:
+              raise SystemExit('Regenerated slice plan differs: %s != %s' %
+                               (plan_digest, registry['slice_plan_sha256']))
+          report = {'schema_version': 1, 'slice_plan_sha256': plan_digest,
+                    'slice_plan_bytes': len(plan_bytes), 'shards': [], 'failures': []}
+          if plan['job_count'] != len(registry['capsules']):
+              raise SystemExit('Regenerated plan has a different shard count')
+          for row in registry['capsules']:
+              manifest = staging / 'shards' / row['id'] / 'manifest.json'
+              actual = digest(manifest)
+              entry = {'id': row['id'], 'manifest_sha256': actual,
+                       'frozen_manifest_sha256': row['manifest_sha256'],
+                       'matches': actual == row['manifest_sha256']}
+              if not entry['matches']:
+                  report['failures'].append(row['id'])
+              report['shards'].append(entry)
+          (staging / 'result/slice-comparison.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps({'slice_plan_sha256': plan_digest,
+                            'shards': len(report['shards']),
+                            'manifest_mismatches': report['failures']}, indent=2))
+          if report['failures']:
+              raise SystemExit('Regenerated slices differ from the frozen manifests')
+          PY
+
+      - name: Pack capsules and compare each archive with its frozen asset digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/pack.log") 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import hashlib, json, os, shutil, subprocess, sys, time
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          mode = os.environ['MODE']
+          wanted = os.environ['PROBE_SHARDS'].split()
+          selected = registry['capsules'] if mode == 'full' else [
+              row for row in registry['capsules'] if row['id'] in wanted]
+          if not selected:
+              raise SystemExit('No shard selected for packing')
+          capsules = staging / 'capsules-out'
+          capsules.mkdir(parents=True, exist_ok=True)
+
+          def digest(path):
+              result = hashlib.sha256()
+              with open(path, 'rb') as stream:
+                  for block in iter(lambda: stream.read(1 << 22), b''):
+                      result.update(block)
+              return result.hexdigest()
+
+          report = {'schema_version': 1, 'shards': [], 'failures': []}
+          for row in selected:
+              started = time.time()
+              output = capsules / row['asset']
+              command = ['python3', 'scripts/capsule.py', 'pack',
+                         '--manifest', str(staging / 'shards' / row['id'] / 'manifest.json'),
+                         '--source-root', registry['source_root'],
+                         '--out-root', registry['out_root'],
+                         '--output', str(output),
+                         '--graph-index', str(staging / 'index.sqlite'),
+                         '--shared-manifest', str(staging / 'shared-prebuilts.json')]
+              completed = subprocess.run(command, capture_output=True, text=True)
+              if completed.returncode != 0:
+                  print(completed.stdout, completed.stderr, flush=True)
+                  raise SystemExit('Capsule pack failed: ' + row['id'])
+              metadata = json.loads(output.with_name(row['id'] + '.json').read_text())
+              actual = metadata['archive']['sha256']
+              entry = {'id': row['id'], 'bytes': metadata['archive']['size'],
+                       'sha256': actual, 'frozen_sha256': row['sha256'],
+                       'bytes_match': metadata['archive']['size'] == row['bytes'],
+                       'sha256_match': actual == row['sha256'],
+                       'manifest_sha256': metadata['manifest_sha256'],
+                       'file_count': metadata['file_count'],
+                       'input_bytes': metadata['input_bytes'],
+                       'seconds': round(time.time() - started, 1)}
+              if metadata['manifest_sha256'] != row['manifest_sha256']:
+                  raise SystemExit('Packed capsule manifest differs: ' + row['id'])
+              if not (entry['bytes_match'] and entry['sha256_match']):
+                  report['failures'].append(row['id'])
+              report['shards'].append(entry)
+              print(json.dumps(entry, sort_keys=True), flush=True)
+              (staging / 'result/pack-comparison.json').write_text(json.dumps(report, indent=2) + '\n')
+          if report['failures']:
+              raise SystemExit('Packed capsules differ from the frozen assets: ' +
+                               ' '.join(report['failures']))
+          PY
+
+      - name: Publish the regenerated inputs
+        if: ${{ inputs.mode == 'full' && inputs.output_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT_TAG: ${{ inputs.output_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee -a "$RUNNER_TEMP/result/publish.log") 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          tag = os.environ['OUTPUT_TAG']
+          view = subprocess.run(['gh', 'release', 'view', tag, '--repo', registry['repository'],
+                                 '--json', 'tagName'], capture_output=True, text=True)
+          if view.returncode != 0:
+              subprocess.run(['gh', 'release', 'create', tag, '--repo', registry['repository'],
+                              '--prerelease', '--title', 'Crux PE13 cold inputs ' + registry['build_number'],
+                              '--notes', 'Capsules regenerated by the hosted prepare workflow from '
+                                         + registry['graph']['release_tag'] + '.'], check=True)
+          assets = [str(path) for path in sorted((staging / 'capsules-out').glob('*.tar.zst'))]
+          if len(assets) != len(registry['capsules']):
+              raise SystemExit('Publish requires the complete regenerated capsule set')
+          subprocess.run(['gh', 'release', 'upload', tag, *assets, '--repo', registry['repository'],
+                          '--clobber'], check=True)
+          (staging / 'result/published.json').write_text(json.dumps(
+              {'tag': tag, 'assets': [Path(asset).name for asset in assets]}, indent=2) + '\n')
+          PY
+
+      - name: Upload prepare evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: prepare-${{ inputs.mode }}-evidence
+          path: ${{ runner.temp }}/result/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0

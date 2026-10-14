@@ -106,3 +106,35 @@ and [Actions limits](https://docs.github.com/en/actions/reference/limits).
 The final archive is a development image build, rather than a signed OTA or
 device-validated release. Android kernel handoff in the Crux development setup
 uses the maintained U-Boot chain. This experiment performs no device writes.
+
+## Hosted cold input preparation
+
+`prepare.yml` regenerates the cold shard inputs of a frozen release graph inside
+a standard runner, so no capsule has to be packed on a build host. It reads one
+registry, `inputs/frozen-inputs-<build_number>.json`, and fails unless every
+regenerated artifact matches the frozen record byte for byte:
+
+1. the closure-pruned graph index and the seven Ninja files `graph.py` re-reads
+   (it refuses a file whose size or `mtime_ns` changed) come from the `graph`
+   release named in the registry, together with the frozen shared prebuilt layer
+   manifest and the three audit inputs `finalize_slices.py` consumes;
+2. the frozen source tree is reconstructed from the capsules already published in
+   the `inputs-release-*` releases, and each capsule is extracted with its
+   recorded ownership so the packer reproduces the same member identities;
+3. toolchain directories are restored from their pinned public archives
+   (`scripts/source_archives.py`) and verified against the same frozen digests;
+4. `graph.py shard` and `scripts/finalize_slices.py` regenerate the slice set, and
+   the run fails unless `plan.json` and all 39 `manifest.json` digests equal the
+   frozen ones;
+5. `scripts/capsule.py pack` regenerates every capsule, and each archive's size and
+   SHA256 must equal the published asset digest of the frozen input release.
+
+`mode=probe` slices and packs only `probe_shards` and reports; `mode=full`
+regenerates all shards and, when `output_tag` is set, publishes them as a new
+input release. Both modes upload their evidence (slice and pack comparison,
+source-archive receipt, runner records) as artifacts.
+
+`scripts/prune-index.py` derives the hosted index: the full 2026101104 index holds
+1,749,432 edges (8.1 GB), while the dispatch closure of `target-files-package`
+holds 135,372, so the retained database is 1.4 GB and still answers the same
+closure (the script verifies that before it writes anything).
