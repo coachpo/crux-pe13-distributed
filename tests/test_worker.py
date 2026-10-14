@@ -354,6 +354,45 @@ class WorkerTests(unittest.TestCase):
                                       self.source, self.source / "out")
         self.assertFalse(self.output.exists())
 
+    def test_declared_side_output_directory_survives_the_exchange(self):
+        """The AOSP boot ramdisk mount points are directory side outputs of the
+        ramdisk.img rule. They must reach the producer archive and be re-created
+        for the consumer: in the 2026101104 build the empty staging directories
+        were dropped, first-stage init failed its mount/mknod calls and the
+        device reset-looped (build/make/core/Makefile:906-913)."""
+        out_root = self.source / "out"
+        staging = out_root / "target" / "product" / "crux" / "ramdisk"
+        mount_points = ("debug_ramdisk", "dev", "metadata", "mnt", "proc",
+                        "second_stage_resources", "sys")
+        for name in mount_points:
+            (staging / name).mkdir(parents=True)
+        (staging / "fstab.qcom").write_bytes(b"fstab")
+
+        specs = worker.output_specs([staging], self.source)
+        kinds = {spec["path"]: spec["type"] for spec in specs}
+        self.assertEqual(kinds[str(staging)], "directory")
+        for name in mount_points:
+            self.assertEqual(kinds[str(staging / name)], "directory", name)
+        self.assertEqual(kinds[str(staging / "fstab.qcom")], "file")
+
+        directory = self.root / "side-output-producer"; directory.mkdir()
+        archive = directory / "outputs.tar.zst"
+        worker.pack_outputs(specs, archive)
+        manifest = "9" * 64
+        receipt = {"schema_version": 1, "status": "success", "id": "side-output-producer",
+                   "run_id": "409", "worker_commit": "a" * 40, "manifest_sha256": manifest,
+                   "source_root": str(self.source), "out_root": str(out_root),
+                   "outputs": specs, "archive_sha256": worker.digest(archive)}
+        (directory / "receipt.json").write_text(json.dumps(receipt))
+        binding = {"id": "side-output-producer", "run_id": 409, "artifact": "shard-side-output-producer",
+                   "expected_worker_commit": "a" * 40, "expected_manifest_sha256": manifest}
+
+        shutil.rmtree(staging)
+        worker.merge_dependencies([directory], [binding], self.source, out_root, [], None, ())
+        for name in mount_points:
+            self.assertTrue((staging / name).is_dir(), name)
+        self.assertEqual((staging / "fstab.qcom").read_bytes(), b"fstab")
+
 
 @unittest.skipUnless(shutil.which("zstd"), "zstd is required for dependency archives")
 class SupersessionTests(unittest.TestCase):
