@@ -747,5 +747,11 @@
       "bytes": 3505059,
       "sha256": "6bacb70439337f08619ec6766cd0466ef4d9a18c2483030827c8acbe639b1d16"
     }
-  ]
+  ],
+  "packer": {
+    "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+    "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+    "graph_index_argument": false,
+    "note": "The 2026101104 capsules were packed at this revision, before the later input-discovery fixes landed; reproducing their exact bytes requires this packer and its flag set, not the current one."
+  }
 }

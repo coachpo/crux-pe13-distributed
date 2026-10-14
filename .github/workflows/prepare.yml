@@ -409,17 +409,33 @@ jobs:
                       result.update(block)
               return result.hexdigest()
 
-          report = {'schema_version': 1, 'shards': [], 'failures': []}
+          # The frozen capsules were produced by one recorded packer revision with
+          # one recorded flag set; a later revision discovers the same file set but
+          # annotates it differently, so the chosen revision has to be the recorded
+          # one for the archives to match their published bytes.
+          packer = staging / 'packer'
+          packer.mkdir(parents=True, exist_ok=True)
+          script = packer / 'capsule.py'
+          with script.open('wb') as destination:
+              subprocess.run(['git', 'cat-file', 'blob',
+                              registry['packer']['commit'] + ':scripts/capsule.py'],
+                             stdout=destination, check=True)
+          actual_script = digest(script)
+          if actual_script != registry['packer']['script_sha256']:
+              raise SystemExit('Recorded packer revision differs: ' + actual_script)
+          report = {'schema_version': 1, 'packer_commit': registry['packer']['commit'],
+                    'packer_script_sha256': actual_script, 'shards': [], 'failures': []}
           for row in selected:
               started = time.time()
               output = capsules / row['asset']
-              command = ['python3', 'scripts/capsule.py', 'pack',
+              command = ['python3', str(script), 'pack',
                          '--manifest', str(staging / 'shards' / row['id'] / 'manifest.json'),
                          '--source-root', registry['source_root'],
                          '--out-root', registry['out_root'],
                          '--output', str(output),
-                         '--graph-index', str(staging / 'index.sqlite'),
                          '--shared-manifest', str(staging / 'shared-prebuilts.json')]
+              if registry['packer'].get('graph_index_argument'):
+                  command += ['--graph-index', str(staging / 'index.sqlite')]
               completed = subprocess.run(command, capture_output=True, text=True)
               if completed.returncode != 0:
                   print(completed.stdout, completed.stderr, flush=True)
