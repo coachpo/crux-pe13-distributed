@@ -190,7 +190,11 @@ jobs:
           if digest(path) != mirror['sha256']:
               raise SystemExit('Compiler archive digest mismatch')
           target = Path(os.environ['SOURCE_ROOT']) / 'prebuilts/clang/host/linux-x86/clang-r450784d'
-          target.mkdir(parents=True, exist_ok=True)
+          # The source tree arrives from archives extracted as root, so the
+          # compiler destination is created and handed to the runner first.
+          subprocess.run(['sudo', 'mkdir', '-p', str(target)], check=True)
+          subprocess.run(['sudo', 'chown', '-R', '%d:%d' % (os.getuid(), os.getgid()),
+                          str(target)], check=True)
           subprocess.run(['sudo', 'tar', '--no-same-owner', '-xpf', str(path), '-C', str(target)], check=True)
           path.unlink()
           print('Restored compiler ' + mirror['asset'], flush=True)

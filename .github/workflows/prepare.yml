@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           exec > >(tee "$RUNNER_TEMP/result/graph-inputs.log") 2>&1
           python3 - <<'PY'
-          import hashlib, json, os, shutil, subprocess
+          import hashlib, json, os, shutil, stat, subprocess
           from pathlib import Path
 
           registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
@@ -180,6 +180,30 @@ jobs:
           shared = download(tag, graph['shared_manifest']['asset'], staging / 'graph')
           verify(shared, graph['shared_manifest']['sha256'], 'Shared layer manifest')
           shutil.copy2(shared, staging / 'shared-prebuilts.json')
+
+          # The capsule packer refuses a source tree whose build-tools PATH wrapper
+          # for `python` does not bind the frozen Python 2 runtime. Those wrapper
+          # entries are not selected capsule inputs, so they travel with the graph.
+          wrappers = graph['wrappers']
+          payload = download(tag, wrappers['asset'], staging / 'graph')
+          verify(payload, wrappers['sha256'], 'Prebuilt wrapper archive')
+          record_path = download(tag, wrappers['manifest_asset'], staging / 'graph')
+          verify(record_path, wrappers['manifest_sha256'], 'Prebuilt wrapper manifest')
+          record = json.loads(record_path.read_text())
+          subprocess.run(['sudo', 'tar', '--no-same-owner', '-xpf', str(payload), '-C', '/'],
+                         check=True)
+          payload.unlink()
+          for entry in record['entries']:
+              path = Path(entry['path'])
+              info = path.lstat()
+              mode = stat.S_IMODE(info.st_mode)
+              actual = ('symlink' if path.is_symlink() else 'directory' if path.is_dir()
+                        else 'file' if path.is_file() else 'unsupported')
+              if actual != entry['type'] or mode != entry['mode']:
+                  raise SystemExit('Prebuilt wrapper identity differs: ' + str(path))
+              if actual == 'symlink' and os.readlink(path) != entry['target']:
+                  raise SystemExit('Prebuilt wrapper link differs: ' + str(path))
+          print('Restored %d prebuilt wrappers' % len(record['entries']), flush=True)
 
           finalize = {}
           for key, asset in (('source_closure', 'target-files-source-closure.json'),

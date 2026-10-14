@@ -78,6 +78,14 @@
       "bytes": 10683768,
       "sha256": "d6ce387169e5f111d9e6ea15468fc8166b81be4b94d81f9d4a9f15924f633c95",
       "raw_sha256": "d6ce387169e5f111d9e6ea15468fc8166b81be4b94d81f9d4a9f15924f633c95"
+    },
+    "wrappers": {
+      "asset": "prebuilt-wrappers.tar.zst",
+      "bytes": 1638,
+      "sha256": "d15acec59785f90ec691d8159a9971c5af2835ba454bea2937366917d9b5d608",
+      "manifest_asset": "prebuilt-wrappers.json",
+      "manifest_sha256": "dbd57825e61414d776591c6a30bb429283e0b277a0e53ed7b455fd347b86edff",
+      "manifest_bytes": 32081
     }
   },
   "finalize": {
