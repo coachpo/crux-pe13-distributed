@@ -328,7 +328,8 @@ def main():
     summary.set_defaults(function=command_summary)
 
     args = parser.parse_args()
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', args.release):
+    if getattr(args, 'release', None) is not None \
+            and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', args.release):
         parser.error('Release tag contains unsupported characters')
     args.function(args)
     return 0

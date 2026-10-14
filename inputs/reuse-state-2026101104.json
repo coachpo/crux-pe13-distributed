@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "build_number": "2026101104",
-  "note": "Accepted 2026101104 producers. w004-s000 is the approved variant-manifest run that declares the ramdisk mount points; all other shards are the first successful frozen producers. w004-s000 is marked as an approved variant-manifest producer; the terminal wave recompiles on top of its repaired artifact.",
+  "note": "Accepted 2026101104 producers. w004-s000 is the approved variant-manifest run that declares the ramdisk mount points; all other shards are the first successful frozen producers. w004-s000 is marked as an approved variant-manifest producer; the terminal wave recompiles on top of its repaired artifact. w007-s000 now records the shard the controller compiled itself; the previously accepted producer of the same manifest is kept under previous_accepted.",
   "tasks": {
     "w000-s009": {
       "run_id": 38284508801,
@@ -352,13 +352,21 @@
       "manifest_sha256": "d2527d54d7872c30a5470cfab818ddd84f91d77a68a2aa97425514311762473f"
     },
     "w007-s000": {
-      "run_id": 38508448613,
-      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/38508448613",
-      "headSha": "bdf7fb43a2831e47be59a708bce07970df815866",
+      "run_id": 38592750722,
+      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/38592750722",
+      "headSha": "48083815c731f2b8979223fddbfda62dc652005a",
       "conclusion": "success",
       "artifact": "shard-w007-s000",
       "wave": 7,
       "manifest_sha256": "1b951abf46467f2722f782c9db8cbf1cd3e1cf833d6d5520c9bd728fa1c484e6",
+      "digest": "sha256:e169563a3b5c93d8d0e0e0cdb1db72ddcb88ff54d239ff4f38098f8a2733c028",
+      "provenance": "Compiled by the controller itself (controller run 38592416528, wave 7 dispatched with the recorded 33 entry dependency binding after the supplemental dependency was added). The worker tree is main at dispatch; scripts/worker.py and scripts/capsule.py are unchanged since the accepted build.",
+      "previous_accepted": {
+        "run_id": 38508448613,
+        "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/38508448613",
+        "headSha": "bdf7fb43a2831e47be59a708bce07970df815866",
+        "artifact": "shard-w007-s000"
+      },
       "supplemental_dependencies": [
         "w002-s001"
       ],

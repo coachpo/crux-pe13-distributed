@@ -220,6 +220,7 @@ jobs:
           REUSE: ${{ github.workspace }}/${{ inputs.reuse_state }}
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result"
           python3 scripts/controller.py summary --plan "$PLAN" --state "$RUNNER_TEMP/state/state.json" \
             --reuse "$REUSE" --summary "$RUNNER_TEMP/result/producers.json" | tee "$RUNNER_TEMP/result/producers.log"
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
