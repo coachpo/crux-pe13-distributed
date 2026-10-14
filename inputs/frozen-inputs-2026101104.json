@@ -128,7 +128,13 @@
       "metadata_sha256": "603f88f50fd34b74e0d8e944bb84cd7a16ef33eec784c6a6af6afdbea172bb91",
       "file_count": 32268,
       "input_bytes": 4090571198,
-      "archive_plan_input_bytes": 1050427910
+      "archive_plan_input_bytes": 1050427910,
+      "payload": {
+        "uncompressed_sha256": "db2b8b5294599dbef18cfcd51d337ae5f3fb367606c70e9ae86f067ef7f7cc02",
+        "uncompressed_bytes": 1080555520,
+        "member_count": 8126,
+        "member_table_sha256": "853588bea797393abd061b666916beaca3afe647730891a4d82d836b9b77735e"
+      }
     },
     {
       "id": "w000-s001",
@@ -753,5 +759,12 @@
     "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
     "graph_index_argument": false,
     "note": "The 2026101104 capsules were packed at this revision, before the later input-discovery fixes landed; reproducing their exact bytes requires this packer and its flag set, not the current one."
+  },
+  "payload_identity": {
+    "recorded_for": [
+      "w000-s000"
+    ],
+    "tool": "tools/capsule-payload-identity.py in the task workspace",
+    "meaning": "digest of the uncompressed tar and of its member table without the packer annotation file; the payload is what a hosted run has to reproduce, while the compressed digest also depends on the packer that wrote it"
   }
 }
