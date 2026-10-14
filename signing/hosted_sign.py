@@ -58,7 +58,6 @@ class Signing:
         self.package = self.output / self.identity['package_dir']
         self.unsigned = Path(self.output / 'input-binding.json')
 
-    @property
     def binding(self):
         return json.loads((self.output / 'input-binding.json').read_text())
 
@@ -68,11 +67,20 @@ class Signing:
     def kernel_path(self, role):
         return Path(self.binding()['provenance']['kernel'][role]['path'])
 
+    def environment(self):
+        """The retained recipes run the host tools through JAVA_HOME and PATH."""
+        java_home = Path(self.args.jdk_home)
+        return {**os.environ,
+                'JAVA_HOME': str(java_home),
+                'PATH': str(java_home / 'bin') + ':' + str(Path(self.args.host_tools) / 'bin')
+                        + ':' + os.environ.get('PATH', '')}
+
     def contract(self, stage, extra):
         output = self.output / (stage + '-contract.json')
         run(self.output / (stage + '-contract.log'), 'output contract ' + stage,
             [sys.executable, REPO / 'signing/verify-output-contract.py', '--output-root', self.output,
-             '--identity', self.args.identity, '--stage', stage])
+             '--identity', self.args.identity, '--stage', stage],
+            cwd=self.args.source_root, env=self.environment())
         record = json.loads(output.read_text())
         record.update(extra)
         output.write_text(json.dumps(record, indent=2) + '\n')
@@ -88,17 +96,21 @@ class Signing:
         require(signer.is_file(), 'missing nested signer: ' + str(signer))
         Path(self.args.key_dir).mkdir(mode=0o700, parents=True, exist_ok=True)
         base = [sys.executable, '-B', signer]
+        environment = self.environment()
         run(self.output / 'inspect.log', 'signing inventory',
             base + ['inspect', '--target-files', self.unsigned_path(), '--host-tools', host,
-                    '--output', self.output / 'signing-inventory.json'])
+                    '--output', self.output / 'signing-inventory.json'],
+            cwd=self.args.source_root, env=environment)
         run(self.output / 'validate-package.log', 'package validation',
             base + ['package', '--validate-only', '--target-files', self.unsigned_path(),
                     '--key-dir', self.args.key_dir, '--config', self.args.config, '--host-tools', host,
-                    '--output-dir', self.package, '--images'])
+                    '--output-dir', self.package, '--images'],
+            cwd=self.args.source_root, env=environment)
         run(self.output / 'package.log', 'package and sign',
             base + ['package', '--target-files', self.unsigned_path(),
                     '--key-dir', self.args.key_dir, '--config', self.args.config, '--host-tools', host,
-                    '--output-dir', self.package, '--images'])
+                    '--output-dir', self.package, '--images'],
+            cwd=self.args.source_root, env=environment)
         signed = self.package / 'signed-target_files.zip'
         self.contract('package', {'signed_target_files_bytes': signed.stat().st_size})
 
@@ -119,22 +131,26 @@ class Signing:
              '--sdk', str(gates_args['sdk']), '--expected-flat-apks', str(gates_args['expected_flat_apks']),
              '--expected-apex', str(gates_args['expected_apex']),
              '--expected-resigned-apex', str(gates_args['expected_resigned_apex']),
-             '--report', validation / 'apk-apex.json'])
+             '--report', validation / 'apk-apex.json'],
+            cwd=self.args.source_root, env=self.environment())
         run(validation / 'image-avb.log', 'image AVB',
             [sys.executable, '-B', gates / 'verify-image-bundle-avb.py', '--target-files', signed,
              '--output-dir', validation / 'image-avb', '--host-tools', self.args.host_tools,
-             '--public-keys', self.args.public_materials])
+             '--public-keys', self.args.public_materials],
+            cwd=self.args.source_root, env=self.environment())
         run(validation / 'recovery-inspection.log', 'Recovery inspection',
             [sys.executable, '-B', gates / 'inspect-signed-recovery.py', '--signed-target-files', signed,
              '--output-dir', validation / 'recovery', '--host-tools', self.args.host_tools,
-             '--public-keys', self.args.public_materials, '--matched-image', self.kernel_path('image')])
+             '--public-keys', self.args.public_materials, '--matched-image', self.kernel_path('image')],
+            cwd=self.args.source_root, env=self.environment())
         run(validation / 'ota-native.log', 'native OTA signature',
             [sys.executable, '-B', gates / 'accept-ota-signature-host.py', '--tool', self.args.verifier,
              '--ota', self.package / 'ota.zip',
              '--release-cert', Path(self.args.public_materials) / 'releasekey.x509.pem',
              '--wrong-cert', Path(self.args.source_root) / 'build/target/product/security/testkey.x509.pem',
              '--otacerts', validation / 'recovery/otacerts.zip',
-             '--output-dir', validation / 'ota-native'])
+             '--output-dir', validation / 'ota-native'],
+            cwd=self.args.source_root, env=self.environment())
         self.contract('acceptance', {})
 
     def delivery_stage(self):
@@ -146,7 +162,8 @@ class Signing:
         packer = Path(self.args.source_root) / 'device/xiaomi/crux/scripts/package_fastboot.py'
         run(delivery / 'fastboot-package.log', 'fastboot rescue package',
             [sys.executable, '-B', packer, '--signed-target-files', self.package / 'signed-target_files.zip',
-             '--output-dir', delivery / names['fastboot_dir']])
+             '--output-dir', delivery / names['fastboot_dir']],
+            cwd=self.args.source_root, env=self.environment())
         shutil.copy2(self.package / 'ota.zip', delivery / names['ota'])
         shutil.copy2(self.output / 'validation/recovery/recovery.img', delivery / names['recovery'])
         record = self.contract('delivery', {})
