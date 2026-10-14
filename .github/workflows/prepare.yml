@@ -413,6 +413,32 @@ jobs:
                       result.update(block)
               return result.hexdigest()
 
+          def payload_identity(archive, scratch):
+              """Digest the unpacked tar and its member table without the annotation file."""
+              import tarfile
+              unpacked = scratch / (archive.name.removesuffix('.tar.zst') + '.tar')
+              with unpacked.open('wb') as destination:
+                  subprocess.run(['zstd', '-dc', str(archive)], stdout=destination, check=True)
+              hasher = hashlib.sha256()
+              with unpacked.open('rb') as stream:
+                  for block in iter(lambda: stream.read(1 << 22), b''):
+                      hasher.update(block)
+              members = []
+              with tarfile.open(unpacked) as tar:
+                  for member in tar:
+                      if member.name.endswith('.crux-task/graph/bundle.json'):
+                          continue
+                      kind = member.type.decode() if isinstance(member.type, bytes) else member.type
+                      members.append([member.name, kind, member.mode, member.size, member.linkname])
+              members.sort()
+              result = {'uncompressed_sha256': hasher.hexdigest(),
+                        'uncompressed_bytes': unpacked.stat().st_size,
+                        'member_count': len(members),
+                        'member_table_sha256': hashlib.sha256(
+                            json.dumps(members, separators=(',', ':')).encode()).hexdigest()}
+              unpacked.unlink()
+              return result
+
           # The frozen capsules were produced by one recorded packer revision with
           # one recorded flag set; a later revision discovers the same file set but
           # annotates it differently, so the chosen revision has to be the recorded
