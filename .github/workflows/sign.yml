@@ -356,6 +356,15 @@ jobs:
                   print(completed.stdout[-4000:], completed.stderr[-4000:], flush=True)
                   raise SystemExit('Verifier rebuild failed: ' + label)
               print('Rebuilt ' + label, flush=True)
+          # The unit tests open their fixtures through `from_testdata_base`, which
+          # resolves against the executable directory, so the rebuilt test binary
+          # needs the same fixture next to it as the accepted one has.
+          fixtures = source / 'bootable/recovery/tests/testdata'
+          link = build / 'testdata'
+          if not link.is_symlink():
+              link.symlink_to(fixtures)
+          if not (build / 'testdata').is_dir():
+              raise SystemExit('Rebuilt test fixtures are not reachable')
           PY
 
       - name: Run the retained Recovery verifier tests
@@ -372,7 +381,7 @@ jobs:
             --verifier "$OUTPUT_ROOT/verifier-build/ota-verifier-host" \
             --verifier-test "$OUTPUT_ROOT/verifier-build/verifier_host_test" \
             --verifier-lib /home/qingli/crux-pe13-standard-tests-2026-10-07/recovery-out/host/linux-x86/lib64 \
-            --test-cwd /home/qingli/crux-pe13-release-tier1-2026-10-09/recovery-verifier-host
+            --test-cwd "$OUTPUT_ROOT/verifier-build"
 
       - name: Materialize the release keys from environment secrets
         shell: bash
