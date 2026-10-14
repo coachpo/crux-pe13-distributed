@@ -138,6 +138,20 @@ def command_inputs(args):
     print(json.dumps(summary, indent=2))
 
 
+def dependency_ids(task, recorded):
+    """Plan dependencies plus the approved supplements of an input correction.
+
+    The accepted build ran two shards with an approved correction that declared one
+    extra producer, and the plan itself does not carry it: the corrected shard needs
+    a license-metadata output that the frozen dependency list omits.
+    """
+    identifiers = list(task.get('dependencies', []))
+    for identity in (recorded or {}).get('supplemental_dependencies') or []:
+        if identity not in identifiers:
+            identifiers.append(identity)
+    return identifiers
+
+
 def builder(plan, state, reuse):
     """Return the frozen dependency binding of one producer task."""
     tasks = task_table(plan)
@@ -177,8 +191,10 @@ def command_wave(args):
                     % (task['id'], recorded['manifest_sha256'][:12]))
             say('Reusing %s from run %s' % (task['id'], recorded['run_id']))
             continue
+        declared = state.get('tasks', {}).get(task['id']) or reuse.get('tasks', {}).get(task['id'])
         row = {'id': task['id'],
-               'dependencies': [binding(dependency) for dependency in task.get('dependencies', [])],
+               'dependencies': [binding(dependency)
+                                for dependency in dependency_ids(task, declared)],
                'capsule_assets': task['capsule_assets'],
                'source_archives': plan['source_archives']}
         for key in ('shared_capsules', 'source_overlays'):
