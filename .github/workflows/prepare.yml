@@ -504,9 +504,10 @@ jobs:
           report['payload_verified'] = [row['id'] for row in report['shards']
                                         if row.get('payload_matches_frozen')]
           (staging / 'result/pack-comparison.json').write_text(json.dumps(report, indent=2) + '\n')
-          # The payload is the contract: the compressed digest additionally depends on
-          # the host that ran zstd, because a streamed tar is split into compression
-          # jobs differently on a 4-core runner than on the 17-core build host.
+          # The payload is the contract. The compressed digest of an identical
+          # payload differs between the 17-core build host that produced the frozen
+          # archive and a 4-core runner; the difference is recorded and reported
+          # next to the payload result instead of being treated as a content change.
           print(json.dumps({'archive_digest_matches': exact,
                             'archive_digest_differs': [row['id'] for row in report['shards']
                                                        if not row['sha256_match']],
