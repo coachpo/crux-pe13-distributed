@@ -90,7 +90,7 @@ class Signing:
         require((self.output / 'input-binding.json').is_file(),
                 'run the binding step before the package stage')
         require(not self.package.exists(), 'package output root already exists; use a fresh output root')
-        self.package.mkdir(parents=True)
+        # The packager creates its own output directory and refuses a pre-created one.
         host = self.args.host_tools
         signer = Path(self.args.source_root) / 'device/xiaomi/crux/scripts/package_release.py'
         require(signer.is_file(), 'missing nested signer: ' + str(signer))
