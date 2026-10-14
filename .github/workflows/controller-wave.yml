@@ -1,0 +1,94 @@
+name: Drive one cold wave
+
+# One wave of the controller chain. It reuses every shard the state already records,
+# dispatches the wave workflow for the rest and records the accepted producers, so a
+# rerun after a single failure only recompiles what the failure touched.
+
+on:
+  workflow_call:
+    inputs:
+      wave:
+        required: true
+        type: string
+      plan:
+        required: true
+        type: string
+      registry:
+        required: true
+        type: string
+      release:
+        required: true
+        type: string
+      reuse_state:
+        required: true
+        type: string
+      force_shards:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      summary:
+        description: Wave summary with dispatched and reused shards
+        value: ${{ jobs.wave.outputs.summary }}
+
+jobs:
+  wave:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAN: ${{ github.workspace }}/${{ inputs.plan }}
+      REGISTRY: ${{ github.workspace }}/${{ inputs.registry }}
+      REUSE: ${{ github.workspace }}/${{ inputs.reuse_state }}
+      RELEASE: ${{ inputs.release }}
+      FORCE: ${{ inputs.force_shards }}
+    outputs:
+      summary: ${{ steps.drive.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore the controller state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/state"
+          gh run download "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --name controller-state --dir "$RUNNER_TEMP/state" || {
+              echo '{"schema_version": 1, "tasks": {}}' > "$RUNNER_TEMP/state/state.json"
+            }
+          test -f "$RUNNER_TEMP/state/state.json"
+      - name: Drive wave ${{ inputs.wave }}
+        id: drive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result"
+          python3 scripts/controller.py wave \
+            --plan "$PLAN" --registry "$REGISTRY" --release "$RELEASE" \
+            --wave "${{ inputs.wave }}" --state "$RUNNER_TEMP/state/state.json" \
+            --reuse "$REUSE" --force "$FORCE" \
+            --state-output "$RUNNER_TEMP/state/state.json" \
+            --control "$RUNNER_TEMP/result/wave-${{ inputs.wave }}.json" \
+            --summary "$RUNNER_TEMP/result/wave-${{ inputs.wave }}-summary.json" \
+            | tee "$RUNNER_TEMP/result/wave-${{ inputs.wave }}.log"
+          echo "summary=$(cat "$RUNNER_TEMP/result/wave-${{ inputs.wave }}-summary.json")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: controller-wave-${{ inputs.wave }}
+          path: ${{ runner.temp }}/result/
+          overwrite: true
+          retention-days: 30
+          compression-level: 0
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: controller-state
+          path: ${{ runner.temp }}/state/state.json
+          overwrite: true
+          retention-days: 30
+          compression-level: 0

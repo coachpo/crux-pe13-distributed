@@ -1,0 +1,376 @@
+name: Drive the PE13 release pipeline
+run-name: PE13 pipeline ${{ inputs.build_number }}
+
+# One dispatch drives the whole chain inside GitHub:
+#
+#   inputs   consolidates every planned capsule and the source archive profile into
+#            the run's own release, copying from the frozen releases and verifying
+#            each registry digest,
+#   wave0..7 each resolve their dependency producers from the state, reuse every
+#            shard that already succeeded, dispatch the wave workflow for the rest and
+#            record the accepted producer run, artifact and slice manifest,
+#   summary  refuses to continue unless every shard has a recorded producer,
+#   sign     dispatches the signing workflow for the terminal and kernel producers
+#            and waits for it (that workflow needs the protected `release` environment),
+#   publish  dispatches the publication workflow for the signed candidate.
+#
+# Each job stays well inside the six-hour job limit, so a full cold chain can span a
+# working day while a rerun after one failed shard only recompiles that shard.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Frozen build number
+        required: true
+        default: "2026101104"
+        type: string
+      plan:
+        description: Hosted dispatch plan inside this repository
+        required: true
+        default: inputs/hosted-plan-2026101104.json
+        type: string
+      registry:
+        description: Frozen input registry inside this repository
+        required: true
+        default: inputs/frozen-inputs-2026101104.json
+        type: string
+      reuse_state:
+        description: Recorded producers that may be reused
+        required: true
+        default: inputs/reuse-state-2026101104.json
+        type: string
+      release:
+        description: Release tag that owns the run's cold inputs
+        required: true
+        type: string
+      force_shards:
+        description: Space separated shard ids to recompile even when recorded
+        required: false
+        default: ""
+        type: string
+      identity:
+        description: Release identity file inside this repository
+        required: true
+        default: inputs/release-2026101104.json
+        type: string
+      candidate_tag:
+        description: Candidate tag for the signed delivery
+        required: true
+        type: string
+      ota_tag:
+        description: New immutable OTA release tag (publish stage)
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: Run the publication stage
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: controller-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  inputs:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Consolidate the cold inputs into the run release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ github.workspace }}/${{ inputs.plan }}
+          REGISTRY: ${{ github.workspace }}/${{ inputs.registry }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result"
+          python3 scripts/controller.py inputs --plan "$PLAN" --registry "$REGISTRY" \
+            --release "$RELEASE" --staging "$RUNNER_TEMP/controller" \
+            --summary "$RUNNER_TEMP/result/inputs.json" | tee "$RUNNER_TEMP/result/inputs.log"
+      - name: Seed the controller state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/state"
+          echo '{"schema_version": 1, "tasks": {}}' > "$RUNNER_TEMP/state/state.json"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: controller-state
+          path: ${{ runner.temp }}/state/state.json
+          overwrite: true
+          retention-days: 30
+          compression-level: 0
+
+  wave0:
+    needs: inputs
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "0"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave1:
+    needs: wave0
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "1"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave2:
+    needs: wave1
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "2"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave3:
+    needs: wave2
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "3"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave4:
+    needs: wave3
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "4"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave5:
+    needs: wave4
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "5"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave6:
+    needs: wave5
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "6"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+  wave7:
+    needs: wave6
+    uses: ./.github/workflows/controller-wave.yml
+    with:
+      wave: "7"
+      plan: ${{ inputs.plan }}
+      registry: ${{ inputs.registry }}
+      release: ${{ inputs.release }}
+      reuse_state: ${{ inputs.reuse_state }}
+      force_shards: ${{ inputs.force_shards }}
+
+  summary:
+    needs: wave7
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      terminal: ${{ steps.collect.outputs.terminal }}
+      kernel: ${{ steps.collect.outputs.kernel }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore the controller state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/state"
+          gh run download "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --name controller-state --dir "$RUNNER_TEMP/state"
+          test -f "$RUNNER_TEMP/state/state.json"
+      - name: Collect the accepted producers
+        id: collect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/controller.py summary --plan "$PLAN" --state "$RUNNER_TEMP/state/state.json" \
+            --reuse "$REUSE" --summary "$RUNNER_TEMP/result/producers.json" | tee "$RUNNER_TEMP/result/producers.log"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          summary = json.loads(Path(os.environ['RUNNER_TEMP'], 'result/producers.json').read_text())
+          print('terminal=' + json.dumps(summary['terminal']))
+          print('kernel=' + json.dumps(summary['kernel']))
+          PY
+        env:
+          PLAN: ${{ github.workspace }}/${{ inputs.plan }}
+          REUSE: ${{ github.workspace }}/${{ inputs.reuse_state }}
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: controller-summary
+          path: ${{ runner.temp }}/result/
+          overwrite: true
+          retention-days: 30
+          compression-level: 0
+
+  sign:
+    needs: summary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    outputs:
+      run_id: ${{ steps.dispatch.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Dispatch the signing run and wait for its review gate
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERMINAL: ${{ needs.summary.outputs.terminal }}
+          KERNEL: ${{ needs.summary.outputs.kernel }}
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          work.mkdir(parents=True, exist_ok=True)
+          terminal = json.loads(os.environ['TERMINAL'])
+          kernel = json.loads(os.environ['KERNEL'])
+          command = ['gh', 'workflow', 'run', 'sign.yml', '--repo', os.environ['GITHUB_REPOSITORY'],
+                     '-f', 'run_id=' + str(terminal['run_id']), '-f', 'task_id=' + terminal['task'],
+                     '-f', 'artifact=' + terminal['artifact'],
+                     '-f', 'kernel_run_id=' + str(kernel['run_id']),
+                     '-f', 'kernel_task_id=' + kernel['task'],
+                     '-f', 'kernel_artifact=' + kernel['artifact'],
+                     '-f', 'worker_commit=' + terminal['head_sha'],
+                     '-f', 'build_number=' + os.environ['BUILD_NUMBER'],
+                     '-f', 'identity=' + os.environ['IDENTITY'],
+                     '-f', 'tools_tag=' + os.environ['TOOLS_TAG'],
+                     '-f', 'candidate_tag=' + os.environ['CANDIDATE_TAG']]
+          started = time.time()
+          subprocess.run(command, check=True)
+          run = None
+          while time.time() - started < 600 and not run:
+              listing = subprocess.run(['gh', 'run', 'list', '--repo', os.environ['GITHUB_REPOSITORY'],
+                                        '--workflow', 'sign.yml', '--limit', '5', '--json',
+                                        'databaseId,event,createdAt'], capture_output=True, text=True,
+                                       check=True)
+              for candidate in json.loads(listing.stdout):
+                  if candidate['event'] == 'workflow_dispatch':
+                      run = candidate
+                      break
+              if not run:
+                  time.sleep(10)
+          if not run:
+              raise SystemExit('Signing run was not found')
+          print('Signing run %s' % run['databaseId'], flush=True)
+          (work / 'sign-run.json').write_text(json.dumps(run, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('run_id=%s\n' % run['databaseId'])
+          while True:
+              view = subprocess.run(['gh', 'run', 'view', str(run['databaseId']), '--repo',
+                                     os.environ['GITHUB_REPOSITORY'], '--json',
+                                     'status,conclusion,url,jobs'], capture_output=True, text=True,
+                                    check=True)
+              state = json.loads(view.stdout)
+              print('signing ' + state['status'], flush=True)
+              if state['status'] == 'completed':
+                  break
+              time.sleep(60)
+          if state['conclusion'] != 'success':
+              raise SystemExit('Signing failed: ' + state['url'])
+          print('Signed candidate ' + os.environ['CANDIDATE_TAG'], flush=True)
+          PY
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          IDENTITY: ${{ inputs.identity }}
+          TOOLS_TAG: signing-tools-2026101104-v1
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+
+  publish:
+    needs: [summary, sign]
+    if: ${{ inputs.publish == 'true' && inputs.ota_tag != '' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Dispatch the publication run and wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          command = ['gh', 'workflow', 'run', 'publish.yml', '--repo', os.environ['GITHUB_REPOSITORY'],
+                     '-f', 'candidate_tag=' + os.environ['CANDIDATE_TAG'],
+                     '-f', 'sign_run_id=' + os.environ['SIGN_RUN_ID'],
+                     '-f', 'ota_tag=' + os.environ['OTA_TAG'],
+                     '-f', 'build_number=' + os.environ['BUILD_NUMBER'],
+                     '-f', 'identity=' + os.environ['IDENTITY'],
+                     '-f', 'publish=true']
+          started = time.time()
+          subprocess.run(command, check=True)
+          run = None
+          while time.time() - started < 600 and not run:
+              listing = subprocess.run(['gh', 'run', 'list', '--repo', os.environ['GITHUB_REPOSITORY'],
+                                        '--workflow', 'publish.yml', '--limit', '5', '--json',
+                                        'databaseId,event'], capture_output=True, text=True, check=True)
+              for candidate in json.loads(listing.stdout):
+                  if candidate['event'] == 'workflow_dispatch':
+                      run = candidate
+                      break
+              if not run:
+                  time.sleep(10)
+          if not run:
+              raise SystemExit('Publication run was not found')
+          while True:
+              view = subprocess.run(['gh', 'run', 'view', str(run['databaseId']), '--repo',
+                                     os.environ['GITHUB_REPOSITORY'], '--json',
+                                     'status,conclusion,url'], capture_output=True, text=True,
+                                    check=True)
+              state = json.loads(view.stdout)
+              print('publishing ' + state['status'], flush=True)
+              if state['status'] == 'completed':
+                  break
+              time.sleep(60)
+          if state['conclusion'] != 'success':
+              raise SystemExit('Publication failed: ' + state['url'])
+          print('Published ' + os.environ['OTA_TAG'], flush=True)
+          PY
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          IDENTITY: ${{ inputs.identity }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          OTA_TAG: ${{ inputs.ota_tag }}
+          SIGN_RUN_ID: ${{ needs.sign.outputs.run_id }}

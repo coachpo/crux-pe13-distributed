@@ -1,0 +1,967 @@
+{
+  "schema_version": 1,
+  "build_number": "2026101104",
+  "product": "aosp_crux_release-user",
+  "repository": "coachpo/crux-pe13-distributed",
+  "input_tag": "inputs-release-2026101104-v4",
+  "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+  "source_archives": {
+    "profile_asset": "remote-source-runtime.json",
+    "profile_sha256": "67ecdd5854eb3a6c6c037d7155c059421ff74f384e65161930ad0326039a0447"
+  },
+  "terminal": {
+    "task": "w007-s000",
+    "artifact": "shard-w007-s000"
+  },
+  "kernel": {
+    "task": "w001-s001",
+    "artifact": "shard-w001-s001"
+  },
+  "waves": [
+    {
+      "id": 0,
+      "tasks": [
+        {
+          "id": "w000-s000",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "6e3be61c7a0d33ef7f2f045458940413e6fc9beb267c3fdde11ea1f3bae71eff"
+        },
+        {
+          "id": "w000-s001",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "35ea08c8ba7b154ea48497f0be5fa8ae01c4c9ecbfc920d71967b5e891b0912b"
+        },
+        {
+          "id": "w000-s002",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v2",
+          "manifest_sha256": "8ac1b519ca6f08c53466fb5677f66f148e974046d8ec2ecbcdaa55babea50fdb"
+        },
+        {
+          "id": "w000-s003",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s003.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v2",
+          "manifest_sha256": "2ac02df8582dd92af18d86dd00e0d610f003b09a5a02d5d4ef5c76d240124306"
+        },
+        {
+          "id": "w000-s004",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s004.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "f667317c37e9e3d5809e4a21e3b125f1215666669c853c16bf80b78c4a909639"
+        },
+        {
+          "id": "w000-s005",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s005.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "80bdc966bad25f9795897b399269591eb4525c20e8981a91faf0d184578d8c29"
+        },
+        {
+          "id": "w000-s006",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s006.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "6dd47c15920d8669c4dd50189fe58a745ee7d7c79d06b2ff77d6a155ba02084a"
+        },
+        {
+          "id": "w000-s007",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s007.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "2087633234c4aa329d46a044ddaa54cffd3586a2b3dce025232c138dc23c160f"
+        },
+        {
+          "id": "w000-s008",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s008.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "b6ceddabe51c331a1192c12545bc566bfd99e6167f73d90495c4e6fde8b732d3"
+        },
+        {
+          "id": "w000-s009",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s009.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v2",
+          "manifest_sha256": "ec7a60e7742db5bfe2eb2391f56e22928ed6a84f769384fae34c8873f6f31dbc"
+        },
+        {
+          "id": "w000-s010",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s010.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "326edafbec765ba9b71eff6336fc6dd05ff2bf0a9fccc579ed3d8acb6c9b1ac4"
+        },
+        {
+          "id": "w000-s011",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s011.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "ef5f72411feab78174cceee1aa0fe1481a145cd49579f8fe38451af8a7bfadc5"
+        },
+        {
+          "id": "w000-s012",
+          "dependencies": [],
+          "capsule_assets": [
+            "w000-s012.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v3",
+          "manifest_sha256": "dbe2797c28980fd324387745d8a1320d3c3cf10588f0c778a4a32803ff40a331"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "tasks": [
+        {
+          "id": "w001-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012"
+          ],
+          "capsule_assets": [
+            "w001-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "fbeee99d4490b392461ac10a86302c7799483898dea202df01c061d4057f276c"
+        },
+        {
+          "id": "w001-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012"
+          ],
+          "capsule_assets": [
+            "w001-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "b306d2c6c58789ac9cad4c471c89cd08c207a01345c5b6dabc63514a1ab3c191"
+        },
+        {
+          "id": "w001-s002",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s008",
+            "w000-s009",
+            "w000-s011",
+            "w000-s012"
+          ],
+          "capsule_assets": [
+            "w001-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "7c119f4cb7e865a900b137434ce5c3e34cfe3ca3c037da593e9859c9f7387f00"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "tasks": [
+        {
+          "id": "w002-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "fe7c4967ebab1a6f932120af441730d98ee872efadc36c41b072c0aeea22b5ff"
+        },
+        {
+          "id": "w002-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w001-s000",
+            "w001-s001"
+          ],
+          "capsule_assets": [
+            "w002-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "5f54f5332c9abbc70a04b81df05ff1c899e1ad07c69fb38f5bcf27326e2f6d25"
+        },
+        {
+          "id": "w002-s002",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "bb3539f861bcf5b3218d3e856f2d1b7d0a3e198f8ab51c6b21cfccbfac6f7631"
+        },
+        {
+          "id": "w002-s003",
+          "dependencies": [
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s003.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "f135a03557ee704765feddafa6c72e8d3c074d9e6ca8b19b24d07fc3e614dfe2"
+        },
+        {
+          "id": "w002-s004",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s004.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "cac9b564856f9656db7cb03dee144d6c481ce0460bc04448ed6af5daba214f21"
+        },
+        {
+          "id": "w002-s005",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s004",
+            "w000-s009",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s005.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "6c33a8a122c40daac3ee4e11b11958a5133b963344ba3aa78b8f518b20e579ee"
+        },
+        {
+          "id": "w002-s006",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002"
+          ],
+          "capsule_assets": [
+            "w002-s006.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "7ed891445d01e484613d731947292bc77222f967242788bc492b7a370256cec4"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "tasks": [
+        {
+          "id": "w003-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s006",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "13ab788052dd67c78be223213b0becba0490a2002cb4b1183edf622d850faebf"
+        },
+        {
+          "id": "w003-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "a5456b02037e0e9180b8e63871997f7fe830acf4ecac40ba6889957538f53d20"
+        },
+        {
+          "id": "w003-s002",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "29d14fd3aa73f6986a09283537aa864f122e08b45e5a37bf7cbbfd7204ca9386"
+        },
+        {
+          "id": "w003-s003",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s003.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "d7e8c18b7be26f9af66ecc21d1b0e8de26bd4b35566130fe932f6f7abac86bc8"
+        },
+        {
+          "id": "w003-s004",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s004.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "fe9bd2d4a2387fbdb4a0d7dcc9301b1f016c3e294cd61dd96c36a1efc4e5131e"
+        },
+        {
+          "id": "w003-s005",
+          "dependencies": [
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s006"
+          ],
+          "capsule_assets": [
+            "w003-s005.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "e44ef76dbe028107db306feba6dfe65d2feff9b1d46f3d7e79cf560a34b25e8c"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "tasks": [
+        {
+          "id": "w004-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005"
+          ],
+          "capsule_assets": [
+            "w004-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "aec7dc83b8671b96cdbac3eaf05bbc37fc317b48f8b76dfe0be309d36448fdc8"
+        },
+        {
+          "id": "w004-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004"
+          ],
+          "capsule_assets": [
+            "w004-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "a16e601f5ce88d6ae31908732bed45dbbb53abe8b33edca72a004a9b76af0a70"
+        },
+        {
+          "id": "w004-s002",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005"
+          ],
+          "capsule_assets": [
+            "w004-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "e96065704377c9ae8f3e34e1a7ad89eebf3a6774d9280d07f9219736a8762402"
+        },
+        {
+          "id": "w004-s003",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005"
+          ],
+          "capsule_assets": [
+            "w004-s003.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "a8e96fda7188cd951493a09be500453b657e200f56badbd3db8b58705cb947f0"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "tasks": [
+        {
+          "id": "w005-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003"
+          ],
+          "capsule_assets": [
+            "w005-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "593d0e131f7b308cbb8f8d9e802645bc859e930f8ab2ef74a0f9e696e4503853"
+        },
+        {
+          "id": "w005-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s005",
+            "w000-s006",
+            "w000-s007",
+            "w000-s008",
+            "w000-s009",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003"
+          ],
+          "capsule_assets": [
+            "w005-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "4a626f8d83c0b67d19d2a014ebae4dea701facf48ba3b246643e048e6ba8a69b"
+        },
+        {
+          "id": "w005-s002",
+          "dependencies": [
+            "w000-s001",
+            "w000-s004",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003"
+          ],
+          "capsule_assets": [
+            "w005-s002.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "09d6a651cc739dc4e64ceff3d6d66a7d87773c05ec93f417bd7178a5b3dcd66a"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "tasks": [
+        {
+          "id": "w006-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s003",
+            "w000-s004",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003",
+            "w005-s000",
+            "w005-s001",
+            "w005-s002"
+          ],
+          "capsule_assets": [
+            "w006-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "d2527d54d7872c30a5470cfab818ddd84f91d77a68a2aa97425514311762473f"
+        },
+        {
+          "id": "w006-s001",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s004",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s001",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003",
+            "w005-s000",
+            "w005-s001",
+            "w005-s002"
+          ],
+          "capsule_assets": [
+            "w006-s001.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "9f06cde8c1ef37db0a1e8f8467fdb826e8b218dd061bdff2c01564b0d8049550"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "tasks": [
+        {
+          "id": "w007-s000",
+          "dependencies": [
+            "w000-s000",
+            "w000-s001",
+            "w000-s002",
+            "w000-s004",
+            "w000-s008",
+            "w000-s010",
+            "w000-s011",
+            "w000-s012",
+            "w001-s000",
+            "w001-s001",
+            "w001-s002",
+            "w002-s000",
+            "w002-s002",
+            "w002-s003",
+            "w002-s004",
+            "w002-s005",
+            "w002-s006",
+            "w003-s000",
+            "w003-s001",
+            "w003-s002",
+            "w003-s003",
+            "w003-s004",
+            "w003-s005",
+            "w004-s000",
+            "w004-s001",
+            "w004-s002",
+            "w004-s003",
+            "w005-s000",
+            "w005-s001",
+            "w005-s002",
+            "w006-s000",
+            "w006-s001"
+          ],
+          "capsule_assets": [
+            "w007-s000.tar.zst"
+          ],
+          "release_tag": "inputs-release-2026101104-v4",
+          "manifest_sha256": "1b951abf46467f2722f782c9db8cbf1cd3e1cf833d6d5520c9bd728fa1c484e6"
+        }
+      ]
+    }
+  ]
+}
