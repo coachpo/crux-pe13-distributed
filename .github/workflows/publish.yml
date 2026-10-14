@@ -76,6 +76,7 @@ jobs:
     environment:
       name: release
     env:
+      GH_TOKEN: ${{ github.token }}
       REPOSITORY: coachpo/crux-pe13-ota
       PAGES_URL: https://coachpo.github.io/crux-pe13-ota
       IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
