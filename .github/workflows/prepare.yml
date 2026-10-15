@@ -308,12 +308,15 @@ jobs:
         run: |
           set -euo pipefail
           exec >> "$RUNNER_TEMP/result/source-archives.log" 2>&1
-          python3 - "$RUNNER_TEMP" <<'PY'
+          # The extraction created the tree as root, and only the owner may change a
+          # directory's times, so the restore runs as root with the registry path passed
+          # explicitly (sudo does not inherit the step environment).
+          sudo python3 - "$RUNNER_TEMP" "$REGISTRY_PATH" <<'PY'
           import hashlib, json, os, subprocess, sys
           from pathlib import Path
 
           staging = Path(sys.argv[1])
-          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          registry = json.loads(Path(sys.argv[2]).read_text())
           record = registry['graph']['directory_mtimes']
           directory = staging / 'dirents'
           directory.mkdir(parents=True, exist_ok=True)
@@ -368,12 +371,15 @@ jobs:
         run: |
           set -euo pipefail
           exec > >(tee "$RUNNER_TEMP/result/finalize.log") 2>&1
-          python3 - "$RUNNER_TEMP" <<'PY'
+          # The extraction created the tree as root, and only the owner may change a
+          # directory's times, so the restore runs as root with the registry path passed
+          # explicitly (sudo does not inherit the step environment).
+          sudo python3 - "$RUNNER_TEMP" "$REGISTRY_PATH" <<'PY'
           import hashlib, json, os, subprocess, sys
           from pathlib import Path
 
           staging = Path(sys.argv[1])
-          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          registry = json.loads(Path(sys.argv[2]).read_text())
           inputs = json.loads((staging / 'finalize-inputs.json').read_text())
           command = ['python3', 'scripts/finalize_slices.py',
                      '--shards', str(staging / 'shards'),
