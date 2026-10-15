@@ -432,6 +432,8 @@ jobs:
                               registry['repository'], '--pattern', row['asset'],
                               '--dir', str(frozen_dir)], check=True)
 
+              import tarfile
+
               def table(archive):
                   unpacked = scratch / (archive.name + '.members.tar')
                   with unpacked.open('wb') as destination:
