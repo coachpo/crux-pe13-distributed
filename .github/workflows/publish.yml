@@ -168,6 +168,8 @@ jobs:
               raise SystemExit('Signed target-files artifact is absent or ambiguous')
           record_dir = Path(os.environ['OTA_REPO']) / 'site/releases'
           before = {path.name for path in record_dir.glob('*.json')}
+          manifest = {'ota_sha256': json.loads((assets / 'candidate-manifest.json').read_text())
+                      ['assets']['ota']['sha256']}
           command = [sys.executable, 'scripts/prepare_release.py',
                      '--signed-target-files', str(signed[0]),
                      '--ota', str(assets / identity['delivery']['ota']),
@@ -178,11 +180,15 @@ jobs:
           result = subprocess.run(command, cwd=os.environ['OTA_REPO'])
           if result.returncode != 0:
               raise SystemExit(result.returncode)
+          # The record is keyed by the OTA digest: a first publication creates it and a
+          # re-publication finds it, and `prepare_release.py` already refuses an existing
+          # record whose content differs, so both outcomes are acceptances.
           created = sorted({path.name for path in record_dir.glob('*.json')} - before)
-          if len(created) != 1:
-              raise SystemExit('Release record was not created exactly once')
-          (work / 'result/release-record.json').write_text(
-              (record_dir / created[0]).read_text())
+          ota_id = manifest['ota_sha256']
+          record = record_dir / (ota_id + '.json')
+          if len(created) > 1 or not record.is_file():
+              raise SystemExit('Release record is absent or ambiguous after preparation')
+          (work / 'result/release-record.json').write_text(record.read_text())
           PY
 
       - name: Create the immutable prerelease and upload the signed bytes
