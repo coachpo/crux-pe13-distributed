@@ -305,6 +305,7 @@ jobs:
               if runs and runs[0]['status'] == 'completed':
                   if runs[0]['conclusion'] != 'success':
                       raise SystemExit('Pages deployment failed: %s' % runs[0]['databaseId'])
+                  pages_completed = True
                   break
               time.sleep(20)
           if revision != 'unchanged' and not pages_completed:
