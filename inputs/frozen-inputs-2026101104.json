@@ -93,6 +93,13 @@
       "sha256": "d304445daa7e6429293dc02035063b7993fb6a489ee90d8851bff497952836dc",
       "version": "1.4.8",
       "note": "The frozen capsule archives were produced by zstd 1.4.8, the build host's version. zstd does not promise identical output across releases: the same payload compressed with level 3 on a runner whose PATH resolves to a 1.5.x build is 493,096,337 B / e6761f86\u2026 instead of the frozen 495,632,962 B / 3336664273\u2026, while the payload is byte-identical either way. The prepare run therefore compresses with this recorded binary."
+    },
+    "directory_mtimes": {
+      "asset": "frozen-dirents.json",
+      "bytes": 10293373,
+      "sha256": "3287a3f3e2992f7691a20791e31dc0a88100376f833d77e856e9bb989afb2b32",
+      "directories": 79551,
+      "note": "Union of the directory mtimes the 39 frozen capsules carry, taken from the capsules themselves (they agree). Extraction restores a directory mtime only from an entry in the same archive, so a directory that several capsules write into keeps the extraction time; the prepare run restores this record after extracting the tree, which is what makes the rebuilt archives byte-identical."
     }
   },
   "finalize": {

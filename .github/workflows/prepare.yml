@@ -303,6 +303,45 @@ jobs:
           raise SystemExit(subprocess.run(command).returncode)
           PY
 
+      - name: Restore the recorded directory mtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec >> "$RUNNER_TEMP/result/source-archives.log" 2>&1
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import hashlib, json, os, subprocess, sys
+          from pathlib import Path
+
+          staging = Path(sys.argv[1])
+          registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
+          record = registry['graph']['directory_mtimes']
+          directory = staging / 'dirents'
+          directory.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['gh', 'release', 'download', registry['graph']['release_tag'], '--repo',
+                          registry['repository'], '--pattern', record['asset'],
+                          '--dir', str(directory)], check=True)
+          path = directory / record['asset']
+          hasher = hashlib.sha256()
+          with path.open('rb') as stream:
+              for block in iter(lambda: stream.read(1 << 22), b''):
+                  hasher.update(block)
+          if hasher.hexdigest() != record['sha256']:
+              raise SystemExit('Recorded directory mtime digest mismatch')
+          document = json.loads(path.read_text())
+          applied = missing = 0
+          for name, mtime in document['directories'].items():
+              target = Path('/') / name
+              if not target.is_dir():
+                  missing += 1
+                  continue
+              os.utime(target, (mtime, mtime))
+              applied += 1
+          print('Restored directory mtimes: %d applied, %d not present' % (applied, missing),
+                flush=True)
+          if applied == 0:
+              raise SystemExit('No recorded directory mtime could be applied')
+          PY
+
       - name: Slice the frozen graph
         shell: bash
         run: |
