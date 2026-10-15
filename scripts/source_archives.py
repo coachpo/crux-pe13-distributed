@@ -194,14 +194,20 @@ def select_archives(profile, bundles):
     source_root = Path(profile["source_root"])
     if not source_root.is_absolute() or ".." in source_root.parts:
         raise ArchiveError("Source root must be an absolute path")
+    installs = [Path(descriptor["install_path"]) for descriptor in profile["archives"]]
     inputs = {}
     for bundle in bundles:
         if bundle.get("schema_version") != 1 or Path(bundle["source_root"]) != source_root:
             raise ArchiveError("Capsule and remote source profile roots differ")
         for spec in bundle["files"]:
-            # Capsules also record generated graph/out paths. Only source inputs
-            # can be provided by these frozen repository archives.
+            # Capsules also record generated graph and out paths, and every shard
+            # carries its own `.crux-task/graph` runtime and slice files. Only
+            # files a pinned archive can actually restore take part in the identity
+            # map: the others differ per shard by design and this tool could never
+            # provide them.
             if not beneath(Path(spec["path"]), source_root):
+                continue
+            if not any(beneath(Path(spec["path"]), install) for install in installs):
                 continue
             path = validate_spec(spec, source_root)
             identity = {key: spec[key] for key in ("path", "type", "mode", "size", "sha256", "target") if key in spec}
