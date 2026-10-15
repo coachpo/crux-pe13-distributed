@@ -11,7 +11,8 @@ run-name: PE13 pipeline ${{ inputs.build_number }}
 #            record the accepted producer run, artifact and slice manifest,
 #   summary  refuses to continue unless every shard has a recorded producer,
 #   sign     dispatches the signing workflow for the terminal and kernel producers
-#            and waits for it (that workflow needs the protected `release` environment),
+#            and waits for it (that workflow needs the protected `release` environment);
+#            `run_sign=false` stops after the wave chain for a compilation-only run,
 #   publish  dispatches the publication workflow for the signed candidate.
 #
 # Each job stays well inside the six-hour job limit, so a full cold chain can span a
@@ -63,6 +64,12 @@ on:
         required: false
         default: ""
         type: string
+      run_sign:
+        description: Dispatch the signing stage after the wave chain
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
       publish:
         description: Run the publication stage
         required: true
@@ -240,6 +247,7 @@ jobs:
 
   sign:
     needs: summary
+    if: ${{ inputs.run_sign == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     outputs:
