@@ -86,6 +86,13 @@
       "manifest_asset": "prebuilt-wrappers.json",
       "manifest_sha256": "dbd57825e61414d776591c6a30bb429283e0b277a0e53ed7b455fd347b86edff",
       "manifest_bytes": 32081
+    },
+    "compressor": {
+      "asset": "zstd-1.4.8",
+      "bytes": 875096,
+      "sha256": "d304445daa7e6429293dc02035063b7993fb6a489ee90d8851bff497952836dc",
+      "version": "1.4.8",
+      "note": "The frozen capsule archives were produced by zstd 1.4.8, the build host's version. zstd does not promise identical output across releases: the same payload compressed with level 3 on a runner whose PATH resolves to a 1.5.x build is 493,096,337 B / e6761f86\u2026 instead of the frozen 495,632,962 B / 3336664273\u2026, while the payload is byte-identical either way. The prepare run therefore compresses with this recorded binary."
     }
   },
   "finalize": {

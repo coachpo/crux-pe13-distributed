@@ -439,6 +439,30 @@ jobs:
               unpacked.unlink()
               return result
 
+          # Compression is part of the recorded recipe: zstd does not promise identical
+          # output across releases, so the run compresses with the recorded binary
+          # rather than whatever the runner image happens to put on PATH.
+          compressor = registry['graph']['compressor']
+          toolchain = staging / 'compressor'
+          toolchain.mkdir(parents=True, exist_ok=True)
+          binary = toolchain / ('zstd-' + compressor['version'])
+          subprocess.run(['gh', 'release', 'download', registry['graph']['release_tag'], '--repo',
+                          registry['repository'], '--pattern', compressor['asset'],
+                          '--dir', str(toolchain)], check=True)
+          if digest(binary) != compressor['sha256']:
+              raise SystemExit('Recorded compressor digest mismatch')
+          binary.chmod(0o755)
+          shim = toolchain / 'bin'
+          shim.mkdir(exist_ok=True)
+          link = shim / 'zstd'
+          if link.is_symlink() or link.exists():
+              link.unlink()
+          link.symlink_to(binary)
+          resolver = subprocess.run(['bash', '-lc', 'command -v zstd; zstd --version'],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, 'PATH': str(shim) + ':' + os.environ['PATH']})
+          print('Compressor: ' + ' | '.join(resolver.stdout.split()), flush=True)
+
           # The frozen capsules were produced by one recorded packer revision with
           # one recorded flag set; a later revision discovers the same file set but
           # annotates it differently, so the chosen revision has to be the recorded
@@ -454,7 +478,12 @@ jobs:
           if actual_script != registry['packer']['script_sha256']:
               raise SystemExit('Recorded packer revision differs: ' + actual_script)
           report = {'schema_version': 1, 'packer_commit': registry['packer']['commit'],
-                    'packer_script_sha256': actual_script, 'shards': [], 'failures': []}
+                    'packer_script_sha256': actual_script,
+                    'compressor': compressor['version'],
+                    'compressor_sha256': compressor['sha256'],
+                    'runner_zstd': resolver.stdout.strip(),
+                    'cores': os.cpu_count(),
+                    'shards': [], 'failures': []}
           for row in selected:
               started = time.time()
               output = capsules / row['asset']
@@ -466,7 +495,8 @@ jobs:
                          '--shared-manifest', str(staging / 'shared-prebuilts.json')]
               if registry['packer'].get('graph_index_argument'):
                   command += ['--graph-index', str(staging / 'index.sqlite')]
-              completed = subprocess.run(command, capture_output=True, text=True)
+              completed = subprocess.run(command, capture_output=True, text=True,
+                                         env={**os.environ, 'PATH': str(shim) + ':' + os.environ['PATH']})
               if completed.returncode != 0:
                   print(completed.stdout, completed.stderr, flush=True)
                   raise SystemExit('Capsule pack failed: ' + row['id'])
