@@ -815,10 +815,12 @@
             "w002-s004",
             "w002-s005",
             "w002-s006",
+            "w003-s000",
             "w003-s001",
             "w003-s002",
             "w003-s003",
             "w003-s004",
+            "w003-s005",
             "w004-s000",
             "w004-s001",
             "w004-s002",
@@ -934,6 +936,7 @@
             "w001-s001",
             "w001-s002",
             "w002-s000",
+            "w002-s001",
             "w002-s002",
             "w002-s003",
             "w002-s004",
@@ -963,5 +966,6 @@
         }
       ]
     }
-  ]
+  ],
+  "dependency_source": "Union of the frozen plan and the accepted dispatch (the v4 wave control files): the accepted build added supplemental producers to two shards so their license-metadata inputs are materialized."
 }

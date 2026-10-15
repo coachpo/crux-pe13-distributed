@@ -240,14 +240,19 @@ def command_wave(args):
         if view['status'] == 'completed':
             break
         time.sleep(30)
-    if view['conclusion'] != 'success':
-        raise SystemExit('Wave %s failed: %s' % (args.wave, view['url']))
     artifacts = {row['name']: row for row in gh(
         'api', 'repos/%s/actions/runs/%s/artifacts' % (plan['repository'], run['databaseId']),
         json_output=True)['artifacts']}
+    conclusions = {job['name']: job['conclusion'] for job in view.get('jobs', [])}
     recorded_ids = []
+    failed = []
     for task in selected:
         name = 'shard-' + task['id']
+        job = next((conclusion for job_name, conclusion in conclusions.items()
+                    if job_name.startswith('compile (' + task['id'] + ',')), None)
+        if job != 'success':
+            failed.append(task['id'])
+            continue
         artifact = artifacts.get(name)
         if not artifact or artifact['expired']:
             raise SystemExit('Wave run did not publish ' + name)
@@ -263,6 +268,11 @@ def command_wave(args):
         recorded_ids.append(task['id'])
     state['plan_sha256'] = hashlib.sha256(Path(args.plan).read_bytes()).hexdigest()
     save(args.state_output, state)
+    if view['conclusion'] != 'success' or failed:
+        # A failed wave still records the shards that succeeded, which is what makes a
+        # retry recompile only the shards the failure touched.
+        raise SystemExit('Wave %s did not complete: %s (recorded %s, failed %s)'
+                         % (args.wave, view['url'], recorded_ids, failed))
     summary = {'wave': args.wave, 'run_id': run['databaseId'], 'run_url': view['url'],
                'head_sha': view['headSha'], 'dispatched': recorded_ids,
                'reused': [task['id'] for task in wave['tasks'] if task['id'] not in recorded_ids]}
