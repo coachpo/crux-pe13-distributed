@@ -129,6 +129,12 @@ regenerated artifact matches the frozen record byte for byte:
 5. `scripts/capsule.py pack` regenerates every capsule, and each archive's size and
    SHA256 must equal the published asset digest of the frozen input release.
 
+Each capsule records the input-discovery revision and flag set that reproduce its
+published bytes (`packer`). The frozen set was filled across the discovery-fix
+series, so the recorded revision is per capsule; the run extracts each one from the
+repository history, checks its script digest and, when it requires the frozen graph
+index, also extracts that revision's `graph.py` next to it.
+
 `mode=probe` slices and packs only `probe_shards` and reports; `mode=full`
 regenerates all shards and, when `output_tag` is set, publishes them as a new
 input release. Both modes upload their evidence (slice and pack comparison,
