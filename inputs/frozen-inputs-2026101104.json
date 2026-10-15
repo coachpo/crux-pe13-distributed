@@ -148,6 +148,11 @@
         "uncompressed_bytes": 1080555520,
         "member_count": 8126,
         "member_table_sha256": "a078e07e4648ed3a9bce5e2c4229b2aac9c746c9ecb6cc358a5a63c9d556a49d"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -170,6 +175,11 @@
         "uncompressed_bytes": 1703444480,
         "member_count": 141787,
         "member_table_sha256": "81dc138a59c25da5193d69c08070191601f6442d48cbb6a8188b00c8bbe307a2"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -192,6 +202,11 @@
         "uncompressed_bytes": 1597419520,
         "member_count": 137821,
         "member_table_sha256": "bc464303c7ed078bffb619f70fdf18b46028add84cf201f78f231fe9289d8bbb"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -214,6 +229,11 @@
         "uncompressed_bytes": 378316800,
         "member_count": 22195,
         "member_table_sha256": "d14fdfd9709b0fbe5d8cda0145272abc4a3727549aa54dbc3432350c99beb8c0"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -236,6 +256,11 @@
         "uncompressed_bytes": 197888000,
         "member_count": 5586,
         "member_table_sha256": "cb24d586d2b2b2a91d8f44b0f6c7a37d943e0e9b58db911c3fd2a92c1bddfa2a"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -258,6 +283,11 @@
         "uncompressed_bytes": 209633280,
         "member_count": 4638,
         "member_table_sha256": "d14acd43882582b2c884371a7d95558d6a8f6e4d861c71c3789ecbadc90587c4"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -280,6 +310,11 @@
         "uncompressed_bytes": 307066880,
         "member_count": 16101,
         "member_table_sha256": "e26927c692d2c3a2c1bb674dd30b02024cf07a07d1c63dd8411dd65b8dc4ef46"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -302,6 +337,11 @@
         "uncompressed_bytes": 243988480,
         "member_count": 9006,
         "member_table_sha256": "de216475dc30994df66dea7d9a98c4b019a6185f421823994da6f9c22741e177"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -324,6 +364,11 @@
         "uncompressed_bytes": 283095040,
         "member_count": 11434,
         "member_table_sha256": "34ab6d6dfad4b3d43d8668a7b6019b9cbd7adced5a6b22a4b16fffaca278b97f"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -346,6 +391,11 @@
         "uncompressed_bytes": 273080320,
         "member_count": 9093,
         "member_table_sha256": "db0de82201f3778ed47e94c8788459ea1dc5d6f37d3e43fdbb9c7dca6e834f31"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -368,6 +418,11 @@
         "uncompressed_bytes": 786094080,
         "member_count": 24054,
         "member_table_sha256": "ba94c839e991cc6361337d2c3c07f833d344e0f7dc3597c35b3a555878d764e7"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -390,6 +445,11 @@
         "uncompressed_bytes": 824709120,
         "member_count": 25200,
         "member_table_sha256": "5a6b85ce664c9ad400e0b12693ce60e5b747363d5c556d59c6bdad63b544a927"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -412,6 +472,11 @@
         "uncompressed_bytes": 208128000,
         "member_count": 16846,
         "member_table_sha256": "e9353ee89d26111eb8b1c8914077522e41f07acae98654693bed2cf47acbdc1d"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -434,6 +499,11 @@
         "uncompressed_bytes": 323215360,
         "member_count": 22554,
         "member_table_sha256": "e15b470c4938d80723a7c56b4f46607a3d66602f5ad77790909a9c10cf4527a8"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -456,6 +526,11 @@
         "uncompressed_bytes": 1987799040,
         "member_count": 113036,
         "member_table_sha256": "4bde9d1abb3f6d3f01a85c452e5af05e5b401cfd568795959657392c8c721929"
+      },
+      "packer": {
+        "commit": "dc4069ee619d6329f7ebbc4af7323b908913b21c",
+        "script_sha256": "c5a7ce62d868426b8e68b6a7991bd72c899ec65b028373e26c55023e3bb8486b",
+        "graph_index_argument": false
       }
     },
     {
@@ -478,6 +553,11 @@
         "uncompressed_bytes": 2077194240,
         "member_count": 25304,
         "member_table_sha256": "f5164b2f5ae10dacb5efacb82c3a09b897acf08df1a056195e249d485e1fa786"
+      },
+      "packer": {
+        "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
+        "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
+        "graph_index_argument": false
       }
     },
     {
@@ -500,6 +580,11 @@
         "uncompressed_bytes": 772843520,
         "member_count": 41321,
         "member_table_sha256": "57556590c940becbd030a2cd3d2ef6ebadbf08f387cfe3975f6b683be2b1a4f1"
+      },
+      "packer": {
+        "commit": "50ea46f6e1730a13bee8a3ea663b0f83159ebeff",
+        "script_sha256": "4f7cd464833e6fbe39ca7454789a66e366ee2219ed542da23049d8e6a6c993c2",
+        "graph_index_argument": true
       }
     },
     {
@@ -522,6 +607,11 @@
         "uncompressed_bytes": 271656960,
         "member_count": 6258,
         "member_table_sha256": "185652bc59cd3ba16f749a208fc06e0ccf443bfe0f81c4ad1653a7858b41615b"
+      },
+      "packer": {
+        "commit": "29a0e201423b4398c9b701d5c5e2158be3acc3a7",
+        "script_sha256": "c92bcffa06f02f376f32f9792f36e355977a6702d39b02429d05d0b0f791376d",
+        "graph_index_argument": false
       }
     },
     {
@@ -544,6 +634,11 @@
         "uncompressed_bytes": 574023680,
         "member_count": 32805,
         "member_table_sha256": "0fc9b376da5ebd5ad83e718218e2ce12cc426114647263daaf91aa5628cdfe16"
+      },
+      "packer": {
+        "commit": "3d9d5cd3b33f8aa7b2b37fc54706b6ce285a7082",
+        "script_sha256": "04cd071d852c77f51e83a94fa500160acff3c9aeacef7bedddcf0ee9c455c76c",
+        "graph_index_argument": true
       }
     },
     {
@@ -566,6 +661,11 @@
         "uncompressed_bytes": 286453760,
         "member_count": 15421,
         "member_table_sha256": "1e715074de76a28203a69bc904f3cbf7d2118243e4d974d57b667954b47c9413"
+      },
+      "packer": {
+        "commit": "50ea46f6e1730a13bee8a3ea663b0f83159ebeff",
+        "script_sha256": "4f7cd464833e6fbe39ca7454789a66e366ee2219ed542da23049d8e6a6c993c2",
+        "graph_index_argument": true
       }
     },
     {
@@ -588,6 +688,11 @@
         "uncompressed_bytes": 1714984960,
         "member_count": 129087,
         "member_table_sha256": "cfbead8a90c30c555e0cc1c0aa47f8970b96cb6d13d561191743001984aa5081"
+      },
+      "packer": {
+        "commit": "8ea1520fdcc1e4483c7aff5119a11926ec8ed014",
+        "script_sha256": "251c4603085fec841a50e0f7d78b744481c9ae5689ce7d5faacd40978c759519",
+        "graph_index_argument": true
       }
     },
     {
@@ -610,6 +715,11 @@
         "uncompressed_bytes": 433541120,
         "member_count": 16002,
         "member_table_sha256": "8e47f847c21f7105e8d251937eadd3d62cc979a0cec42a82a8f744fb475c6413"
+      },
+      "packer": {
+        "commit": "29a0e201423b4398c9b701d5c5e2158be3acc3a7",
+        "script_sha256": "c92bcffa06f02f376f32f9792f36e355977a6702d39b02429d05d0b0f791376d",
+        "graph_index_argument": false
       }
     },
     {
@@ -632,6 +742,11 @@
         "uncompressed_bytes": 348846080,
         "member_count": 33316,
         "member_table_sha256": "1ff39c5bd36608d99c345d78cadb44545bf23b3cdc82fbfdd544672adb112de6"
+      },
+      "packer": {
+        "commit": "7ff947a9733fc4c3e89c02d6df7a790c6a203d5d",
+        "script_sha256": "1576adc3a0d11ec45375171efca0c743239234033ba6d1d56c6d8285a2997dd3",
+        "graph_index_argument": true
       }
     },
     {
@@ -654,6 +769,11 @@
         "uncompressed_bytes": 676003840,
         "member_count": 12600,
         "member_table_sha256": "f7494a6def521209520358d100152b1120fa585beede138580567fcb8397d7d3"
+      },
+      "packer": {
+        "commit": "3d9d5cd3b33f8aa7b2b37fc54706b6ce285a7082",
+        "script_sha256": "04cd071d852c77f51e83a94fa500160acff3c9aeacef7bedddcf0ee9c455c76c",
+        "graph_index_argument": true
       }
     },
     {
@@ -676,6 +796,11 @@
         "uncompressed_bytes": 554321920,
         "member_count": 14892,
         "member_table_sha256": "b6e765db6651d7f7594733e4df361c2584e99b681635c1518bdbbe4fb90c3a94"
+      },
+      "packer": {
+        "commit": "3d9d5cd3b33f8aa7b2b37fc54706b6ce285a7082",
+        "script_sha256": "04cd071d852c77f51e83a94fa500160acff3c9aeacef7bedddcf0ee9c455c76c",
+        "graph_index_argument": true
       }
     },
     {
@@ -698,6 +823,11 @@
         "uncompressed_bytes": 469698560,
         "member_count": 22259,
         "member_table_sha256": "5d6cd6766bc19e97ae41c61f76a72db626217c5963600c31cc22c13c6855dace"
+      },
+      "packer": {
+        "commit": "3d9d5cd3b33f8aa7b2b37fc54706b6ce285a7082",
+        "script_sha256": "04cd071d852c77f51e83a94fa500160acff3c9aeacef7bedddcf0ee9c455c76c",
+        "graph_index_argument": true
       }
     },
     {
@@ -720,6 +850,11 @@
         "uncompressed_bytes": 323676160,
         "member_count": 8859,
         "member_table_sha256": "d51eca420bec2c9e22ea5031bdb437a90d863e0f689775916b5db3cd2f1839d7"
+      },
+      "packer": {
+        "commit": "3d9d5cd3b33f8aa7b2b37fc54706b6ce285a7082",
+        "script_sha256": "04cd071d852c77f51e83a94fa500160acff3c9aeacef7bedddcf0ee9c455c76c",
+        "graph_index_argument": true
       }
     },
     {
@@ -742,6 +877,11 @@
         "uncompressed_bytes": 738304000,
         "member_count": 33768,
         "member_table_sha256": "9245cb4774e142cd72d93af2b1574599064ecf5e9f98e4526719e0914477aee4"
+      },
+      "packer": {
+        "commit": "9c4133c6445d70247e0979b38197d39114e35395",
+        "script_sha256": "7d4856c772c85a128c69a4da5deb72cb4cd8495d32cf64d7dbb1d8c9520ccf39",
+        "graph_index_argument": true
       }
     },
     {
@@ -764,6 +904,11 @@
         "uncompressed_bytes": 258519040,
         "member_count": 15488,
         "member_table_sha256": "d166ade0027d91977914158d3df16a10e0b90b4f328f77ac45742583034f6f11"
+      },
+      "packer": {
+        "commit": "92ed3055ebf48d9a9d77e4579160fd6e640d24c8",
+        "script_sha256": "dcefd1a9ef44436436734ed0e2677f024c130696f6d52491360822474504e205",
+        "graph_index_argument": true
       }
     },
     {
@@ -786,6 +931,11 @@
         "uncompressed_bytes": 610406400,
         "member_count": 14955,
         "member_table_sha256": "9538274ab3b6fb1fb81d61d3baf41c9684eb0a770e39670905bee82ee7d6cb3b"
+      },
+      "packer": {
+        "commit": "dbec99f100a2b0fc2ccf8575756f9c0358d7c37b",
+        "script_sha256": "254a38d478324300eccbc15a2b209e7007954ba3da737b003f63a58a1daa1bf8",
+        "graph_index_argument": true
       }
     },
     {
@@ -808,6 +958,11 @@
         "uncompressed_bytes": 350699520,
         "member_count": 7482,
         "member_table_sha256": "e2dd1460df7c75666e280f6aaab5db973d0d16f3aec7426ad4e801c0939680bc"
+      },
+      "packer": {
+        "commit": "92ed3055ebf48d9a9d77e4579160fd6e640d24c8",
+        "script_sha256": "dcefd1a9ef44436436734ed0e2677f024c130696f6d52491360822474504e205",
+        "graph_index_argument": true
       }
     },
     {
@@ -830,6 +985,11 @@
         "uncompressed_bytes": 427806720,
         "member_count": 17453,
         "member_table_sha256": "6a6be3fb27d9dc1472414f7245fd746857e991db5caa03b0e2be46b2c104b446"
+      },
+      "packer": {
+        "commit": "92ed3055ebf48d9a9d77e4579160fd6e640d24c8",
+        "script_sha256": "dcefd1a9ef44436436734ed0e2677f024c130696f6d52491360822474504e205",
+        "graph_index_argument": true
       }
     },
     {
@@ -852,6 +1012,11 @@
         "uncompressed_bytes": 305971200,
         "member_count": 5240,
         "member_table_sha256": "6e0556a2f8c3af91f87ed4b6517516b24a85f757336dfd6a290cc777f49cc11d"
+      },
+      "packer": {
+        "commit": "92ed3055ebf48d9a9d77e4579160fd6e640d24c8",
+        "script_sha256": "dcefd1a9ef44436436734ed0e2677f024c130696f6d52491360822474504e205",
+        "graph_index_argument": true
       }
     },
     {
@@ -874,6 +1039,11 @@
         "uncompressed_bytes": 211107840,
         "member_count": 1751,
         "member_table_sha256": "cdbd58a8ada16b6af2f06fbf1568044e434c67016b4984c9a495c27525ed3c19"
+      },
+      "packer": {
+        "commit": "dbec99f100a2b0fc2ccf8575756f9c0358d7c37b",
+        "script_sha256": "254a38d478324300eccbc15a2b209e7007954ba3da737b003f63a58a1daa1bf8",
+        "graph_index_argument": true
       }
     },
     {
@@ -896,6 +1066,11 @@
         "uncompressed_bytes": 326819840,
         "member_count": 2185,
         "member_table_sha256": "c1309772db5f26f07920d3cf1281711e17b933f8013fff1c4c0ae7c4e814616a"
+      },
+      "packer": {
+        "commit": "dbec99f100a2b0fc2ccf8575756f9c0358d7c37b",
+        "script_sha256": "254a38d478324300eccbc15a2b209e7007954ba3da737b003f63a58a1daa1bf8",
+        "graph_index_argument": true
       }
     },
     {
@@ -918,6 +1093,11 @@
         "uncompressed_bytes": 116910080,
         "member_count": 180,
         "member_table_sha256": "a1194e77bcc361628f8d5dffd718ddd462b81b95139ee8fa397df246b4770271"
+      },
+      "packer": {
+        "commit": "dbec99f100a2b0fc2ccf8575756f9c0358d7c37b",
+        "script_sha256": "254a38d478324300eccbc15a2b209e7007954ba3da737b003f63a58a1daa1bf8",
+        "graph_index_argument": true
       }
     },
     {
@@ -940,6 +1120,11 @@
         "uncompressed_bytes": 898068480,
         "member_count": 20405,
         "member_table_sha256": "f397c0106f489a47ffc237976d4186e94846d8dc8ed2af5eab3f515728e7dd71"
+      },
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
       }
     },
     {
@@ -962,6 +1147,11 @@
         "uncompressed_bytes": 235110400,
         "member_count": 2324,
         "member_table_sha256": "2149dcfbf19e921be726ac5ebaf0f8b37004c836bcb9de4f7f4f23e1be65a61a"
+      },
+      "packer": {
+        "commit": "dbec99f100a2b0fc2ccf8575756f9c0358d7c37b",
+        "script_sha256": "254a38d478324300eccbc15a2b209e7007954ba3da737b003f63a58a1daa1bf8",
+        "graph_index_argument": true
       }
     },
     {
@@ -984,6 +1174,11 @@
         "uncompressed_bytes": 169420800,
         "member_count": 1710,
         "member_table_sha256": "7bb9a49c0901e82630db05b18598e9498c8f56f7b3898fccb346165af4c402e1"
+      },
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
       }
     }
   ],
@@ -1000,7 +1195,7 @@
     "commit": "6319f50e9e82863c763f3f64e9d0fb2e23241091",
     "script_sha256": "9e6e139ef43b258a38b74f29f73f388eb50eec8ee43286e747d8938dc1b48c1f",
     "graph_index_argument": false,
-    "note": "The 2026101104 capsules were packed at this revision, before the later input-discovery fixes landed; reproducing their exact bytes requires this packer and its flag set, not the current one."
+    "note": "Fallback for capsules without their own record. The 2026101104 capsules were packed at the input-discovery revision that was current when each one was filled, so every capsule carries its own packer record; reproducing an archive byte for byte requires that revision and its flag set."
   },
   "payload_identity": {
     "recorded_for": [

@@ -611,28 +611,53 @@ jobs:
                                     env={**os.environ, 'PATH': str(shim) + ':' + os.environ['PATH']})
           print('Compressor: ' + ' | '.join(resolver.stdout.split()), flush=True)
 
-          # The frozen capsules were produced by one recorded packer revision with
-          # one recorded flag set; a later revision discovers the same file set but
-          # annotates it differently, so the chosen revision has to be the recorded
-          # one for the archives to match their published bytes.
-          packer = staging / 'packer'
-          packer.mkdir(parents=True, exist_ok=True)
-          script = packer / 'capsule.py'
-          with script.open('wb') as destination:
-              subprocess.run(['git', 'cat-file', 'blob',
-                              registry['packer']['commit'] + ':scripts/capsule.py'],
-                             stdout=destination, check=True)
-          actual_script = digest(script)
-          if actual_script != registry['packer']['script_sha256']:
-              raise SystemExit('Recorded packer revision differs: ' + actual_script)
-          report = {'schema_version': 1, 'packer_commit': registry['packer']['commit'],
-                    'packer_script_sha256': actual_script,
+          # The frozen capsules were filled across the whole input-discovery
+          # series: each one was packed with the revision that was current at its
+          # pack time, and a later revision selects a different input set (or
+          # annotates the same set differently), so every capsule records the
+          # revision and flag set that reproduce its published bytes.
+          packers = staging / 'packers'
+          packers.mkdir(parents=True, exist_ok=True)
+          extracted = {}
+
+          def prepare_packer(spec):
+              entry = extracted.get(spec['commit'])
+              if entry is not None:
+                  return entry
+              directory = packers / spec['commit']
+              directory.mkdir(parents=True, exist_ok=True)
+              script = directory / 'capsule.py'
+              with script.open('wb') as destination:
+                  subprocess.run(['git', 'cat-file', 'blob',
+                                  spec['commit'] + ':scripts/capsule.py'],
+                                 stdout=destination, check=True)
+              actual_script = digest(script)
+              if actual_script != spec['script_sha256']:
+                  raise SystemExit('Recorded packer revision differs: ' + spec['commit'])
+              if spec.get('graph_index_argument'):
+                  # The packer loads the frozen graph helper next to itself to
+                  # recover Sbox inner commands from the recorded index.
+                  graph_script = directory / 'graph.py'
+                  with graph_script.open('wb') as destination:
+                      subprocess.run(['git', 'cat-file', 'blob',
+                                      spec['commit'] + ':scripts/graph.py'],
+                                     stdout=destination, check=True)
+              entry = (script, spec)
+              extracted[spec['commit']] = entry
+              report['packers'][spec['commit']] = {
+                  'script_sha256': actual_script,
+                  'graph_index_argument': bool(spec.get('graph_index_argument'))}
+              return entry
+
+          report = {'schema_version': 1, 'packers': {},
                     'compressor': compressor['version'],
                     'compressor_sha256': compressor['sha256'],
                     'runner_zstd': resolver.stdout.strip(),
                     'cores': os.cpu_count(),
                     'shards': [], 'failures': []}
           for row in selected:
+              spec = row.get('packer', registry['packer'])
+              script, _ = prepare_packer(spec)
               started = time.time()
               output = capsules / row['asset']
               command = ['python3', str(script), 'pack',
@@ -641,7 +666,7 @@ jobs:
                          '--out-root', registry['out_root'],
                          '--output', str(output),
                          '--shared-manifest', str(staging / 'shared-prebuilts.json')]
-              if registry['packer'].get('graph_index_argument'):
+              if spec.get('graph_index_argument'):
                   command += ['--graph-index', str(staging / 'index.sqlite')]
               completed = subprocess.run(command, capture_output=True, text=True,
                                          env={**os.environ, 'PATH': str(shim) + ':' + os.environ['PATH']})
@@ -650,7 +675,8 @@ jobs:
                   raise SystemExit('Capsule pack failed: ' + row['id'])
               metadata = json.loads(output.with_name(row['id'] + '.json').read_text())
               actual = metadata['archive']['sha256']
-              entry = {'id': row['id'], 'bytes': metadata['archive']['size'],
+              entry = {'id': row['id'], 'packer_commit': spec['commit'],
+                       'bytes': metadata['archive']['size'],
                        'sha256': actual, 'frozen_sha256': row['sha256'],
                        'bytes_match': metadata['archive']['size'] == row['bytes'],
                        'sha256_match': actual == row['sha256'],
