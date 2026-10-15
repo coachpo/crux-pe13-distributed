@@ -1,0 +1,1234 @@
+{
+  "schema_version": 1,
+  "build_number": "2026101105",
+  "product": "aosp_crux-userdebug",
+  "repository": "coachpo/crux-pe13-distributed",
+  "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+  "out_root": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out",
+  "targets": [
+    "bootimage",
+    "recoveryimage",
+    "systemimage",
+    "vendorimage"
+  ],
+  "max_actions": 4000,
+  "max_parallel": 20,
+  "graph": {
+    "release_tag": "frozen-graph-2026101105-dev-v1",
+    "index": {
+      "asset": "index-pruned-2026101105-dev.sqlite.zst",
+      "bytes": 44958751,
+      "sha256": "ddaf6e492503b6ddadd12712e88b675a183fa17e7a574346fe4be394c8c32d19",
+      "raw_bytes": 1487613952,
+      "raw_sha256": "8d34f9f43c627b1dcfcc408ca4fec87ffdf7606a60d3591fe4e04556531879ba",
+      "record_asset": "prune-record.json",
+      "record_sha256": "34b1c3bc96fa1aee4591143640d78357fa17f0bb05e0354f73255da01eb0c914",
+      "closure_edge_count": 136042,
+      "source_index_sha256": "f6a70331a21636b6387fac9b40d6de2dbc268a06b8bf9f1fe4519da5200fbbeb",
+      "source_index_bytes": 9015222272
+    },
+    "ninja": {
+      "asset": "ninja-graph-2026101105-dev.tar.zst",
+      "bytes": 65577348,
+      "sha256": "968f17ea98c99e1cbe279c9e15211fe4882e0708c45ecc5828504a0ce87ae232",
+      "files": [
+        {
+          "path": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out/combined-aosp_crux.ninja",
+          "bytes": 370,
+          "mtime_ns": 1792081082809016809,
+          "sha256": "365aea90c4c3c85bd985bd66b4f1d98d0f308220501d032050ad691629ca2ea8"
+        },
+        {
+          "path": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out/build-aosp_crux.ninja",
+          "bytes": 1186059664,
+          "mtime_ns": 1792081080983003020,
+          "sha256": "276dbe19c8da2b99fef5abbf29339ff542d805cfb0fac3b90f12fe372fc4dbdd"
+        },
+        {
+          "path": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out/build-aosp_crux-package.ninja",
+          "bytes": 42138,
+          "mtime_ns": 1792081082798027393,
+          "sha256": "0d157757df93b45ccda53b97e705deb36a1fe90a4afff6187f112a1d53b086a9"
+        },
+        {
+          "path": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out/soong/build.ninja",
+          "bytes": 8045033502,
+          "mtime_ns": 1792080845045979854,
+          "sha256": "e84163e1c4bb0e86dcfcb519b56b7f9632acd605a1b7656f29020be1428ebe4d"
+        },
+        {
+          "path": "/mnt/mac/Users/qingli/Documents/project/crux/out/crux-pe13-devcloud-2026-10-16/task/graph/cold-combined.ninja",
+          "bytes": 363,
+          "mtime_ns": 1792082983272949952,
+          "sha256": "06898ae4bc81fe0042dbb6fcda895d8d43b53822d35911a399ef2f3eab0ac0f0"
+        },
+        {
+          "path": "/mnt/mac/Users/qingli/Documents/project/crux/out/crux-pe13-devcloud-2026-10-16/task/graph/cold-frontends.ninja",
+          "bytes": 2482,
+          "mtime_ns": 1792082897682731363,
+          "sha256": "fd3352d3cf0abee5b8a73e9771952cb451df5c3f39664a7d9f7e37bcb806e84b"
+        },
+        {
+          "path": "/mnt/mac/Users/qingli/Documents/project/crux/out/crux-pe13-devcloud-2026-10-16/task/graph/source-inputs/path-interposer/graph/companion.ninja",
+          "bytes": 3943,
+          "mtime_ns": 1792082825906478248,
+          "sha256": "a1ab065769a3866540ad3c30b0501653dbeadcb1c11e03de1b89f4f32ff0adff"
+        }
+      ]
+    },
+    "shared_manifest": {
+      "asset": "shared-prebuilts.json",
+      "bytes": 10683768,
+      "sha256": "d6ce387169e5f111d9e6ea15468fc8166b81be4b94d81f9d4a9f15924f633c95",
+      "raw_sha256": "d6ce387169e5f111d9e6ea15468fc8166b81be4b94d81f9d4a9f15924f633c95"
+    },
+    "wrappers": {
+      "asset": "prebuilt-wrappers.tar.zst",
+      "bytes": 1638,
+      "sha256": "d15acec59785f90ec691d8159a9971c5af2835ba454bea2937366917d9b5d608",
+      "manifest_asset": "prebuilt-wrappers.json",
+      "manifest_sha256": "dbd57825e61414d776591c6a30bb429283e0b277a0e53ed7b455fd347b86edff",
+      "manifest_bytes": 32081
+    },
+    "compressor": {
+      "asset": "zstd-1.4.8",
+      "bytes": 875096,
+      "sha256": "d304445daa7e6429293dc02035063b7993fb6a489ee90d8851bff497952836dc",
+      "version": "1.4.8",
+      "note": "The frozen capsule archives were produced by zstd 1.4.8, the build host's version. zstd does not promise identical output across releases: the same payload compressed with level 3 on a runner whose PATH resolves to a 1.5.x build differs while the payload is byte-identical either way. The prepare run therefore compresses with this recorded binary."
+    },
+    "directory_mtimes": {
+      "asset": "frozen-dirents.json",
+      "bytes": 10278007,
+      "sha256": "fc7a83241f71c288fc66fb6a496587ff6d271ab1152be16585ca9d69158425b3",
+      "directories": 79421,
+      "note": "Union of the directory mtimes the dev capsules carry, taken from the capsules themselves. Extraction restores a directory mtime only from an entry in the same archive, so a directory that several capsules write into keeps the extraction time; the prepare run restores this record after extracting the tree."
+    }
+  },
+  "finalize": {
+    "source_closure": {
+      "asset": "target-files-source-closure.json",
+      "bytes": 2707163,
+      "sha256": "c6cd52efbe21481f3a93bb0d8785356cd7450cce36b12cd640576aa799938f5b"
+    },
+    "host_runtime": {
+      "asset": "host-runtime.json",
+      "bytes": 820385,
+      "sha256": "62276fc6b7449726d2df813c40678b093f90e320645d7f1a4169ad8206cce284"
+    },
+    "integration_contract": {
+      "asset": "integration-contract.json",
+      "bytes": 9031,
+      "sha256": "8a6bb4e27660747d23d40477726784370cc13aca4c5e5ef9ca56e6d43a9dcb55"
+    }
+  },
+  "source_archives": {
+    "release_tag": "inputs-release-2026101104-v4",
+    "asset": "remote-source-runtime.json",
+    "bytes": 9608,
+    "sha256": "67ecdd5854eb3a6c6c037d7155c059421ff74f384e65161930ad0326039a0447"
+  },
+  "slice_plan_sha256": "fc0bf16c0de8478ada0ca3360a8e54c65415bc23e50c562ab03df7f99854d0cb",
+  "slice_plan_bytes": 288027454,
+  "capsules": [
+    {
+      "id": "w000-s000",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s000.tar.zst",
+      "bytes": 494690692,
+      "sha256": "c9a465f40fd18ac34a972bfab2c8d6c93bdaa0ef1735d639365b87a943cf1238",
+      "local_repack_sha256": "c9a465f40fd18ac34a972bfab2c8d6c93bdaa0ef1735d639365b87a943cf1238",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "45e86e61354440c2641dcee531af99eb706c5e9b293ad12c78421fc13db6e107",
+      "metadata_available": true,
+      "metadata_sha256": "092f0101199d251cdb4fa0bb82fdf2cb0a40c46219f55b78807081f8cc54906b",
+      "file_count": 31827,
+      "input_bytes": 4082837444,
+      "archive_plan_input_bytes": 1042694156,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s000.tar.zst",
+        "uncompressed_sha256": "910a260cf66f133d5445cf639d9fe3c72b221d34cc20b8c5aa3a91409048e3ec",
+        "uncompressed_bytes": 1071902720,
+        "member_count": 7685,
+        "member_table_sha256": "17708cbf82e581a80124f4f6c715967eef6d63345601aba30bb418802d08d842"
+      }
+    },
+    {
+      "id": "w000-s001",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s001.tar.zst",
+      "bytes": 195573929,
+      "sha256": "b81fcab34ea37d4858549943758a7697d2e7b2293f8c44a83673cb055e84b954",
+      "local_repack_sha256": "b81fcab34ea37d4858549943758a7697d2e7b2293f8c44a83673cb055e84b954",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "2a8fa5b493d1113a25f32cd2c5dd606bb0b6887a92e9d7fcbb2a83999ee9583b",
+      "metadata_available": true,
+      "metadata_sha256": "4fe499b2ab7065752dec6708760c202d14bf045080908c533b2657ba76df59b9",
+      "file_count": 166194,
+      "input_bytes": 4327902192,
+      "archive_plan_input_bytes": 1406245380,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s001.tar.zst",
+        "uncompressed_sha256": "ca7674069c01c543890e0e716c14b52883a817b465771f425b9e3202ed6709bd",
+        "uncompressed_bytes": 1705687040,
+        "member_count": 142057,
+        "member_table_sha256": "fa30d1e3df5ad0533c342c8e71f760ac3e972603115fba9b96021edfa457a95d"
+      }
+    },
+    {
+      "id": "w000-s002",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s002.tar.zst",
+      "bytes": 142746831,
+      "sha256": "257fe65728d32ff30c705d928a766f27b13e0e940a3206bb8bb8f3867ba598ab",
+      "local_repack_sha256": "257fe65728d32ff30c705d928a766f27b13e0e940a3206bb8bb8f3867ba598ab",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "624aaa6dd580317ef9a161699ee34863c7a69726c90d3c917235397e7d9cd93b",
+      "metadata_available": true,
+      "metadata_sha256": "e1075202ea67ab93bcd5d436057912b9d92a5fa3d7b12798b0971d5ed61440cf",
+      "file_count": 151278,
+      "input_bytes": 4650065958,
+      "archive_plan_input_bytes": 1312207841,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s002.tar.zst",
+        "uncompressed_sha256": "d5def60dc0995a5b6e072c3d3e31fc27710304841094c6b8f873a85a40691870",
+        "uncompressed_bytes": 1598146560,
+        "member_count": 137830,
+        "member_table_sha256": "c6ea7fccd531501179c09ae9911082254ec1bd8d78992cdbf14fd44e1a24eab0"
+      }
+    },
+    {
+      "id": "w000-s003",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s003.tar.zst",
+      "bytes": 36947599,
+      "sha256": "d7b99a695e78321d47f39bb4d8291e0e4a2613404489102ed70c700defd7407c",
+      "local_repack_sha256": "d7b99a695e78321d47f39bb4d8291e0e4a2613404489102ed70c700defd7407c",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "5782034f243a8b209d7965c19e3190274618ba29c949c45a0d052de4bebbab65",
+      "metadata_available": true,
+      "metadata_sha256": "9add3349254f29dd3cabca4ea2d67fb8887d565e893ef1c880c3e0cbdbc8036d",
+      "file_count": 29231,
+      "input_bytes": 2471124153,
+      "archive_plan_input_bytes": 326299384,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s003.tar.zst",
+        "uncompressed_sha256": "936b0c452c2c98b76b0e3100084b63bc18c21d496f07a19e777e44bee5317a77",
+        "uncompressed_bytes": 379166720,
+        "member_count": 22251,
+        "member_table_sha256": "eea3add1d5aaad1b9d0485525d7cd5f4a299f2e9ed2ad64248f58d4628ef2763"
+      }
+    },
+    {
+      "id": "w000-s004",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s004.tar.zst",
+      "bytes": 9511925,
+      "sha256": "431e165cecf7c87514fdb07f4da5851c15edca3a582924f386e1a39a21aa0196",
+      "local_repack_sha256": "431e165cecf7c87514fdb07f4da5851c15edca3a582924f386e1a39a21aa0196",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "f85e6b052b257c3c6cdcce1f5aeef58ca1774f3dd414acc3f3f2329150e78e5a",
+      "metadata_available": true,
+      "metadata_sha256": "e5e2826e59ed56f474b2c64b13fce36d2e134abcb6c7ff85bcf94769c45a5c75",
+      "file_count": 19035,
+      "input_bytes": 3516565615,
+      "archive_plan_input_bytes": 178707498,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s004.tar.zst",
+        "uncompressed_sha256": "524ab80be4f72dbbfe1c11441fa79a9f6e373a8e8c764725eb5f8fd08d7208ed",
+        "uncompressed_bytes": 197990400,
+        "member_count": 5587,
+        "member_table_sha256": "9d49fda558ee7b88f697b79cc5cac29fd2a2c0389108c042b249dd99735a477e"
+      }
+    },
+    {
+      "id": "w000-s005",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s005.tar.zst",
+      "bytes": 11862648,
+      "sha256": "4a92f438541cac7b34fe34b1edc58266d533ab47c53c6fb22fbbd96bf126bc77",
+      "local_repack_sha256": "4a92f438541cac7b34fe34b1edc58266d533ab47c53c6fb22fbbd96bf126bc77",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "e9b00b1a601ed532435f6977d93f065ba5168e4a5e8630787884f052af25558e",
+      "metadata_available": true,
+      "metadata_sha256": "dba82a8e8bfa4a19df529d70b5f10c22da7358c12c5e5cb474d9ba08d468ce04",
+      "file_count": 18085,
+      "input_bytes": 3529839580,
+      "archive_plan_input_bytes": 191981463,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s005.tar.zst",
+        "uncompressed_sha256": "fd4da976d34deca9236728d230c136863148e589c30b36484ebe39333cbf83dd",
+        "uncompressed_bytes": 209735680,
+        "member_count": 4637,
+        "member_table_sha256": "3ce94671a103486815e7f0ed6d23167e11e5522c94b5d25ec21c196db0a2a6b0"
+      }
+    },
+    {
+      "id": "w000-s006",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s006.tar.zst",
+      "bytes": 26335183,
+      "sha256": "04264a5f18802820adc370434572a31ffe28da5d55d8fc135cfa4ddba1aa606b",
+      "local_repack_sha256": "04264a5f18802820adc370434572a31ffe28da5d55d8fc135cfa4ddba1aa606b",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "0501162dc0fd60586ac2f96e7aaba5650a73c88e14df37080037ee9127ca6c37",
+      "metadata_available": true,
+      "metadata_sha256": "92d5b63bcee197d6aab6c32b23c1d21a913e392f8d22cf6423000d06d8666d99",
+      "file_count": 29570,
+      "input_bytes": 3602770046,
+      "archive_plan_input_bytes": 264911929,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s006.tar.zst",
+        "uncompressed_sha256": "86fba02dc6e177886950d5334334af5360eccd0b2c3a348c92d86333db23de76",
+        "uncompressed_bytes": 308889600,
+        "member_count": 16122,
+        "member_table_sha256": "e83f23445b63fc7bd4add65f1e185b894e8b262e966a016b9dfab2b202f2a66a"
+      }
+    },
+    {
+      "id": "w000-s007",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s007.tar.zst",
+      "bytes": 16709968,
+      "sha256": "62e69a15077876148cda277ae0c0e9d4b171634ed716c0b7713801c0376d1207",
+      "local_repack_sha256": "62e69a15077876148cda277ae0c0e9d4b171634ed716c0b7713801c0376d1207",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "42d3b2168f0853c7c3b19f81485f5a25ab5d1d06d4214a9673c67085ed86175a",
+      "metadata_available": true,
+      "metadata_sha256": "8da0e6cda016e8f1e7ab5ba83231c9d161152a93d5bf3d4579735831d94e7f0b",
+      "file_count": 22636,
+      "input_bytes": 3553186608,
+      "archive_plan_input_bytes": 215328491,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s007.tar.zst",
+        "uncompressed_sha256": "c089d4184bf54e237fc33b35cda17d91a4d2ccc7d7186862b81efe2bd9fc66ce",
+        "uncompressed_bytes": 243292160,
+        "member_count": 9188,
+        "member_table_sha256": "2a673a1171091efb1c6ae628530f75bf412afc57dab5e1c17522826f6711f97a"
+      }
+    },
+    {
+      "id": "w000-s008",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s008.tar.zst",
+      "bytes": 24707156,
+      "sha256": "9229dff877b2f2164cb7968eb577676d3783bb71a2f5dfd5984d73ebc32f4dff",
+      "local_repack_sha256": "9229dff877b2f2164cb7968eb577676d3783bb71a2f5dfd5984d73ebc32f4dff",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "2b1cdc6d008bc52f47503c7604cc5b7c2a715fb0808ab8259c54fc03b62dda82",
+      "metadata_available": true,
+      "metadata_sha256": "4146b85e6979f6fb10fb355244c5aa8935e10c7ce95d727809768984fc16f45c",
+      "file_count": 24893,
+      "input_bytes": 3588214209,
+      "archive_plan_input_bytes": 250356092,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s008.tar.zst",
+        "uncompressed_sha256": "49cf9922830f0f68d7ce1c0890224eca02e7ae0e0206a3ad98092efabd852e3f",
+        "uncompressed_bytes": 283648000,
+        "member_count": 11445,
+        "member_table_sha256": "0207170d6c14c1372bd0ab38ff99b96272f992fe7d8229cbdeab3d1f2db74e67"
+      }
+    },
+    {
+      "id": "w000-s009",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s009.tar.zst",
+      "bytes": 20887780,
+      "sha256": "61b3f19fbc8123f74a46366f940481209e104bc3c4b4b95b3a5948503ce4f116",
+      "local_repack_sha256": "61b3f19fbc8123f74a46366f940481209e104bc3c4b4b95b3a5948503ce4f116",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "240c0698eb44873c99c1ffe57688697a5d9ee8a61c048d40f89b424d6340d418",
+      "metadata_available": true,
+      "metadata_sha256": "cf8fa9edeb23cd3ece70235822bddfffcd94bbf02490298a5377932a914c2597",
+      "file_count": 22541,
+      "input_bytes": 3582488497,
+      "archive_plan_input_bytes": 244630380,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s009.tar.zst",
+        "uncompressed_sha256": "f372b24882abf0d8a3582ed4ec956b9901ecbb46e8522697ecad8f7cedf4a8e4",
+        "uncompressed_bytes": 273244160,
+        "member_count": 9093,
+        "member_table_sha256": "d6fe2720851ee3e98da5cbdbe50c8649ec0a0cfb2dabc055165bf4e5bcbe580e"
+      }
+    },
+    {
+      "id": "w000-s010",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s010.tar.zst",
+      "bytes": 46950107,
+      "sha256": "1277b52d0b212f55173fc1735e5b86f7bc6c926d0b405ff20ff9d618cc2918cb",
+      "local_repack_sha256": "1277b52d0b212f55173fc1735e5b86f7bc6c926d0b405ff20ff9d618cc2918cb",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "9a6e529ec8ddb2aff906222c37024ec5071fe333af4527ca65fdf77711c2d91d",
+      "metadata_available": true,
+      "metadata_sha256": "e9fa9f1aa7ee4bd47f099a6912ff16be666d531dc421211c0f08976f73bf7e61",
+      "file_count": 37140,
+      "input_bytes": 4060044649,
+      "archive_plan_input_bytes": 722186532,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s010.tar.zst",
+        "uncompressed_sha256": "b16cdfb4b11530258267d44be77c7b74bfcc7fb34baa12001883d3962c36bac1",
+        "uncompressed_bytes": 781557760,
+        "member_count": 23692,
+        "member_table_sha256": "f7cb41c6020e45171589038421b637617169143ccafb14734437c5c56b44beab"
+      }
+    },
+    {
+      "id": "w000-s011",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s011.tar.zst",
+      "bytes": 58618619,
+      "sha256": "e8a6ae5f36f830acf19afda57321d7558a8e5b7e705552506bfde1726a0049b2",
+      "local_repack_sha256": "e8a6ae5f36f830acf19afda57321d7558a8e5b7e705552506bfde1726a0049b2",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "e70df5d8c8b01f63c8bae095d5181b4d51d2c684d28ef7d85238dbd5456f12eb",
+      "metadata_available": true,
+      "metadata_sha256": "f14bef60822415e0fabf7e2005c1b81677fcc1db2efc05189927f46e15644de5",
+      "file_count": 50236,
+      "input_bytes": 3829567442,
+      "archive_plan_input_bytes": 753571078,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s011.tar.zst",
+        "uncompressed_sha256": "e92dd4ece48abd5e33ec675e45c116dc6a5c2944c3ffbd04e3d6c7d1e1b215bf",
+        "uncompressed_bytes": 822712320,
+        "member_count": 26059,
+        "member_table_sha256": "aa6723224e535f2e4a1758774a45b8193d5b1c14d8e1b4d299debc0af3d7bbd6"
+      }
+    },
+    {
+      "id": "w000-s012",
+      "wave": 0,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w000-s012.tar.zst",
+      "bytes": 23623611,
+      "sha256": "ac0b2f047abbfa0a6470d79b1c0a2eade4503bd6b95fb86d093b026efe16e493",
+      "local_repack_sha256": "ac0b2f047abbfa0a6470d79b1c0a2eade4503bd6b95fb86d093b026efe16e493",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "e4d123ad88d74e62ef6edfd296894e154109dbb6fab2dfc6404969d59f6deb58",
+      "metadata_available": true,
+      "metadata_sha256": "f72d7085efac51274cb760fca9d54c6ab6614fd485e0d4513471c68bb300fd8e",
+      "file_count": 42212,
+      "input_bytes": 2953390603,
+      "archive_plan_input_bytes": 183378316,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w000-s012.tar.zst",
+        "uncompressed_sha256": "c0d3aa15532a3f9e97a4ac31b7b3ccb448cbfa8d1e99e3eab6aaadb7aef85484",
+        "uncompressed_bytes": 233400320,
+        "member_count": 18299,
+        "member_table_sha256": "35fa959769ee983986d2bfa931f55783ad08d3db860ab57fee8594fd7f2b30f6"
+      }
+    },
+    {
+      "id": "w001-s000",
+      "wave": 1,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w001-s000.tar.zst",
+      "bytes": 23330095,
+      "sha256": "d85f16e5d0c046ae69bf84d5fbbc7c1fa79717f458719c9ea2f157a0f99d7e0b",
+      "local_repack_sha256": "d85f16e5d0c046ae69bf84d5fbbc7c1fa79717f458719c9ea2f157a0f99d7e0b",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "b665903c257793c07137512716330a3032077d21d97c1e1b4a6abba7791ba741",
+      "metadata_available": true,
+      "metadata_sha256": "db2e8168561611a0830cf2993ffbe17be36e707a5f200a7916d49da9abe027d3",
+      "file_count": 46691,
+      "input_bytes": 3187891922,
+      "archive_plan_input_bytes": 266235110,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w001-s000.tar.zst",
+        "uncompressed_sha256": "544ec5576aee7a1a116c103a1cb27d41ea69a7ce94b02e5a6031df76a37e152a",
+        "uncompressed_bytes": 323358720,
+        "member_count": 22554,
+        "member_table_sha256": "78da94efc914bf616b0b78c94a1125fc1faffdaa9c1e7d86db790f3c57fd171c"
+      }
+    },
+    {
+      "id": "w001-s001",
+      "wave": 1,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w001-s001.tar.zst",
+      "bytes": 419107285,
+      "sha256": "df324bfb6e61e4549080052952c5f9b7d6d1cb5ab4372546aba7194490eb743f",
+      "local_repack_sha256": "df324bfb6e61e4549080052952c5f9b7d6d1cb5ab4372546aba7194490eb743f",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "b5de9739961ec735282c521f44dc9d8a38d4577829b87c4164eab4694c800b01",
+      "metadata_available": true,
+      "metadata_sha256": "8617b6855efcf3f5c33afd69ff4f628ca13ca00ea1eb3847654ed984e028d42b",
+      "file_count": 143017,
+      "input_bytes": 8256738254,
+      "archive_plan_input_bytes": 1734719490,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w001-s001.tar.zst",
+        "uncompressed_sha256": "246f9c4e34936164a1c51540d0bc8e846dcf2edcf6ed14cae8fbb02e008c746c",
+        "uncompressed_bytes": 1991628800,
+        "member_count": 113873,
+        "member_table_sha256": "93adb67d5374f9cdac84f9d353dd8264275c53976dc0142d62cc4e54802fa373"
+      }
+    },
+    {
+      "id": "w001-s002",
+      "wave": 1,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w001-s002.tar.zst",
+      "bytes": 840436348,
+      "sha256": "5a3554daf5554f2fbdd828b1553b790e40f16cbebb01fd13a63eb58bc4293e57",
+      "local_repack_sha256": "5a3554daf5554f2fbdd828b1553b790e40f16cbebb01fd13a63eb58bc4293e57",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "302c7282dee4cacc51d2559cb1feaea218054ebc7b6745058fe68760fe991e6a",
+      "metadata_available": true,
+      "metadata_sha256": "d742a4a6901b8ef75342a41c690ee31c8b745fa1ad133414b34c2536c462f99a",
+      "file_count": 50294,
+      "input_bytes": 5301574610,
+      "archive_plan_input_bytes": 2007446392,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w001-s002.tar.zst",
+        "uncompressed_sha256": "3f93174a06fe55cacce9ba81da5c4e2cbd4ce00884978dcab34b2be307043c5a",
+        "uncompressed_bytes": 2075576320,
+        "member_count": 25244,
+        "member_table_sha256": "eb8e0f3e09e20b9110ae9f0389036fdfa30c2f0f9ddda554240a68ac148bda13"
+      }
+    },
+    {
+      "id": "w002-s000",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s000.tar.zst",
+      "bytes": 170138240,
+      "sha256": "ef7cf8fefea63e73ca3f1d5ad1cb7be70bd1152622e554b13f28c900a711a966",
+      "local_repack_sha256": "ef7cf8fefea63e73ca3f1d5ad1cb7be70bd1152622e554b13f28c900a711a966",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "2b50665dd88e98123f37c6e6a6f3aecc2fd50d3e4aa9e21b44c3385adf77bec9",
+      "metadata_available": true,
+      "metadata_sha256": "351cfe4000296309421cc567a996415adf03e3e849cc7a3737b0c83f97baa32b",
+      "file_count": 52638,
+      "input_bytes": 3604496139,
+      "archive_plan_input_bytes": 679334498,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s000.tar.zst",
+        "uncompressed_sha256": "1dd34ac8e94d943b4c52608a4876eac713565e3810141af293a5f3a9fba9ed80",
+        "uncompressed_bytes": 773120000,
+        "member_count": 41151,
+        "member_table_sha256": "a0ab09d7d93f46548445580ef8455f9e9d1e637fdb064f9eb4b45db3c099e06f"
+      }
+    },
+    {
+      "id": "w002-s001",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s001.tar.zst",
+      "bytes": 11417463,
+      "sha256": "e54c38f2dad06c4e13893420e60313920274a8e73a6955b4bf30c369b5737d9d",
+      "local_repack_sha256": "e54c38f2dad06c4e13893420e60313920274a8e73a6955b4bf30c369b5737d9d",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "fd843d01facb070ed1a5889cfce4d104caa3c6ef6b2fee5d12850d5a313d4a5a",
+      "metadata_available": true,
+      "metadata_sha256": "88bc2d61a5d2fa55cf39c99fce6b371f6c239f430f1356f6bb1fdefaf6212e70",
+      "file_count": 13238,
+      "input_bytes": 2398033509,
+      "archive_plan_input_bytes": 253208740,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s001.tar.zst",
+        "uncompressed_sha256": "2062caa70c7d43f4d4c67234174fa6d2dde7dc9c067f788708b0e2be6c9aad48",
+        "uncompressed_bytes": 271124480,
+        "member_count": 6258,
+        "member_table_sha256": "cf2da8c786534b072a2a4d558c7f0b49dfba2a049e8109738a8d0dc2dcf09227"
+      }
+    },
+    {
+      "id": "w002-s002",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s002.tar.zst",
+      "bytes": 161068725,
+      "sha256": "003ab96da60973046496ce6f7541ac0fb66004150df7a9ef5acc76f1feb381da",
+      "local_repack_sha256": "003ab96da60973046496ce6f7541ac0fb66004150df7a9ef5acc76f1feb381da",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "4c645d9cc1c3c13828f27a6956cc7c47f40b91cbc0e6c2f12d09ec15b784f70c",
+      "metadata_available": true,
+      "metadata_sha256": "a9c97a9c475f209119db361f1600b3bc12fc1e431dc6a6c58b3840ad5a624113",
+      "file_count": 44478,
+      "input_bytes": 3352578642,
+      "archive_plan_input_bytes": 500699445,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s002.tar.zst",
+        "uncompressed_sha256": "e9f7464bee4aac728ee084a7f8a14532ab9ee5dd1e6e626f0651d5bcfdedd3ef",
+        "uncompressed_bytes": 574187520,
+        "member_count": 32804,
+        "member_table_sha256": "edd108c9b92c0002c647567cc509ebed60a4582ef70a548d39c903aabb90c168"
+      }
+    },
+    {
+      "id": "w002-s003",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s003.tar.zst",
+      "bytes": 35467921,
+      "sha256": "45a79872b839a64129bce5d2651faba9a71595a6e9edbcb8be85db3ec46686ca",
+      "local_repack_sha256": "45a79872b839a64129bce5d2651faba9a71595a6e9edbcb8be85db3ec46686ca",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "f3fa9c4dc03be3b668e9c8673a09eb56187e25fa568b00ce131f64d8bd881c27",
+      "metadata_available": true,
+      "metadata_sha256": "822b7819b4ddedb698b383ed5260cc997dd7abbef7c80c34f90952a3d6d54be1",
+      "file_count": 35867,
+      "input_bytes": 3632058360,
+      "archive_plan_input_bytes": 294200243,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s003.tar.zst",
+        "uncompressed_sha256": "03108dd787653d2eb1868bc40bd06fff6a72acb9fb1df7f50ab69d9752a0c145",
+        "uncompressed_bytes": 349337600,
+        "member_count": 22419,
+        "member_table_sha256": "6ab1d7e940d2e7c35673364d640a1d009b1d64c6009e8613222e8594151464f7"
+      }
+    },
+    {
+      "id": "w002-s004",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s004.tar.zst",
+      "bytes": 39664087,
+      "sha256": "2cee13b7f4f1f3e45e88c82789db6cf7223c7562ba1314f3cf0e4f821ac031c0",
+      "local_repack_sha256": "2cee13b7f4f1f3e45e88c82789db6cf7223c7562ba1314f3cf0e4f821ac031c0",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "6ef673a2afec06d879c76acc3e5a754134ef0d7f117d37a2687d817a1537f95f",
+      "metadata_available": true,
+      "metadata_sha256": "b0191f3d2cad4d4d40baed8136543e88a7b75aadd4096e44cabd86b338a0f2f2",
+      "file_count": 64974,
+      "input_bytes": 4160358847,
+      "archive_plan_input_bytes": 336744979,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s004.tar.zst",
+        "uncompressed_sha256": "7f791a1de85d4e8de0fe8b0287a3b0e3ffc3f9f72dcaa778cd68a4440fd8896e",
+        "uncompressed_bytes": 447959040,
+        "member_count": 50591,
+        "member_table_sha256": "a758265603522b520f7bf872fa201d6fd69bb8945a126867aa817354d4d4b5c7"
+      }
+    },
+    {
+      "id": "w002-s005",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s005.tar.zst",
+      "bytes": 13496150,
+      "sha256": "a5684a57547e13ffa939be007181e2ad36483dc1a5656c711a3af5ab81165de0",
+      "local_repack_sha256": "a5684a57547e13ffa939be007181e2ad36483dc1a5656c711a3af5ab81165de0",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "71a0535e351d9d6be45fb64f22c268e70075654e623e498b8f78064b70cf77c8",
+      "metadata_available": true,
+      "metadata_sha256": "6dbd1724a49c9f594cd8bb31927f0a8ab4797aa98c010c899a3f1af2fb9964d0",
+      "file_count": 26736,
+      "input_bytes": 2734268728,
+      "archive_plan_input_bytes": 393968511,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s005.tar.zst",
+        "uncompressed_sha256": "c1a6b89ad1efeca75836371d6616b05344141ecfe24d81bdf18ea031bad7d6fe",
+        "uncompressed_bytes": 433889280,
+        "member_count": 16002,
+        "member_table_sha256": "1a6939780620159bd42e11c53284b71a1d4cfa6aef75e7a7b7e6cba62e5e8a4e"
+      }
+    },
+    {
+      "id": "w002-s006",
+      "wave": 2,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w002-s006.tar.zst",
+      "bytes": 28386798,
+      "sha256": "571bd591eeb2c0be01681e2b3d73d58a76734769a5f7083dee3c75ce66b2006f",
+      "local_repack_sha256": "571bd591eeb2c0be01681e2b3d73d58a76734769a5f7083dee3c75ce66b2006f",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "7e32a115ad3f8e2132c5fca5a63725797663ca3c6294244e7052d95994a243dd",
+      "metadata_available": true,
+      "metadata_sha256": "571d4dd224276130907fdf009a80e726a38ec67f6f5bd16c69821080b9d15890",
+      "file_count": 44764,
+      "input_bytes": 2931634943,
+      "archive_plan_input_bytes": 276604303,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w002-s006.tar.zst",
+        "uncompressed_sha256": "c7944619b7c5883a2800af42afde55f9e13cfb91bdeefdd40eeb1eb5256395ca",
+        "uncompressed_bytes": 350279680,
+        "member_count": 33506,
+        "member_table_sha256": "7c2a8712f5705081d82cb2d95885d35980f5ae8a6ce9647a465bac23d9f036e7"
+      }
+    },
+    {
+      "id": "w003-s000",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s000.tar.zst",
+      "bytes": 94998321,
+      "sha256": "3e08f116fe1360552d6296049f1dd6e6ed3dc037dba9cf582374964f66a01f90",
+      "local_repack_sha256": "3e08f116fe1360552d6296049f1dd6e6ed3dc037dba9cf582374964f66a01f90",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "a3010864e43a8264631be2a9b7bcfaf40e6555c110be2ee65c53b1b4f6801eb4",
+      "metadata_available": true,
+      "metadata_sha256": "74c6a953893102acabdd82abb4fac4beb60475322e8d092105d29dbdbfb1d344",
+      "file_count": 19923,
+      "input_bytes": 3125593655,
+      "archive_plan_input_bytes": 640215234,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s000.tar.zst",
+        "uncompressed_sha256": "69f475e8c0df272ae4ae07de76cbc1fa22a21da2c5f13742ff84277f96128a90",
+        "uncompressed_bytes": 673372160,
+        "member_count": 12414,
+        "member_table_sha256": "2393580fe028d24080d77e9401d99e6dcb572062e2873d38ebacfd44357fd146"
+      }
+    },
+    {
+      "id": "w003-s001",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s001.tar.zst",
+      "bytes": 69282962,
+      "sha256": "6df4a92df57da30fc317208e6ac218dbfa45f87fc8808da5a080b49f3949fdb3",
+      "local_repack_sha256": "6df4a92df57da30fc317208e6ac218dbfa45f87fc8808da5a080b49f3949fdb3",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "0be8850221dc0885e3d5f1c6a3837cc69f23cbce83ab987d35ed11bafcde07ba",
+      "metadata_available": true,
+      "metadata_sha256": "1b8f28689cb0eba2a628c22e70e378d9fefdd7538cf123d3139cdce2a9cdc794",
+      "file_count": 22696,
+      "input_bytes": 2998086884,
+      "archive_plan_input_bytes": 512708463,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s001.tar.zst",
+        "uncompressed_sha256": "4d5d26c6896f6669bfebbeb7cab5535de2c2e17eceff68dc27d413a5c5e34a94",
+        "uncompressed_bytes": 557342720,
+        "member_count": 15187,
+        "member_table_sha256": "cc4a0ff2e933b39276bd565b9ef5b34cf8cf916c9f471bb93ecae1d2430db301"
+      }
+    },
+    {
+      "id": "w003-s002",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s002.tar.zst",
+      "bytes": 47435665,
+      "sha256": "658041dc34ca25e8bb2f01e66588daacfe8af018cc9958673703d5f447e2735b",
+      "local_repack_sha256": "658041dc34ca25e8bb2f01e66588daacfe8af018cc9958673703d5f447e2735b",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "f3c8a5a18e6e383a760247b5358c27edea49109d846954bf7434f08f464db3af",
+      "metadata_available": true,
+      "metadata_sha256": "0d164315500f7028221f0d74335914cf020abd1a6788f9e9b1ef9f15ccc70aa8",
+      "file_count": 42803,
+      "input_bytes": 3796532156,
+      "archive_plan_input_bytes": 458674039,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s002.tar.zst",
+        "uncompressed_sha256": "fbaebb05e7a73c3bb6d0b137b7931b0710451ed4886330e9ec24adb026bc7939",
+        "uncompressed_bytes": 532193280,
+        "member_count": 29355,
+        "member_table_sha256": "8344a2e5c50e5816a8a334baf54415c9c4ab5acfd8094182dd77a91651f0a1da"
+      }
+    },
+    {
+      "id": "w003-s003",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s003.tar.zst",
+      "bytes": 21388193,
+      "sha256": "aed55164cdca9b1f5c700478577f43b888658d29ade1743d4a26d75758d1b941",
+      "local_repack_sha256": "aed55164cdca9b1f5c700478577f43b888658d29ade1743d4a26d75758d1b941",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "96823be494ba4006ddb90802241ac0cb85273e28fd43d551b84aa1ea05f7373e",
+      "metadata_available": true,
+      "metadata_sha256": "60a7672a87523b736a6f0aed18fe9f835f177e8db0237d9acd4d32095bc110f1",
+      "file_count": 18569,
+      "input_bytes": 3439069328,
+      "archive_plan_input_bytes": 296686659,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s003.tar.zst",
+        "uncompressed_sha256": "53b3967a12515c9756e8ac8841c3dd48aa7c2df692b6f5e7028baa2b811b7fd9",
+        "uncompressed_bytes": 325693440,
+        "member_count": 8875,
+        "member_table_sha256": "78e055999adbaf650edd165175c26d76613acc9acf93cf9b010309de9ec398de"
+      }
+    },
+    {
+      "id": "w003-s004",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s004.tar.zst",
+      "bytes": 196913369,
+      "sha256": "f88a4e75a9ddc6aea8dd1ba5d2a16721d99b98b4974f058688d11bf6ea73534e",
+      "local_repack_sha256": "f88a4e75a9ddc6aea8dd1ba5d2a16721d99b98b4974f058688d11bf6ea73534e",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "0ac68170e1f758b0fd67d1a3ce7ea3dca09825f2080ccd016f8fb13e69862c8c",
+      "metadata_available": true,
+      "metadata_sha256": "cab786c39e7bc4e5149136270520cb8ede4f3d638e099792183c600dd3ae3239",
+      "file_count": 47835,
+      "input_bytes": 4336163402,
+      "archive_plan_input_bytes": 657751633,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s004.tar.zst",
+        "uncompressed_sha256": "4bc65d5ae4afd4a0880852bd2c824761ff103256a708d8aad4feef8ca7ad954b",
+        "uncompressed_bytes": 738826240,
+        "member_count": 33858,
+        "member_table_sha256": "17b542ee87c6b3d80f456d6cc2196b997189e7555d7f164294889fbd4bdf0691"
+      }
+    },
+    {
+      "id": "w003-s005",
+      "wave": 3,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w003-s005.tar.zst",
+      "bytes": 27889442,
+      "sha256": "972a52d57216afe355d28281a9b8e73e60d21bb223d5319e62018c9d3d210c86",
+      "local_repack_sha256": "972a52d57216afe355d28281a9b8e73e60d21bb223d5319e62018c9d3d210c86",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "27ef4f9ed20b232bd49efb06125c63a69fce4d2faf67da5858a919b871bb0881",
+      "metadata_available": true,
+      "metadata_sha256": "fe9a9fba1e4733fafba796fd04f75fe5e4617ea851ebc8bad916c1fa4977708f",
+      "file_count": 25998,
+      "input_bytes": 2408800756,
+      "archive_plan_input_bytes": 220145064,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w003-s005.tar.zst",
+        "uncompressed_sha256": "83146cd58dc697abecef64b58f200eea96d6a0610eb1f1b6fb3f55bf6e62e352",
+        "uncompressed_bytes": 258621440,
+        "member_count": 15488,
+        "member_table_sha256": "0e69ce6f56e4a2884f8bbbeee54c3b98d56c20fb0d9afd39ab69769bc1dcb926"
+      }
+    },
+    {
+      "id": "w004-s000",
+      "wave": 4,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w004-s000.tar.zst",
+      "bytes": 140680028,
+      "sha256": "5d4c827a142edda76e1176f6a7f33b349775349b69ec4500823bd88639857183",
+      "local_repack_sha256": "5d4c827a142edda76e1176f6a7f33b349775349b69ec4500823bd88639857183",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "aaf5acdf17b8fda3fbeab05b95bc8b0ee68eeee7efcaf971c2b563dd8d0eae19",
+      "metadata_available": true,
+      "metadata_sha256": "42bb540d164b62d9ee495fc1974da7dc3f566c35f46a4b6366ca545a24f7c2da",
+      "file_count": 26224,
+      "input_bytes": 3246415574,
+      "archive_plan_input_bytes": 565561705,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w004-s000.tar.zst",
+        "uncompressed_sha256": "2fcf5d8c53e75985069d662dc572316f908e0b02580fb0222059e5ee39318a0f",
+        "uncompressed_bytes": 609136640,
+        "member_count": 14961,
+        "member_table_sha256": "b3c9d68be01545dbe6af8325d068ce12c10d4221d7a1b71efce05ac820c3fd31"
+      }
+    },
+    {
+      "id": "w004-s001",
+      "wave": 4,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w004-s001.tar.zst",
+      "bytes": 18952147,
+      "sha256": "33aaf0ad823dea22f513ffc76b60e1ef98bb8797e0470cdd4283340916a18ddd",
+      "local_repack_sha256": "33aaf0ad823dea22f513ffc76b60e1ef98bb8797e0470cdd4283340916a18ddd",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "7cfedff078c1c5a707dd7baeb120bd6d78949ca104e5a947fbe3181f914d743c",
+      "metadata_available": true,
+      "metadata_sha256": "4f26130a1a349e076dce227628bb1d72faf1fd3acf8f3c10f7203ef650d6cbc2",
+      "file_count": 17449,
+      "input_bytes": 3471174817,
+      "archive_plan_input_bytes": 328792148,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w004-s001.tar.zst",
+        "uncompressed_sha256": "81ada2175784b9a9f09ff151b3c8600158e38551024a4d8b83e35c6408aad339",
+        "uncompressed_bytes": 354181120,
+        "member_count": 7755,
+        "member_table_sha256": "b28641d5755a4ad1e4414c19b51d6f1d427466301cae7a87a635c5c99d40daa7"
+      }
+    },
+    {
+      "id": "w004-s002",
+      "wave": 4,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w004-s002.tar.zst",
+      "bytes": 26489841,
+      "sha256": "1a08abebd923431788e26f9b5b81416850b3c8a3e5bef7753977dd8c1a757acb",
+      "local_repack_sha256": "1a08abebd923431788e26f9b5b81416850b3c8a3e5bef7753977dd8c1a757acb",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "ea729f8017055d9423850979fcba306b8e1c7e210be769d10b7d4eaeb46ccb44",
+      "metadata_available": true,
+      "metadata_sha256": "98792fe4ef3a99c779674f080ea1418cf61b7b715f046c800ee2e89c4d5cfaa8",
+      "file_count": 27162,
+      "input_bytes": 3527665169,
+      "archive_plan_input_bytes": 385282500,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w004-s002.tar.zst",
+        "uncompressed_sha256": "4e9c31df45f266a2ea6749556e805ac84f63defb6ecd20638af8004f7b6a83af",
+        "uncompressed_bytes": 430182400,
+        "member_count": 17468,
+        "member_table_sha256": "62e50e7a03866c0c7e066cffc9eb8ceebe669de5e51d93556a02b4de492bef33"
+      }
+    },
+    {
+      "id": "w004-s003",
+      "wave": 4,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w004-s003.tar.zst",
+      "bytes": 38214101,
+      "sha256": "8124d26c261270e4ff199592332f3298ed5f1e2471af58c99d538425834a5d66",
+      "local_repack_sha256": "8124d26c261270e4ff199592332f3298ed5f1e2471af58c99d538425834a5d66",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "5237c77c26c66463be3a2958b89b04f3111dcab6ede5bd65e3e621e79a107433",
+      "metadata_available": true,
+      "metadata_sha256": "5d974a2c4cc87912c004ce0dab4df646335ff049c84f6604f14c16142ccf0a9a",
+      "file_count": 16795,
+      "input_bytes": 2973534273,
+      "archive_plan_input_bytes": 292680404,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w004-s003.tar.zst",
+        "uncompressed_sha256": "827816f43e80ede2978cdfbee33112523c5b0709f24e14be6ad19806d91cfb0d",
+        "uncompressed_bytes": 312729600,
+        "member_count": 5532,
+        "member_table_sha256": "9bc11ac5fda2534a91df91afd79520ba5ba4a2122b584fb6483d609c35002729"
+      }
+    },
+    {
+      "id": "w005-s000",
+      "wave": 5,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w005-s000.tar.zst",
+      "bytes": 7458888,
+      "sha256": "dc483f596169e251c4c2da1e1811ed8e4b310f6aadb9bcef6d6599c0025969f8",
+      "local_repack_sha256": "dc483f596169e251c4c2da1e1811ed8e4b310f6aadb9bcef6d6599c0025969f8",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "32ae6a0a994a09b9990da1c513f0e38503a442690701f6812fab448b18959f75",
+      "metadata_available": true,
+      "metadata_sha256": "ebcd4e4b19c3fe0d1be8e50bfdcaf5c206a49af58b5e9624acbddec402e50789",
+      "file_count": 11755,
+      "input_bytes": 3631730091,
+      "archive_plan_input_bytes": 174616999,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w005-s000.tar.zst",
+        "uncompressed_sha256": "09b0fd1831cac36fcb93c8f080ef84f75443fad3a232856330bc784715880b6d",
+        "uncompressed_bytes": 184545280,
+        "member_count": 1537,
+        "member_table_sha256": "651eee1ecc3ae947b4aa972fe679c682677b65750607e38ff6846ad42322f1a5"
+      }
+    },
+    {
+      "id": "w005-s001",
+      "wave": 5,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w005-s001.tar.zst",
+      "bytes": 38486345,
+      "sha256": "18f2c5deb062ac635c782de45a4670a29d0e571506bbf6fe3f7c36b79ccbac1c",
+      "local_repack_sha256": "18f2c5deb062ac635c782de45a4670a29d0e571506bbf6fe3f7c36b79ccbac1c",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "fb6b33708b96e3680a48d9b6ae4113a1e977f8e49eed48d02cfce38224843da4",
+      "metadata_available": true,
+      "metadata_sha256": "894b852bad0ee0124acaa7d719717dacf74430811d9917da01e152e76c04c6bf",
+      "file_count": 12437,
+      "input_bytes": 3791846742,
+      "archive_plan_input_bytes": 308910421,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w005-s001.tar.zst",
+        "uncompressed_sha256": "1e6f31e52f252dbe9bb3a267d20017a77aaf34a56586c3e8eaecbee3e1cf68cf",
+        "uncompressed_bytes": 323522560,
+        "member_count": 2214,
+        "member_table_sha256": "800af1b71aa0848bc2b79ebb372cfb82653bc2f6b7f6c1d40c7667a483f4d989"
+      }
+    },
+    {
+      "id": "w006-s000",
+      "wave": 6,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w006-s000.tar.zst",
+      "bytes": 288864149,
+      "sha256": "7985678978a569c351f4bcd9fded5b96fdc81d5112ee5b02dbfe5a5c25b7fd9a",
+      "local_repack_sha256": "7985678978a569c351f4bcd9fded5b96fdc81d5112ee5b02dbfe5a5c25b7fd9a",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "446a65af006076a6ec2eff01fb64f9979f7ab0fc03982cc1fe96e22e8923f976",
+      "metadata_available": true,
+      "metadata_sha256": "a5cfdb5799c67541395c5ab5ec2372373e520e0248dced139c7ea9bb9732b029",
+      "file_count": 27754,
+      "input_bytes": 3182100208,
+      "archive_plan_input_bytes": 848366312,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w006-s000.tar.zst",
+        "uncompressed_sha256": "933b46683b2a103a74b56881674b310705fdc83054f4b5ad15047823c6d57468",
+        "uncompressed_bytes": 898334720,
+        "member_count": 20469,
+        "member_table_sha256": "14a240d0a1496e66c118c134d03c26570b85d189511d82b011dfe9d971e7371d"
+      }
+    },
+    {
+      "id": "w006-s001",
+      "wave": 6,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w006-s001.tar.zst",
+      "bytes": 32362158,
+      "sha256": "eec040466a420c7d99ce8c02497cf4758ba95b8e594e89a01cbef913d3ed9f19",
+      "local_repack_sha256": "eec040466a420c7d99ce8c02497cf4758ba95b8e594e89a01cbef913d3ed9f19",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "872033e8f69f3113544c7355512012acbe9e8799fe65229166bc372a64cd4d4b",
+      "metadata_available": true,
+      "metadata_sha256": "2a18b2eb2794744bd3a9b0ab9ad95486d1be5eab651e81d0bfdd082dffd050bf",
+      "file_count": 9629,
+      "input_bytes": 2679187881,
+      "archive_plan_input_bytes": 219632689,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w006-s001.tar.zst",
+        "uncompressed_sha256": "911d9c99ef6a82447aa01469124e4b35226bbc8e1bf56b6462a91b2351e09b04",
+        "uncompressed_bytes": 228997120,
+        "member_count": 2125,
+        "member_table_sha256": "fa174bed38dd0fe42b0f399348dc93261adf833f6321e89cc27283e75349974f"
+      }
+    },
+    {
+      "id": "w006-s002",
+      "wave": 6,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w006-s002.tar.zst",
+      "bytes": 3873048,
+      "sha256": "01d0b7ace2fb51748b429b78f0f536d7e69290642f5cadc1f789b16853716319",
+      "local_repack_sha256": "01d0b7ace2fb51748b429b78f0f536d7e69290642f5cadc1f789b16853716319",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "8f910f746ab3595bbd4835ae84009bdc701e76f41182828d7a8ca27e85ea6f7c",
+      "metadata_available": true,
+      "metadata_sha256": "0348cfd8637f88df9a1b041bd4dc80e1c82e2b71bdbc4341fd42f1229165d067",
+      "file_count": 6805,
+      "input_bytes": 2105027688,
+      "archive_plan_input_bytes": 111847444,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w006-s002.tar.zst",
+        "uncompressed_sha256": "6e15273afb62de681b080af6d3ff6595923a0846a2ff0562100392e15dac2fa4",
+        "uncompressed_bytes": 115927040,
+        "member_count": 49,
+        "member_table_sha256": "b0bf3deb5f4a9df6b122f9743d40d29ce0b4715cd0a6e207b0c64aeb1a96b46d"
+      }
+    },
+    {
+      "id": "w007-s000",
+      "wave": 7,
+      "release_tag": "inputs-release-2026101105-dev-v1",
+      "asset": "w007-s000.tar.zst",
+      "bytes": 36136074,
+      "sha256": "2b56b2579763a723f0fb1d30d4f501faaecfd14a5fd3212c02893be41ef15e75",
+      "local_repack_sha256": "2b56b2579763a723f0fb1d30d4f501faaecfd14a5fd3212c02893be41ef15e75",
+      "local_repack_matches_published": true,
+      "manifest_sha256": "1092204323df8504839175ec94bae3e52b132b2e6b1abbdab4ba4f9dfd4dadb8",
+      "metadata_available": true,
+      "metadata_sha256": "b1c1a550df5664c3ad7bd711a0ed97927c89ae65f64633e862e2d42bc69c92a2",
+      "file_count": 9211,
+      "input_bytes": 2482037278,
+      "archive_plan_input_bytes": 174126611,
+      "packer": {
+        "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+        "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+        "graph_index_argument": true
+      },
+      "payload": {
+        "archive": "capsules/w007-s000.tar.zst",
+        "uncompressed_sha256": "26f4d8d7d9a788ad05203f20ddaa5261026ed0a9b27669957ccea77c359bee6a",
+        "uncompressed_bytes": 183838720,
+        "member_count": 1931,
+        "member_table_sha256": "590cd909c447d66bc07c69fc6dcc889cb94970a0362e00324831676cf671df49"
+      }
+    }
+  ],
+  "overlays": [],
+  "packer": {
+    "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
+    "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
+    "graph_index_argument": true,
+    "note": "The dev capsules were all packed at freeze time with this revision; reproducing an archive requires the same revision plus --graph-index."
+  }
+}

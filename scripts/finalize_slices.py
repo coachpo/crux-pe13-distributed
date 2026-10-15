@@ -65,13 +65,17 @@ def finalize(shards, source_closure, host_runtime, integration_contract, report,
     for tool in list(child_inputs):
         if tool in host_map:
             child_inputs.update(host_map[tool]['transitive_generated_runtime_inputs'])
-    if target_files not in owners:
-        raise ValueError('Terminal target-files action is not in the sliced plan')
-    target_owner = owners[target_files]
-    target_job = jobs[target_owner]
-    for path in child_inputs:
-        if path not in owners or jobs[owners[path]]['wave'] >= target_job['wave']:
-            raise ValueError('Child tool is not produced by an earlier wave: ' + path)
+    # The release plan ends in the target-files package; the dev product's
+    # four-image plan has no target-files action, so the terminal child-tool
+    # contract applies only when that action is part of the slice set. The
+    # recorded key stays present (null for the dev plan) so the release plan
+    # bytes are unchanged.
+    target_owner = owners.get(target_files)
+    if target_owner is not None:
+        target_job = jobs[target_owner]
+        for path in child_inputs:
+            if path not in owners or jobs[owners[path]]['wave'] >= target_job['wave']:
+                raise ValueError('Child tool is not produced by an earlier wave: ' + path)
     changed = []
     for name, manifest in manifests.items():
         job = jobs[name]

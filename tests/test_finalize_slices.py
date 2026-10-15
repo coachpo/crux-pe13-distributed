@@ -162,5 +162,77 @@ class FinalizeSlicesTests(unittest.TestCase):
             self.run_finalize()
 
 
+class FinalizeSlicesDevPlanTests(unittest.TestCase):
+    """A plan whose terminal is an image, not a target-files package, is valid.
+
+    The development product slices four images and has no target-files action.
+    The terminal child-tool contract is skipped, every other audit rule still
+    applies, and the plan records ``target_files_owner: null``.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name).resolve()
+        self.source = self.root / 'source'
+        self.out = self.root / 'out'
+        (self.source / 'src').mkdir(parents=True)
+        (self.source / 'src/implicit.h').write_text('implicit')
+        (self.source / 'src/NOTICE').write_text('notice')
+        (self.source / 'src/r8.pro').write_text('pro')
+        (self.source / 'src/kernel_src').write_text('kernel')
+        self.boot_img = str(self.out / 'target/product/crux/boot.img')
+        self.kernel_tree = str(self.out / 'target/product/crux/obj/KERNEL_OBJ')
+        (self.source / 'build.ninja').write_text(
+            'rule cp\n  command = cp $in $out\n'
+            f'build {self.kernel_tree}: cp src/kernel_src\n'
+            f'build {self.boot_img}: cp src/implicit.h || {self.kernel_tree}\n')
+        self.shards = self.root / 'shards'
+        database = self.root / 'index.sqlite'
+        graph.index_graph(self.source / 'build.ninja', self.source, database)
+        graph.Graph(database).shard([self.boot_img], self.shards, max_actions=1, max_parallel=1)
+        self.audit = self.root / 'graph-export-audit'
+        self.audit.mkdir()
+        (self.audit / 'target-files-source-closure.json').write_text(json.dumps({
+            'notice_readers': [{'outputs': [self.boot_img],
+                                'source_license_texts': ['src/NOTICE']}],
+            'r8_embedded_includes': [{'r8_consumers': [{'outputs': [self.boot_img]}],
+                                      'included_file': 'src/r8.pro'}],
+            'selected_packaging_source_paths': ['src/packaging.mk'],
+            'source_files': [{'path': 'src/implicit.h', 'relative': 'implicit.h',
+                              'reasons': ['implicit_native_source_operand']}],
+            # The release closure records a target-files child tool; the dev plan
+            # has no target-files action, so this entry must be ignored.
+            'generated_child_readiness_inputs': [{'output': 'absent-tool'}],
+        }))
+        (self.audit / 'host-runtime.json').write_text(json.dumps({'records': []}))
+        self.contract = self.root / 'integration-contract.json'
+        self.contract.write_text(json.dumps({
+            'out_root': str(self.out), 'source_root': str(self.source),
+            'consumers': [], 'kernel_source_leaves_after_slicing': [],
+            'consumer_build_environment': {}, 'consumer_external_input_dirs': []}))
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_image_terminal_plan_finalizes_without_target_files(self):
+        result = finalize_slices.finalize(
+            self.shards, self.audit / 'target-files-source-closure.json',
+            self.audit / 'host-runtime.json', self.contract,
+            self.root / 'slice-finalization.json', '2026101105')
+        self.assertIsNone(result['target_files_owner'])
+        self.assertEqual(result['jobs'], 2)
+        plan = json.loads((self.shards / 'plan.json').read_text())
+        self.assertIsNone(plan['cold_transport_contract']['target_files_owner'])
+        kernel_job = next(job for wave in plan['waves'] for job in wave
+                          if self.kernel_tree in job['targets'])
+        image_job = next(job for wave in plan['waves'] for job in wave
+                         if self.boot_img in job['targets'])
+        self.assertEqual(plan['cold_transport_contract']['kernel_tree_export_owner'],
+                         kernel_job['id'])
+        manifest = json.loads((self.shards / image_job['manifest']).read_text())
+        for leaf in ('src/NOTICE', 'src/r8.pro', 'src/implicit.h'):
+            self.assertIn(leaf, manifest['leaf_inputs'])
+
+
 if __name__ == '__main__':
     unittest.main()
