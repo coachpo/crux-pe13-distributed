@@ -40,6 +40,11 @@ on:
         required: false
         default: w000-s000
         type: string
+      pack_shards:
+        description: Optional space separated shard ids to pack regardless of mode
+        required: false
+        default: ""
+        type: string
       output_tag:
         description: Release tag for full mode (created when missing)
         required: false
@@ -67,6 +72,7 @@ jobs:
       REGISTRY_PATH: ${{ github.workspace }}/${{ inputs.registry }}
       MODE: ${{ inputs.mode }}
       PROBE_SHARDS: ${{ inputs.probe_shards }}
+      PACK_SHARDS: ${{ inputs.pack_shards }}
     steps:
       - name: Record disk space before cleanup
         shell: bash
@@ -399,8 +405,13 @@ jobs:
           registry = json.loads(Path(os.environ['REGISTRY_PATH']).read_text())
           mode = os.environ['MODE']
           wanted = os.environ['PROBE_SHARDS'].split()
-          selected = registry['capsules'] if mode == 'full' else [
-              row for row in registry['capsules'] if row['id'] in wanted]
+          pack_only = os.environ.get('PACK_SHARDS', '').split()
+          if pack_only:
+              selected = [row for row in registry['capsules'] if row['id'] in pack_only]
+          elif mode == 'full':
+              selected = registry['capsules']
+          else:
+              selected = [row for row in registry['capsules'] if row['id'] in wanted]
           if not selected:
               raise SystemExit('No shard selected for packing')
           capsules = staging / 'capsules-out'
@@ -412,6 +423,44 @@ jobs:
                   for block in iter(lambda: stream.read(1 << 22), b''):
                       result.update(block)
               return result.hexdigest()
+
+          def member_diff(row, produced, scratch):
+              """Compare the produced member headers with the frozen capsule's."""
+              frozen_dir = scratch / 'frozen-members'
+              frozen_dir.mkdir(parents=True, exist_ok=True)
+              subprocess.run(['gh', 'release', 'download', row['release_tag'], '--repo',
+                              registry['repository'], '--pattern', row['asset'],
+                              '--dir', str(frozen_dir)], check=True)
+
+              def table(archive):
+                  unpacked = scratch / (archive.name + '.members.tar')
+                  with unpacked.open('wb') as destination:
+                      subprocess.run(['zstd', '-dc', str(archive)], stdout=destination, check=True)
+                  rows = {}
+                  with tarfile.open(unpacked) as tar:
+                      for member in tar:
+                          if member.name.endswith('.crux-task/graph/bundle.json'):
+                              continue
+                          kind = member.type.decode() if isinstance(member.type, bytes) else member.type
+                          rows[member.name] = [kind, member.mode, member.uid, member.gid, member.size,
+                                               '%.9f' % member.mtime, member.linkname]
+                  unpacked.unlink()
+                  return rows
+
+              frozen_rows = table(frozen_dir / row['asset'])
+              produced_rows = table(produced)
+              difference = {'frozen_members': len(frozen_rows), 'produced_members': len(produced_rows),
+                            'only_frozen': sorted(set(frozen_rows) - set(produced_rows))[:10],
+                            'only_produced': sorted(set(produced_rows) - set(frozen_rows))[:10],
+                            'changed': {}, 'changed_count': 0}
+              for name in sorted(set(frozen_rows) & set(produced_rows)):
+                  if frozen_rows[name] == produced_rows[name]:
+                      continue
+                  if len(difference['changed']) < 15:
+                      difference['changed'][name] = {'frozen': frozen_rows[name],
+                                                     'produced': produced_rows[name]}
+                  difference['changed_count'] += 1
+              return difference
 
           def bundle_diff(row, produced, scratch):
               """Compare the produced packer annotation with the frozen one.
@@ -480,7 +529,8 @@ jobs:
                       if member.name.endswith('.crux-task/graph/bundle.json'):
                           continue
                       kind = member.type.decode() if isinstance(member.type, bytes) else member.type
-                      members.append([member.name, kind, member.mode, member.size, member.linkname])
+                      members.append([member.name, kind, member.mode, member.uid, member.gid,
+                                      member.size, '%.9f' % member.mtime, member.linkname])
               members.sort()
               result = {'uncompressed_sha256': hasher.hexdigest(),
                         'uncompressed_bytes': unpacked.stat().st_size,
@@ -573,6 +623,9 @@ jobs:
                       and identity['member_count'] == row['payload']['member_count'])
                   if not entry['payload_matches_frozen']:
                       report['failures'].append(row['id'] + ':payload')
+                      entry['payload_member_diff'] = member_diff(row, output, staging)
+                      print(json.dumps({'payload_member_diff': entry['payload_member_diff']},
+                                       sort_keys=True)[:8000], flush=True)
                       diff = bundle_diff(row, output, staging)
                       entry['payload_diff'] = diff
                       (staging / 'result' / ('payload-diff-' + row['id'] + '.json')).write_text(
