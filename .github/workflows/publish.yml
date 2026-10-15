@@ -275,14 +275,17 @@ jobs:
           set -euo pipefail
           exec > >(tee -a "$RUNNER_WORK/result/pages.log") 2>&1
           cd "$OTA_REPO"
-          if git diff --quiet && git diff --cached --quiet; then
+          # Stage everything first: a new release record is an untracked file, and
+          # `git diff` alone would not see it.
+          git add -A
+          if git diff --cached --quiet; then
             # Republishing an already recommended release leaves the site unchanged;
             # the public feed is still fetched and compared below.
             echo "the site already names this release; no commit is required"
             echo "unchanged" > "$RUNNER_WORK/result/site-revision.txt"
           else
             git -c user.name="crux-pipeline" -c user.email="coachpo@users.noreply.github.com" \
-              commit -q -am "Recommend ${BUILD_NUMBER} as ${OTA_TAG}"
+              commit -q -m "Recommend ${BUILD_NUMBER} as ${OTA_TAG}"
             git push origin HEAD:main
             git rev-parse HEAD > "$RUNNER_WORK/result/site-revision.txt"
             cat "$RUNNER_WORK/result/site-revision.txt"
@@ -291,10 +294,8 @@ jobs:
           import json, os, subprocess, sys, time
           from pathlib import Path
           work, revision = Path(sys.argv[1]), sys.argv[2]
-          if revision != 'unchanged':
-              deadline = time.time() + 900
-          else:
-              deadline = 0
+          pages_completed = False
+          deadline = time.time() + 900 if revision != 'unchanged' else 0
           while time.time() < deadline:
               listing = subprocess.run(['gh', 'run', 'list', '--repo', os.environ['REPOSITORY'],
                                         '--workflow', 'pages.yml', '--limit', '5', '--json',
@@ -306,7 +307,7 @@ jobs:
                       raise SystemExit('Pages deployment failed: %s' % runs[0]['databaseId'])
                   break
               time.sleep(20)
-          elif revision != 'unchanged':
+          if revision != 'unchanged' and not pages_completed:
               raise SystemExit('Pages deployment did not complete for ' + revision)
           import urllib.request
           url = 'https://coachpo.github.io/crux-pe13-ota/updates/crux/thirteen_plus.json'
