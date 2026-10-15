@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "build_number": "2026101105",
+  "note": "No recorded producers: every shard of this chain is compiled by the controller itself.",
+  "tasks": {}
+}
