@@ -413,6 +413,57 @@ jobs:
                       result.update(block)
               return result.hexdigest()
 
+          def bundle_diff(row, produced, scratch):
+              """Compare the produced packer annotation with the frozen one.
+
+              The payload digest covers the whole tar, and every member except the
+              packer's own `.crux-task/graph/bundle.json` is compared separately, so a
+              mismatch here is a difference inside that annotation. Reporting it field by
+              field is what makes such a failure diagnosable without another run.
+              """
+              import tarfile
+              frozen_dir = scratch / 'frozen'
+              frozen_dir.mkdir(parents=True, exist_ok=True)
+              subprocess.run(['gh', 'release', 'download', row['release_tag'], '--repo',
+                              registry['repository'], '--pattern', row['asset'],
+                              '--dir', str(frozen_dir)], check=True)
+              member = 'home/qingli/crux-pe13-offline-2026-09-25/pe13/.crux-task/graph/bundle.json'
+              documents = {}
+              for label, archive in (('frozen', frozen_dir / row['asset']), ('produced', produced)):
+                  result = subprocess.run(['tar', '--zstd', '-xOf', str(archive), member],
+                                          capture_output=True)
+                  if result.returncode != 0:
+                      return {'error': 'cannot read the annotation from ' + label}
+                  documents[label] = json.loads(result.stdout)
+              frozen_meta, produced_meta = documents['frozen'], documents['produced']
+              diff = {'top_level': {}, 'entries': {}, 'entry_counts': {}}
+              for key in sorted(set(frozen_meta) | set(produced_meta)):
+                  if key in ('files',):
+                      continue
+                  if frozen_meta.get(key) != produced_meta.get(key):
+                      diff['top_level'][key] = {'frozen': frozen_meta.get(key),
+                                                'produced': produced_meta.get(key)}
+              frozen_files = {spec['path']: spec for spec in frozen_meta.get('files', [])}
+              produced_files = {spec['path']: spec for spec in produced_meta.get('files', [])}
+              diff['entry_counts'] = {'frozen': len(frozen_files), 'produced': len(produced_files),
+                                      'only_frozen': len(set(frozen_files) - set(produced_files)),
+                                      'only_produced': len(set(produced_files) - set(frozen_files))}
+              changed = 0
+              for path in sorted(set(frozen_files) & set(produced_files)):
+                  before, after = frozen_files[path], produced_files[path]
+                  if before == after:
+                      continue
+                  if changed < 20:
+                      diff['entries'][path] = {
+                          'frozen': {k: v for k, v in before.items() if k != 'path' and before.get(k) != after.get(k)},
+                          'produced': {k: v for k, v in after.items() if k != 'path' and before.get(k) != after.get(k)},
+                      }
+                  changed += 1
+              diff['changed_entries'] = changed
+              for key in ('files',):
+                  pass
+              return diff
+
           def payload_identity(archive, scratch):
               """Digest the unpacked tar and its member table without the annotation file."""
               import tarfile
@@ -522,6 +573,11 @@ jobs:
                       and identity['member_count'] == row['payload']['member_count'])
                   if not entry['payload_matches_frozen']:
                       report['failures'].append(row['id'] + ':payload')
+                      diff = bundle_diff(row, output, staging)
+                      entry['payload_diff'] = diff
+                      (staging / 'result' / ('payload-diff-' + row['id'] + '.json')).write_text(
+                          json.dumps(diff, indent=2) + '\n')
+                      print(json.dumps({'payload_diff': diff}, sort_keys=True)[:8000], flush=True)
                       raise SystemExit('Packed capsule payload differs from the frozen record: '
                                        + json.dumps(identity, sort_keys=True))
               elif not (entry['bytes_match'] and entry['sha256_match']):
