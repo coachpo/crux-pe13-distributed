@@ -14,7 +14,7 @@
   "max_actions": 4000,
   "max_parallel": 20,
   "graph": {
-    "release_tag": "frozen-graph-2026101105-dev-v1",
+    "release_tag": "frozen-graph-2026101105-dev-v2",
     "index": {
       "asset": "index-pruned-2026101105-dev.sqlite.zst",
       "bytes": 44958751,
@@ -108,8 +108,8 @@
   "finalize": {
     "source_closure": {
       "asset": "target-files-source-closure.json",
-      "bytes": 2707163,
-      "sha256": "c6cd52efbe21481f3a93bb0d8785356cd7450cce36b12cd640576aa799938f5b"
+      "bytes": 2714809,
+      "sha256": "7dc5461084598cdb0ae0e311ee58b7d456c6ed4e588ffc6d65cc753f14959019"
     },
     "host_runtime": {
       "asset": "host-runtime.json",
@@ -134,7 +134,7 @@
     {
       "id": "w000-s000",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s000.tar.zst",
       "bytes": 494690692,
       "sha256": "c9a465f40fd18ac34a972bfab2c8d6c93bdaa0ef1735d639365b87a943cf1238",
@@ -162,7 +162,7 @@
     {
       "id": "w000-s001",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s001.tar.zst",
       "bytes": 195573929,
       "sha256": "b81fcab34ea37d4858549943758a7697d2e7b2293f8c44a83673cb055e84b954",
@@ -190,7 +190,7 @@
     {
       "id": "w000-s002",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s002.tar.zst",
       "bytes": 142746831,
       "sha256": "257fe65728d32ff30c705d928a766f27b13e0e940a3206bb8bb8f3867ba598ab",
@@ -218,7 +218,7 @@
     {
       "id": "w000-s003",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s003.tar.zst",
       "bytes": 36947599,
       "sha256": "d7b99a695e78321d47f39bb4d8291e0e4a2613404489102ed70c700defd7407c",
@@ -246,7 +246,7 @@
     {
       "id": "w000-s004",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s004.tar.zst",
       "bytes": 9511925,
       "sha256": "431e165cecf7c87514fdb07f4da5851c15edca3a582924f386e1a39a21aa0196",
@@ -274,7 +274,7 @@
     {
       "id": "w000-s005",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s005.tar.zst",
       "bytes": 11862648,
       "sha256": "4a92f438541cac7b34fe34b1edc58266d533ab47c53c6fb22fbbd96bf126bc77",
@@ -302,7 +302,7 @@
     {
       "id": "w000-s006",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s006.tar.zst",
       "bytes": 26335183,
       "sha256": "04264a5f18802820adc370434572a31ffe28da5d55d8fc135cfa4ddba1aa606b",
@@ -330,7 +330,7 @@
     {
       "id": "w000-s007",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s007.tar.zst",
       "bytes": 16709968,
       "sha256": "62e69a15077876148cda277ae0c0e9d4b171634ed716c0b7713801c0376d1207",
@@ -358,7 +358,7 @@
     {
       "id": "w000-s008",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s008.tar.zst",
       "bytes": 24707156,
       "sha256": "9229dff877b2f2164cb7968eb577676d3783bb71a2f5dfd5984d73ebc32f4dff",
@@ -386,7 +386,7 @@
     {
       "id": "w000-s009",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s009.tar.zst",
       "bytes": 20887780,
       "sha256": "61b3f19fbc8123f74a46366f940481209e104bc3c4b4b95b3a5948503ce4f116",
@@ -414,7 +414,7 @@
     {
       "id": "w000-s010",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s010.tar.zst",
       "bytes": 46950107,
       "sha256": "1277b52d0b212f55173fc1735e5b86f7bc6c926d0b405ff20ff9d618cc2918cb",
@@ -442,7 +442,7 @@
     {
       "id": "w000-s011",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s011.tar.zst",
       "bytes": 58618619,
       "sha256": "e8a6ae5f36f830acf19afda57321d7558a8e5b7e705552506bfde1726a0049b2",
@@ -470,7 +470,7 @@
     {
       "id": "w000-s012",
       "wave": 0,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w000-s012.tar.zst",
       "bytes": 23623611,
       "sha256": "ac0b2f047abbfa0a6470d79b1c0a2eade4503bd6b95fb86d093b026efe16e493",
@@ -498,7 +498,7 @@
     {
       "id": "w001-s000",
       "wave": 1,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w001-s000.tar.zst",
       "bytes": 23330095,
       "sha256": "d85f16e5d0c046ae69bf84d5fbbc7c1fa79717f458719c9ea2f157a0f99d7e0b",
@@ -526,7 +526,7 @@
     {
       "id": "w001-s001",
       "wave": 1,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w001-s001.tar.zst",
       "bytes": 419107285,
       "sha256": "df324bfb6e61e4549080052952c5f9b7d6d1cb5ab4372546aba7194490eb743f",
@@ -554,7 +554,7 @@
     {
       "id": "w001-s002",
       "wave": 1,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w001-s002.tar.zst",
       "bytes": 840436348,
       "sha256": "5a3554daf5554f2fbdd828b1553b790e40f16cbebb01fd13a63eb58bc4293e57",
@@ -582,7 +582,7 @@
     {
       "id": "w002-s000",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s000.tar.zst",
       "bytes": 170138240,
       "sha256": "ef7cf8fefea63e73ca3f1d5ad1cb7be70bd1152622e554b13f28c900a711a966",
@@ -610,7 +610,7 @@
     {
       "id": "w002-s001",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s001.tar.zst",
       "bytes": 11417463,
       "sha256": "e54c38f2dad06c4e13893420e60313920274a8e73a6955b4bf30c369b5737d9d",
@@ -638,7 +638,7 @@
     {
       "id": "w002-s002",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s002.tar.zst",
       "bytes": 161068725,
       "sha256": "003ab96da60973046496ce6f7541ac0fb66004150df7a9ef5acc76f1feb381da",
@@ -666,7 +666,7 @@
     {
       "id": "w002-s003",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s003.tar.zst",
       "bytes": 35467921,
       "sha256": "45a79872b839a64129bce5d2651faba9a71595a6e9edbcb8be85db3ec46686ca",
@@ -694,7 +694,7 @@
     {
       "id": "w002-s004",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s004.tar.zst",
       "bytes": 39664087,
       "sha256": "2cee13b7f4f1f3e45e88c82789db6cf7223c7562ba1314f3cf0e4f821ac031c0",
@@ -722,7 +722,7 @@
     {
       "id": "w002-s005",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s005.tar.zst",
       "bytes": 13496150,
       "sha256": "a5684a57547e13ffa939be007181e2ad36483dc1a5656c711a3af5ab81165de0",
@@ -750,7 +750,7 @@
     {
       "id": "w002-s006",
       "wave": 2,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w002-s006.tar.zst",
       "bytes": 28386798,
       "sha256": "571bd591eeb2c0be01681e2b3d73d58a76734769a5f7083dee3c75ce66b2006f",
@@ -778,7 +778,7 @@
     {
       "id": "w003-s000",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s000.tar.zst",
       "bytes": 94998321,
       "sha256": "3e08f116fe1360552d6296049f1dd6e6ed3dc037dba9cf582374964f66a01f90",
@@ -806,7 +806,7 @@
     {
       "id": "w003-s001",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s001.tar.zst",
       "bytes": 69282962,
       "sha256": "6df4a92df57da30fc317208e6ac218dbfa45f87fc8808da5a080b49f3949fdb3",
@@ -834,7 +834,7 @@
     {
       "id": "w003-s002",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s002.tar.zst",
       "bytes": 47435665,
       "sha256": "658041dc34ca25e8bb2f01e66588daacfe8af018cc9958673703d5f447e2735b",
@@ -862,7 +862,7 @@
     {
       "id": "w003-s003",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s003.tar.zst",
       "bytes": 21388193,
       "sha256": "aed55164cdca9b1f5c700478577f43b888658d29ade1743d4a26d75758d1b941",
@@ -890,7 +890,7 @@
     {
       "id": "w003-s004",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s004.tar.zst",
       "bytes": 196913369,
       "sha256": "f88a4e75a9ddc6aea8dd1ba5d2a16721d99b98b4974f058688d11bf6ea73534e",
@@ -918,7 +918,7 @@
     {
       "id": "w003-s005",
       "wave": 3,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w003-s005.tar.zst",
       "bytes": 27889442,
       "sha256": "972a52d57216afe355d28281a9b8e73e60d21bb223d5319e62018c9d3d210c86",
@@ -946,7 +946,7 @@
     {
       "id": "w004-s000",
       "wave": 4,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w004-s000.tar.zst",
       "bytes": 140680028,
       "sha256": "5d4c827a142edda76e1176f6a7f33b349775349b69ec4500823bd88639857183",
@@ -974,7 +974,7 @@
     {
       "id": "w004-s001",
       "wave": 4,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w004-s001.tar.zst",
       "bytes": 18952147,
       "sha256": "33aaf0ad823dea22f513ffc76b60e1ef98bb8797e0470cdd4283340916a18ddd",
@@ -1002,7 +1002,7 @@
     {
       "id": "w004-s002",
       "wave": 4,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w004-s002.tar.zst",
       "bytes": 26489841,
       "sha256": "1a08abebd923431788e26f9b5b81416850b3c8a3e5bef7753977dd8c1a757acb",
@@ -1030,7 +1030,7 @@
     {
       "id": "w004-s003",
       "wave": 4,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w004-s003.tar.zst",
       "bytes": 38214101,
       "sha256": "8124d26c261270e4ff199592332f3298ed5f1e2471af58c99d538425834a5d66",
@@ -1058,7 +1058,7 @@
     {
       "id": "w005-s000",
       "wave": 5,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w005-s000.tar.zst",
       "bytes": 7458888,
       "sha256": "dc483f596169e251c4c2da1e1811ed8e4b310f6aadb9bcef6d6599c0025969f8",
@@ -1086,7 +1086,7 @@
     {
       "id": "w005-s001",
       "wave": 5,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w005-s001.tar.zst",
       "bytes": 38486345,
       "sha256": "18f2c5deb062ac635c782de45a4670a29d0e571506bbf6fe3f7c36b79ccbac1c",
@@ -1114,7 +1114,7 @@
     {
       "id": "w006-s000",
       "wave": 6,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w006-s000.tar.zst",
       "bytes": 288864149,
       "sha256": "7985678978a569c351f4bcd9fded5b96fdc81d5112ee5b02dbfe5a5c25b7fd9a",
@@ -1142,7 +1142,7 @@
     {
       "id": "w006-s001",
       "wave": 6,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w006-s001.tar.zst",
       "bytes": 32362158,
       "sha256": "eec040466a420c7d99ce8c02497cf4758ba95b8e594e89a01cbef913d3ed9f19",
@@ -1170,7 +1170,7 @@
     {
       "id": "w006-s002",
       "wave": 6,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w006-s002.tar.zst",
       "bytes": 3873048,
       "sha256": "01d0b7ace2fb51748b429b78f0f536d7e69290642f5cadc1f789b16853716319",
