@@ -954,8 +954,8 @@
           "capsule_assets": [
             "w007-s000.tar.zst"
           ],
-          "release_tag": "inputs-release-2026101105-dev-v1",
-          "manifest_sha256": "1092204323df8504839175ec94bae3e52b132b2e6b1abbdab4ba4f9dfd4dadb8"
+          "release_tag": "inputs-release-2026101105-dev-v2",
+          "manifest_sha256": "96e2832daa92caf56203c4b76dcd2fa3e2f2cff75fe8fbe695609d923763da7c"
         }
       ]
     }

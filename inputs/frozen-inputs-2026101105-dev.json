@@ -1198,18 +1198,18 @@
     {
       "id": "w007-s000",
       "wave": 7,
-      "release_tag": "inputs-release-2026101105-dev-v1",
+      "release_tag": "inputs-release-2026101105-dev-v2",
       "asset": "w007-s000.tar.zst",
-      "bytes": 36136074,
-      "sha256": "2b56b2579763a723f0fb1d30d4f501faaecfd14a5fd3212c02893be41ef15e75",
-      "local_repack_sha256": "2b56b2579763a723f0fb1d30d4f501faaecfd14a5fd3212c02893be41ef15e75",
+      "bytes": 36142074,
+      "sha256": "3baa81465fdb170d3d10accf4c780ea68f750d37a83043693f3f9f54132dda74",
+      "local_repack_sha256": "3baa81465fdb170d3d10accf4c780ea68f750d37a83043693f3f9f54132dda74",
       "local_repack_matches_published": true,
-      "manifest_sha256": "1092204323df8504839175ec94bae3e52b132b2e6b1abbdab4ba4f9dfd4dadb8",
+      "manifest_sha256": "96e2832daa92caf56203c4b76dcd2fa3e2f2cff75fe8fbe695609d923763da7c",
       "metadata_available": true,
-      "metadata_sha256": "b1c1a550df5664c3ad7bd711a0ed97927c89ae65f64633e862e2d42bc69c92a2",
-      "file_count": 9211,
-      "input_bytes": 2482037278,
-      "archive_plan_input_bytes": 174126611,
+      "metadata_sha256": "504b7df01e03acd73bcf15fbeff30917ba9e50b9674db57806cf42b1d828a3de",
+      "file_count": 9243,
+      "input_bytes": 2482263357,
+      "archive_plan_input_bytes": 174352690,
       "packer": {
         "commit": "89f6143f187e8e738de1ce3a160a3a8f3151f0c9",
         "script_sha256": "52dfe60fca45fb29daec790e50bee94a3a08a43749206cd59cd020f0f519f1df",
@@ -1217,10 +1217,10 @@
       },
       "payload": {
         "archive": "capsules/w007-s000.tar.zst",
-        "uncompressed_sha256": "26f4d8d7d9a788ad05203f20ddaa5261026ed0a9b27669957ccea77c359bee6a",
-        "uncompressed_bytes": 183838720,
-        "member_count": 1931,
-        "member_table_sha256": "590cd909c447d66bc07c69fc6dcc889cb94970a0362e00324831676cf671df49"
+        "uncompressed_sha256": "f6f02b23733a41fdf8ef63c683243b16978c71fbf2c3906a249bc5e934f9a828",
+        "uncompressed_bytes": 184135680,
+        "member_count": 1963,
+        "member_table_sha256": "b87b6f11455f55184a41ead6c09320b14c1252066b0c6eca14adf04b4fc31a2e"
       }
     }
   ],
