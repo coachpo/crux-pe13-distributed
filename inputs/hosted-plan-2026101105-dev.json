@@ -929,6 +929,7 @@
             "w001-s001",
             "w001-s002",
             "w002-s000",
+            "w002-s001",
             "w002-s002",
             "w002-s003",
             "w002-s004",
@@ -959,5 +960,5 @@
       ]
     }
   ],
-  "dependency_source": "Frozen dev plan; the four-image closure records its own export/dependency set."
+  "dependency_source": "Frozen dev plan supplemented for the terminal shard: w007-s000 also depends on w002-s001 because the image packaging reads the graphics license metadata (android.hardware.graphics.common-V3-ndk-source/meta_lic) that w002-s001 owns. This mirrors the accepted 2026101104 correction."
 }
