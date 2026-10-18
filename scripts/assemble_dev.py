@@ -333,6 +333,15 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
             shutil.copy2(product / name, delivery / name)
         for name in DELIVERY_FITS:
             shutil.copy2(fits_dir / name, delivery / name)
+        # GitHub Release assets are limited to 2 GiB; system.img is larger, so it
+        # ships zstd-compressed and the record keeps both identities.
+        system_image = delivery / "system.img"
+        system_uncompressed = {"size": system_image.stat().st_size,
+                               "sha256": worker.digest(system_image)}
+        subprocess.run(["zstd", "-19", "-T0", "-q", "-f", str(system_image),
+                        "-o", str(delivery / "system.img.zst")], check=True)
+        system_image.unlink()
+        system_compressed = delivery / "system.img.zst"
         record = {
             "schema_version": 1, "status": "success", "build_number": build_number,
             "product": "aosp_crux-userdebug",
@@ -346,6 +355,11 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
                          for path in sorted(delivery.iterdir()) if path.is_file() and path.name != "SHA256SUMS"},
             "gates": gates,
             "fits": fit_reports,
+            "system_image": {"compressed_as": "system.img.zst",
+                             "compressed": {"size": system_compressed.stat().st_size,
+                                            "sha256": worker.digest(system_compressed)},
+                             "uncompressed": system_uncompressed,
+                             "note": "GitHub Release assets are limited to 2 GiB; decompress with zstd -d."},
             "fit_validation": validation,
             "fit_receipt": worker.read_json(fit_stage / "fit-packaging-receipt.json"),
             "boot_chain": {"loader": "U-Boot", "chain": ["ABL", "U-Boot", "PE ROM / PE Recovery FIT"]},
