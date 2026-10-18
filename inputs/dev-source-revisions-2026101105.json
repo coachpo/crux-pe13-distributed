@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "purpose": "isolated aosp_crux-userdebug development graph generation; no ROM Ninja actions",
+  "time_UTC": "2026-10-15T16:12:49.836820+00:00",
+  "target_product": "aosp_crux",
+  "target_build_variant": "userdebug",
+  "goals": [
+    "bootimage",
+    "recoveryimage",
+    "systemimage",
+    "vendorimage"
+  ],
+  "ninja_rom_actions_executed": false,
+  "env": {
+    "OUT_DIR": "/home/qingli/crux-pe13-actions-ota-2026-10-11/android-out",
+    "BUILD_NUMBER": "2026101105",
+    "BUILD_FINGERPRINT": "Xiaomi/crux/crux:13/TQ3A.230901.001.B1/2026101105:userdebug/test-keys",
+    "BUILD_DATETIME": "1792080744",
+    "USE_CCACHE": "0",
+    "CCACHE_DISABLE": "1"
+  },
+  "repos": [
+    {
+      "path": "device/xiaomi/crux",
+      "head": "e606ed75177a25f97c931337eb3c7727f8a6ee32",
+      "status": "## thirteen-plus...crux-baseline/thirteen-plus\n"
+    },
+    {
+      "path": "packages/apps/Updates",
+      "head": "56623f04d5abff06e7b80aac5460ff827dfe1651",
+      "status": "## crux-pe13-baseline\n"
+    },
+    {
+      "path": "vendor/xiaomi/crux",
+      "head": "5b2bc3a0d3195b284321730a6527047da6671d02",
+      "status": "## thirteen-plus...crux-baseline/thirteen-plus\n"
+    },
+    {
+      "path": "vendor/aosp",
+      "head": "4c290fc50009189397df519eea2f61a8167195f8",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "bootable/recovery",
+      "head": "1611e01414bb3d574673c03edf01fb4b319c6d87",
+      "status": "## crux-pe13-functional...crux-functional/crux-pe13-functional\n"
+    },
+    {
+      "path": "frameworks/base",
+      "head": "494e97c8dbd84a135b1c91b9080a8bf703eba971",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "system/core",
+      "head": "ceabe19c2fa9239dfc39753db5c2db65ea464524",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "build/make",
+      "head": "b25e58088921cb5636742f83cf45bb607bb3d0d2",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "art",
+      "head": "5f0ae1d6034c103aa13de8f319e66950f114ad6f",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "kernel/xiaomi/crux-pe-cepheus",
+      "head": "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e",
+      "status": "## thirteen...origin/thirteen\n"
+    },
+    {
+      "path": "packages/modules/adb",
+      "head": "818b41c4d8e32f8da7580493be9ff0ff6efa2a7a",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    },
+    {
+      "path": "prebuilts/build-tools",
+      "head": "e4ce2f62e149361cebc7a00349d0600062cc6b07",
+      "status": "## crux-pe13-baseline...crux-baseline/crux-pe13-baseline\n"
+    }
+  ]
+}

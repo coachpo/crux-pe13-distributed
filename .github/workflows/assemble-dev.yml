@@ -1,0 +1,185 @@
+name: Assemble the PE13 development delivery
+run-name: PE13 dev delivery ${{ inputs.build_number }}
+
+# Packages the four development images and both U-Boot FITs from the successful
+# distributed producer artifacts, runs the AVB/v1/cpio/FIT gates, and (when
+# publish=true) creates the immutable development prerelease after verifying the
+# uploaded GitHub asset digests against SHA256SUMS. No feed change is made.
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Frozen development build number
+        required: true
+        default: "2026101105"
+        type: string
+      producers:
+        description: Producer bindings JSON inside this repository
+        required: true
+        default: inputs/dev-producers-2026101105.json
+        type: string
+      identity:
+        description: Admitted development frontend identity JSON
+        required: true
+        default: inputs/frontend-identity-2026101105-dev.json
+        type: string
+      source_selection:
+        description: Development source/revision record JSON
+        required: true
+        default: inputs/dev-source-revisions-2026101105.json
+        type: string
+      release_tag:
+        description: Prerelease tag for the development delivery
+        required: true
+        default: dev-pe13-2026101105
+        type: string
+      publish:
+        description: Publish the verified delivery as a prerelease
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: assemble-dev-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      PRODUCERS: ${{ github.workspace }}/${{ inputs.producers }}
+      IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
+      SOURCE_SELECTION: ${{ github.workspace }}/${{ inputs.source_selection }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Record disk space before cleanup
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          df -B1 > "$RUNNER_TEMP/result/disks-before-cleanup.txt"
+      - name: Free disk space
+        continue-on-error: true
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "true"
+          remove-cached-tools: "false"
+          remove-swapfile: "true"
+          verbose: "false"
+      - uses: actions/checkout@v7.0.1
+      - name: Install packaging and inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/host-dependencies.log") 2>&1
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          nproc >> "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+          sudo mkdir -p /home/qingli
+          sudo chown "$(id -u):$(id -g)" /home/qingli
+          sudo apt-get update
+          sudo apt-get install -y zstd u-boot-tools device-tree-compiler e2fsprogs \
+            android-sdk-libsparse-utils cpio python-is-python3
+          mkimage -V
+          dumpimage -V
+          fdtoverlay --version
+          debugfs -V 2>&1 | head -1
+          simg2img 2>&1 | head -1 || true
+      - name: Download the exact producer artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/transport.log") 2>&1
+          mkdir -p "$RUNNER_TEMP/dependencies"
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          producers = json.loads(Path(os.environ['PRODUCERS']).read_text())
+          if not isinstance(producers, list) or not producers:
+              raise SystemExit('producer bindings must be a nonempty list')
+          for index, producer in enumerate(producers):
+              for field in ('id', 'run_id', 'artifact', 'expected_worker_commit', 'expected_manifest_sha256'):
+                  if field not in producer:
+                      raise SystemExit('producer binding lacks ' + field)
+              directory = Path(os.environ['RUNNER_TEMP']) / 'dependencies' / str(index)
+              subprocess.run(['gh', 'run', 'download', str(producer['run_id']),
+                              '--name', producer['artifact'], '--dir', str(directory)], check=True)
+              print('downloaded', producer['id'], producer['artifact'], flush=True)
+          PY
+      - name: Assemble images, FITs and gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/assemble.log") 2>&1
+          python3 scripts/assemble_dev.py \
+            --producer-runs "$PRODUCERS" \
+            --dependency-root "$RUNNER_TEMP/dependencies" \
+            --output-dir "$RUNNER_TEMP/result" \
+            --identity "$IDENTITY" \
+            --build-number "$BUILD_NUMBER" \
+            --source-selection "$SOURCE_SELECTION"
+      - name: Publish the verified development prerelease
+        if: ${{ inputs.publish == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/result/publish.log") 2>&1
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          delivery = Path(os.environ['RUNNER_TEMP']) / 'result' / 'delivery'
+          tag = os.environ['RELEASE_TAG']
+          sums = {}
+          for line in (delivery / 'SHA256SUMS').read_text().splitlines():
+              digest, name = line.split('  ', 1)
+              sums[name] = digest
+          assets = sorted(path.name for path in delivery.iterdir()
+                          if path.is_file() and path.name != 'SHA256SUMS')
+          if set(assets) != set(sums):
+              raise SystemExit('delivery files and SHA256SUMS differ')
+          view = subprocess.run(['gh', 'release', 'view', tag, '--repo', os.environ['GH_REPO'],
+                                 '--json', 'tagName'], capture_output=True, text=True)
+          if view.returncode != 0:
+              subprocess.run(['gh', 'release', 'create', tag, '--repo', os.environ['GH_REPO'],
+                              '--prerelease', '--title', 'Crux PE13 development delivery ' + os.environ['BUILD_NUMBER'],
+                              '--notes', 'Cloud-built aosp_crux-userdebug images and U-Boot FITs. '
+                                         'Assets were verified against the job SHA256SUMS before publication. '
+                                         'No OTA feed change; this is a development delivery.'],
+                             check=True)
+          subprocess.run(['gh', 'release', 'upload', tag,
+                          *[str(delivery / name) for name in assets],
+                          str(delivery / 'SHA256SUMS'), '--repo', os.environ['GH_REPO'], '--clobber'],
+                         check=True)
+          published = json.loads(subprocess.run(['gh', 'release', 'view', tag, '--repo', os.environ['GH_REPO'],
+                                                 '--json', 'assets'], capture_output=True, text=True, check=True).stdout)
+          actual = {asset['name']: asset['digest'].removeprefix('sha256:') for asset in published['assets']}
+          failures = [name for name, digest in sums.items() if actual.get(name) != digest]
+          if failures:
+              raise SystemExit('uploaded asset digests differ: ' + ' '.join(failures))
+          (Path(os.environ['RUNNER_TEMP']) / 'result' / 'published.json').write_text(
+              json.dumps({'tag': tag, 'assets': assets, 'verified': sorted(sums)}, indent=2) + '\n')
+          print(json.dumps({'tag': tag, 'assets': len(assets), 'verified': len(sums)}, indent=2))
+          PY
+      - name: Upload the delivery and assembly evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: crux-pe13-dev-delivery
+          path: ${{ runner.temp }}/result/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
