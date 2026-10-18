@@ -333,11 +333,6 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
             shutil.copy2(product / name, delivery / name)
         for name in DELIVERY_FITS:
             shutil.copy2(fits_dir / name, delivery / name)
-        sums = []
-        for path in sorted(delivery.iterdir()):
-            if path.is_file() and path.name != "SHA256SUMS":
-                sums.append(worker.digest(path) + "  " + path.name)
-        (delivery / "SHA256SUMS").write_text("\n".join(sums) + "\n")
         record = {
             "schema_version": 1, "status": "success", "build_number": build_number,
             "product": "aosp_crux-userdebug",
@@ -359,6 +354,11 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
         }
         (delivery / "delivery-record.json").write_text(json.dumps(record, indent=2) + "\n")
         (output_dir / "delivery-record.json").write_text(json.dumps(record, indent=2) + "\n")
+        sums = []
+        for path in sorted(delivery.iterdir()):
+            if path.is_file() and path.name != "SHA256SUMS":
+                sums.append(worker.digest(path) + "  " + path.name)
+        (delivery / "SHA256SUMS").write_text("\n".join(sums) + "\n")
         receipt.update(status="success", delivery=str(delivery),
                        assets={key: value["sha256"] for key, value in record["delivery"].items()})
         print(json.dumps({"status": "success", "delivery": str(delivery),
