@@ -100,3 +100,23 @@ used by the dev OTA channel.
 - Host-side only: no on-device updater app was added.
 - `check`/`plan` do not write the device; `update --execute` is the only
   destructive command and must be run with the U-Boot bridge active.
+
+## Verification (2026-10-21)
+
+The channel was exercised against the installed
+`dev-pe13-2026101105-v3`:
+
+- `check` reported the channel head and `current: true`.
+- `plan` reproduced raw system `f4829db1…`, raw vendor `aec345d5…`,
+  recovery FIT `d3d7d6c3…`, ROM FIT `0471e38d…`, and vold `7ec9ae3c…`.
+- `update --execute --force` wrote the two FIT windows (readback
+  `9197f881`/`8b002433`, TWRP/MIUI/gap CRC unchanged), booted TWRP, ran
+  `install-pe13.py --discard-pe-data`, rebooted and booted the ROM.
+- `verify --verify-seconds 300` passed: fingerprint
+  `…/2026101105:userdebug/test-keys`, v2 fstab, `/data/media/0` v2, vold
+  `7ec9ae3c…`, `ce_available=true`, `dmesg` v1=0, `zygote-fatal`=0, and a
+  300 s stability window.
+
+This was a forced reinstall of the current channel head. The first
+version-changing update will exercise the same path with a new tag; the
+previous tag remains the rollback.

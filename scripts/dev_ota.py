@@ -422,7 +422,9 @@ def wait_for(serial, prop, expected, timeout=300):
 def install(plan, out):
     require(INSTALL_SCRIPT.is_file(), "missing install script: " + str(INSTALL_SCRIPT))
     result_dir = Path(out) / "install"
-    result_dir.mkdir(parents=True, exist_ok=True)
+    if result_dir.exists():
+        result_dir.rename(Path(out) / ("install-prev-%d" % int(time.time())))
+    result_dir.parent.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(INSTALL_SCRIPT),
                "--system", plan["raw"]["system"]["path"],
                "--system-sha256", plan["raw"]["system"]["sha256"],

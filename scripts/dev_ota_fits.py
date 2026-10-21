@@ -74,7 +74,7 @@ def padded(path, blocks):
 
 def neighbors(recovery, rom):
     """Ranges that must not change: MIUI+TWRP, the recovery/ROM gap, the tail."""
-    result = [(MIUI["lba"], SLOTS["recovery"][0] - MIUI["lba"])]
+    result = [(MIUI["lba"], recovery["lba"] - MIUI["lba"])]
     recovery_end = recovery["lba"] + recovery["blocks"]
     if rom["lba"] > recovery_end:
         result.append((recovery_end, rom["lba"] - recovery_end))
