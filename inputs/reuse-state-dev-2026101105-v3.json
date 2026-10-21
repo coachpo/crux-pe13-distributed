@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "build_number": "2026101105",
+  "note": "Successful producers from the first dev controller chain, with the new v3 w000/w004/w006 producers and the accepted w007 supplement (w002-s001 license metadata). w007 is forced to rebuild; the entry only carries the approved supplemental dependency.",
+  "tasks": {
+    "w000-s000": {
+      "run_id": 39629184599,
+      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/39629184599",
+      "headSha": "4130287984840a935ad3494f423147443ff00659",
+      "conclusion": "success",
+      "artifact": "shard-w000-s000",
+      "wave": 0,
+      "digest": "sha256:f0c554d45ea79f9fdbd77aab91af0d43e1dfd92bf1088bf2297031dcc471bd69",
+      "manifest_sha256": "45e86e61354440c2641dcee531af99eb706c5e9b293ad12c78421fc13db6e107"
+    },
+    "w000-s001": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "2a8fa5b493d1113a25f32cd2c5dd606bb0b6887a92e9d7fcbb2a83999ee9583b"
+    },
+    "w000-s002": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "624aaa6dd580317ef9a161699ee34863c7a69726c90d3c917235397e7d9cd93b"
+    },
+    "w000-s003": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s003",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "5782034f243a8b209d7965c19e3190274618ba29c949c45a0d052de4bebbab65"
+    },
+    "w000-s004": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s004",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "f85e6b052b257c3c6cdcce1f5aeef58ca1774f3dd414acc3f3f2329150e78e5a"
+    },
+    "w000-s005": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s005",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "e9b00b1a601ed532435f6977d93f065ba5168e4a5e8630787884f052af25558e"
+    },
+    "w000-s006": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s006",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "0501162dc0fd60586ac2f96e7aaba5650a73c88e14df37080037ee9127ca6c37"
+    },
+    "w000-s007": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s007",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "42d3b2168f0853c7c3b19f81485f5a25ab5d1d06d4214a9673c67085ed86175a"
+    },
+    "w000-s008": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s008",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "2b1cdc6d008bc52f47503c7604cc5b7c2a715fb0808ab8259c54fc03b62dda82"
+    },
+    "w000-s009": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s009",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "240c0698eb44873c99c1ffe57688697a5d9ee8a61c048d40f89b424d6340d418"
+    },
+    "w000-s010": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s010",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "9a6e529ec8ddb2aff906222c37024ec5071fe333af4527ca65fdf77711c2d91d"
+    },
+    "w000-s011": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s011",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "e70df5d8c8b01f63c8bae095d5181b4d51d2c684d28ef7d85238dbd5456f12eb"
+    },
+    "w000-s012": {
+      "run_id": 38826591609,
+      "artifact": "shard-w000-s012",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "e4d123ad88d74e62ef6edfd296894e154109dbb6fab2dfc6404969d59f6deb58"
+    },
+    "w001-s000": {
+      "run_id": 38828974728,
+      "artifact": "shard-w001-s000",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "b665903c257793c07137512716330a3032077d21d97c1e1b4a6abba7791ba741"
+    },
+    "w001-s001": {
+      "run_id": 38828974728,
+      "artifact": "shard-w001-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "b5de9739961ec735282c521f44dc9d8a38d4577829b87c4164eab4694c800b01"
+    },
+    "w001-s002": {
+      "run_id": 38828974728,
+      "artifact": "shard-w001-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "302c7282dee4cacc51d2559cb1feaea218054ebc7b6745058fe68760fe991e6a"
+    },
+    "w002-s000": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s000",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "2b50665dd88e98123f37c6e6a6f3aecc2fd50d3e4aa9e21b44c3385adf77bec9"
+    },
+    "w002-s001": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "fd843d01facb070ed1a5889cfce4d104caa3c6ef6b2fee5d12850d5a313d4a5a"
+    },
+    "w002-s002": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "4c645d9cc1c3c13828f27a6956cc7c47f40b91cbc0e6c2f12d09ec15b784f70c"
+    },
+    "w002-s003": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s003",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "f3fa9c4dc03be3b668e9c8673a09eb56187e25fa568b00ce131f64d8bd881c27"
+    },
+    "w002-s004": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s004",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "6ef673a2afec06d879c76acc3e5a754134ef0d7f117d37a2687d817a1537f95f"
+    },
+    "w002-s005": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s005",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "71a0535e351d9d6be45fb64f22c268e70075654e623e498b8f78064b70cf77c8"
+    },
+    "w002-s006": {
+      "run_id": 38832874071,
+      "artifact": "shard-w002-s006",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "7e32a115ad3f8e2132c5fca5a63725797663ca3c6294244e7052d95994a243dd"
+    },
+    "w003-s000": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s000",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "a3010864e43a8264631be2a9b7bcfaf40e6555c110be2ee65c53b1b4f6801eb4"
+    },
+    "w003-s001": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "0be8850221dc0885e3d5f1c6a3837cc69f23cbce83ab987d35ed11bafcde07ba"
+    },
+    "w003-s002": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "f3c8a5a18e6e383a760247b5358c27edea49109d846954bf7434f08f464db3af"
+    },
+    "w003-s003": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s003",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "96823be494ba4006ddb90802241ac0cb85273e28fd43d551b84aa1ea05f7373e"
+    },
+    "w003-s004": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s004",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "0ac68170e1f758b0fd67d1a3ce7ea3dca09825f2080ccd016f8fb13e69862c8c"
+    },
+    "w003-s005": {
+      "run_id": 38834904366,
+      "artifact": "shard-w003-s005",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "27ef4f9ed20b232bd49efb06125c63a69fce4d2faf67da5858a919b871bb0881"
+    },
+    "w004-s000": {
+      "run_id": 39630578676,
+      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/39630578676",
+      "headSha": "4130287984840a935ad3494f423147443ff00659",
+      "conclusion": "success",
+      "artifact": "shard-w004-s000",
+      "wave": 4,
+      "digest": "sha256:edb066cffbb568a4203e370e8ecc2106f3668fff37d678c13cfafd365a54e202",
+      "manifest_sha256": "aaf5acdf17b8fda3fbeab05b95bc8b0ee68eeee7efcaf971c2b563dd8d0eae19"
+    },
+    "w004-s001": {
+      "run_id": 38837936356,
+      "artifact": "shard-w004-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "7cfedff078c1c5a707dd7baeb120bd6d78949ca104e5a947fbe3181f914d743c"
+    },
+    "w004-s002": {
+      "run_id": 38837936356,
+      "artifact": "shard-w004-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "ea729f8017055d9423850979fcba306b8e1c7e210be769d10b7d4eaeb46ccb44"
+    },
+    "w004-s003": {
+      "run_id": 38837936356,
+      "artifact": "shard-w004-s003",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "5237c77c26c66463be3a2958b89b04f3111dcab6ede5bd65e3e621e79a107433"
+    },
+    "w005-s000": {
+      "run_id": 38841149507,
+      "artifact": "shard-w005-s000",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "32ae6a0a994a09b9990da1c513f0e38503a442690701f6812fab448b18959f75"
+    },
+    "w005-s001": {
+      "run_id": 38841149507,
+      "artifact": "shard-w005-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "fb6b33708b96e3680a48d9b6ae4113a1e977f8e49eed48d02cfce38224843da4"
+    },
+    "w006-s000": {
+      "run_id": 39636459682,
+      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/39636459682",
+      "headSha": "4130287984840a935ad3494f423147443ff00659",
+      "conclusion": "success",
+      "artifact": "shard-w006-s000",
+      "wave": 6,
+      "digest": "sha256:57d2aa76d8af2bcb7bebd764666e1612c6c9ed6980340c0447536503dc12c97a",
+      "manifest_sha256": "446a65af006076a6ec2eff01fb64f9979f7ab0fc03982cc1fe96e22e8923f976"
+    },
+    "w006-s001": {
+      "run_id": 38843574471,
+      "artifact": "shard-w006-s001",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "872033e8f69f3113544c7355512012acbe9e8799fe65229166bc372a64cd4d4b"
+    },
+    "w006-s002": {
+      "run_id": 38843574471,
+      "artifact": "shard-w006-s002",
+      "headSha": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+      "conclusion": "success",
+      "manifest_sha256": "8f910f746ab3595bbd4835ae84009bdc701e76f41182828d7a8ca27e85ea6f7c"
+    },
+    "w007-s000": {
+      "run_id": 38870197855,
+      "url": "https://github.com/coachpo/crux-pe13-distributed/actions/runs/38870197855",
+      "headSha": "dd830413edce809275e94bcc1ac78cdfc1688c88",
+      "conclusion": "success",
+      "artifact": "shard-w007-s000",
+      "wave": 7,
+      "digest": "sha256:1eff853c4e85576fa8cf79b9bd718e4bec1caf693fdad2e1b210f76425d18312",
+      "manifest_sha256": "96e2832daa92caf56203c4b76dcd2fa3e2f2cff75fe8fbe695609d923763da7c",
+      "supplemental_dependencies": [
+        "w002-s001"
+      ]
+    }
+  }
+}
