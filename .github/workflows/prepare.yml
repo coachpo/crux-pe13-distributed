@@ -33,7 +33,7 @@ on:
       registry:
         description: Frozen input registry inside this repository
         required: true
-        default: inputs/frozen-inputs-2026101104.json
+        default: inputs/frozen-inputs-2026101105-dev.json
         type: string
       probe_shards:
         description: Space separated shard ids for probe mode

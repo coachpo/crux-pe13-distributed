@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Assemble the development PE13 delivery from verified distributed producers.
 
-The release assembler (scripts/assemble.py) expects one shard to carry the four
-frontend identity files.  In the development graph they are owned by separate
-shards (build_number: w000-s000, build_fingerprint: w000-s012, buildinfo:
-w001-s000) and `build_thumbprint.txt` is a frontend scalar with no shard
-producer, so this assembler verifies the identity files that exist, materializes
-the admitted thumbprint, and then applies the same strict image-property, FIT
-packaging and delivery gates as the release path.
+The development graph has no single shard carrying the four frontend identity
+files. They are owned by separate shards (build_number: w000-s000,
+build_fingerprint: w000-s012, buildinfo: w001-s000) and
+`build_thumbprint.txt` is a frontend scalar with no shard producer, so this
+assembler verifies the identity files that exist, materializes the admitted
+thumbprint, and then applies the strict image-property, FIT packaging and
+delivery gates.
 
 Outputs: delivery/{boot.img,recovery.img,system.img,vendor.img,
 rom-cepheus.itb,recovery-cepheus.itb,SHA256SUMS,delivery-record.json}

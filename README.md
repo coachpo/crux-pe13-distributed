@@ -1,146 +1,78 @@
-# Distributed Crux PixelExperience 13 build experiment
+# Distributed Crux PixelExperience 13 development build
 
-This repository owns an experiment to compile the Crux PE13 ROM on multiple
-standard public GitHub Actions Ubuntu x64 runners, then assemble its image
-outputs. It does not change the maintained device, platform, kernel or U-Boot
-repositories and does not operate a phone.
+This repository owns the GitHub Actions pipeline for the **development** Crux
+PE13 product (`aosp_crux-userdebug`): the four development images and the two
+U-Boot FITs, plus the single-user host-side dev OTA channel. It does not build,
+sign or publish the public release product. The former release/signing/public
+OTA pipeline is no longer part of this repository; its history remains in git.
 
-The build inputs use the published October 8, 2026 Crux source selection. The
-existing generated Android Ninja graph is a planning input: compilation is
-performed from source in cold runner tasks. An existing installed ROM binary is
-never a substitute for a successful distributed build.
-
-The experiment is not yet a completed ROM build. The standard runner probe and
-the cold common/library compilation trial succeeded. The full build now uses
-41 dependency-ordered tasks across nine waves, covering 136,014 commands,
-including a cold source build of the `bpglob` graph helper. The first 13 main
-compilation tasks were dispatched together in [wave 1](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37854864171).
-All thirteen succeeded across the original run and its
-[four-task retry](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37857642143).
-Verified assembler inputs and the native Python binding corrected four failures;
-the other nine successful producers were reused.
-
-The next wave has two verified successful tasks. Its remaining task exposed
-transitive Rust libraries that were omitted at a shard boundary. A
-[cold 38-command Rust supplement](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37875108284)
-now succeeds, with all 38 exported members verified and zero annotations.
-The repair retains the original commands and restores their original ordering
-after an imported `std` library cuts the dependency path to a locally rebuilt
-`core` library. Evidence is in
-[`rust-transitive-runtime.json`](results/diagnostics/rust-transitive-runtime.json).
-
-The [cold frontend metadata repair](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37883012817)
-also succeeded with zero annotations. Three frozen scalar writers and the
-unchanged native build-property command produced four verified outputs,
-including build number `1791434921` and the corrected incremental version.
-Future consumers must explicitly import those outputs and replace the two
-older metadata files while retaining the other verified producer outputs.
-Final image property checks remain required before packaging.
-
-The remaining task in the second wave then exposed a missing transitive
-FlatBuffers source include. Its [current retry](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37887234891)
-adds that source file to the cold capsule without changing the native graph or
-the previously verified source inputs. A successful task status alone does not
-certify complete ROM images.
-
-After updating Actions dependencies to Node.js 24, the repeated resource probe
-succeeded with zero annotations. Actual resource receipts are in
-`results/resource-probe/`; the successful compilation exchange is recorded in
-[`results/pilot/`](results/pilot/).
+The public `coachpo/crux-pe13-ota` R6 feed is frozen/legacy and is not read or
+written by anything here.
 
 ## Pipeline
 
-1. Freeze source revisions and index the generated graph without compiling.
-2. Export small Ninja slices, preserving their commands and variable scopes.
-3. Archive each slice's frozen source and declared toolchain inputs. Restore
-   eligible toolchain directories from exact public source revisions and verify
-   them against the same frozen input identities.
-4. Run dependency-ordered waves on `ubuntu-22.04`. A shared dependency is built
-   once and transferred through successful task artifacts.
-5. Verify producer receipts and assemble `boot.img`, `recovery.img`,
-   `system.img` and `vendor.img` into an image-build archive.
+1. **Freeze** the development graph and pack the cold source capsules.
+2. **Prepare** (`prepare.yml`) reconstructs the frozen source tree, restores the
+   toolchains, re-slices the graph and re-packs every capsule. `mode=full`
+   verifies the complete set against the registry; it does not need to publish
+   when `output_tag` is empty.
+3. **Controller** (`controller.yml`) consolidates the cold inputs, drives the
+   dependency-ordered waves (`wave.yml`, `controller-wave.yml`) and records a
+   producer for every shard. It has no signing or publication stage.
+4. **Assemble** (`assemble-dev.yml`) packages the four images and the two FITs
+   from the verified producers, runs the AVB/v1/cpio/FIT gates, and publishes
+   the immutable development prerelease.
+5. **Dev OTA** (`scripts/dev_ota.py`, [docs/dev-ota.md](docs/dev-ota.md))
+   discovers the newest `dev-pe13-<build>-v<n>` prerelease, verifies
+   `delivery-record.json`/`SHA256SUMS`, prepares the raw images and padded FITs,
+   and drives the U-Boot/TWRP install. `check`, `plan` and `verify` are
+   read-only; `update --execute` is the only device-writing command.
 
-`scripts/graph.py` performs indexing/slicing; `scripts/capsule.py` creates input
-archives; `scripts/scheduler.py` dispatches waves; `scripts/worker.py` executes
-cold tasks; `scripts/assemble.py` packages the four required images.
+The development product is `userdebug/test-keys` with `ro.adb.secure=0`. It is
+not a release payload and must never be recommended to the public release feed.
 
-The first real compilation trial built two independent native shared-library
-consumers, `libbase` and `libz`, with one shared prerequisite task. Both consumers
-imported the identical successful common artifact. Every exported archive
-member matched its receipt, and both resulting libraries are AArch64 ELF files.
-Success of this trial alone does not establish full-ROM compilation.
+## Inputs and evidence
 
-No accepted installed images or old compiled objects are supplied as cold
-compilation inputs. Vendor blobs and toolchain prebuilts remain declared source
-dependencies. `CCACHE_DISABLE=1` prevents reuse of an existing compiler cache.
-The accepted full plan contains no imported generated-metadata approvals.
+- `inputs/frozen-inputs-2026101105-dev.json` — frozen graph, toolchain, capsule
+  and payload identities.
+- `inputs/hosted-plan-2026101105-dev.json` — 39 shards across eight waves.
+- `inputs/reuse-state-dev-2026101105-v3.json` — accepted producers and the
+  approved `w002-s001` supplement for the terminal shard.
+- `inputs/dev-producers-2026101105-v3.json` — the seven role bindings used by
+  `assemble-dev.yml`.
+- `scripts/graph.py`, `scripts/capsule.py`, `scripts/finalize_slices.py`,
+  `scripts/prune-index.py` and `scripts/source_archives.py` implement the
+  frozen graph/capsule machinery.
+- `scripts/controller.py`, `scripts/worker.py`, `scripts/package_fits.py`,
+  `scripts/verify_properties.py` and `scripts/assemble_dev.py` implement the
+  dev build/assembly chain.
+- `scripts/dev_ota.py` and `scripts/dev_ota_fits.py` implement the dev OTA
+  channel.
 
-Current Actions dependencies are `actions/checkout@v7.0.1` and
-`actions/upload-artifact@v7.0.2`, both using Node.js 24. Android's source/toolchain
-revisions stay pinned to the PE13 build configuration.
+The current accepted dev delivery is `dev-pe13-2026101105-v3` in
+`coachpo/crux-pe13-distributed`; the device acceptance is recorded in the
+workspace at
+`out/crux-pe13-devcloud-2026-10-16/device-install-2026-10-19/ACCEPTANCE-2026-10-21-cloud-v3.md`.
 
-Runner jobs also use `AdityaGarg8/remove-unwanted-software@v5` to remove the
-preinstalled .NET, Android SDK, Haskell, CodeQL and Docker images. Package
-removal, general tool-cache deletion and swap removal are disabled. The ROM
-uses its declared source/toolchain inputs; disk records retain the actual
-before-cleanup and after-cleanup capacity.
-The [cleanup probe](https://github.com/coachpo/crux-pe13-distributed/actions/runs/37905466509)
-succeeded with zero annotations and observed 21.74 GiB of additional available
-space, leaving 107.95 GiB free. Its measurements are in
-[`results/runner-cleanup/`](results/runner-cleanup/).
+## Checks
 
-## Validation
-
-Run the Python regression suite on Linux with Ninja and zstd installed:
+The repository uses the Python standard library `unittest` suite:
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests
 ```
 
-Standard public runners provide 4 vCPUs and 16 GB RAM, and individual jobs have
-a six-hour limit. The resource probe observed about 86 GiB of free disk, which
-is an observation for that runner image, rather than a platform guarantee.
-See the official [runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-and [Actions limits](https://docs.github.com/en/actions/reference/limits).
+Host prerequisites for the dev OTA are listed in
+[docs/dev-ota.md](docs/dev-ota.md). The device writes require explicit
+`--execute`, per-write range/image checks and the U-Boot console bridge.
 
-The final archive is a development image build, rather than a signed OTA or
-device-validated release. Android kernel handoff in the Crux development setup
-uses the maintained U-Boot chain. This experiment performs no device writes.
+## Source and dependencies
 
-## Hosted cold input preparation
+The build inputs use the frozen October 2026 Crux source selection. The
+existing generated Android Ninja graph is a planning input: compilation is
+performed from source in cold runner tasks. An installed ROM binary is never a
+substitute for a successful distributed build.
 
-`prepare.yml` regenerates the cold shard inputs of a frozen release graph inside
-a standard runner, so no capsule has to be packed on a build host. It reads one
-registry, `inputs/frozen-inputs-<build_number>.json`, and fails unless every
-regenerated artifact matches the frozen record byte for byte:
-
-1. the closure-pruned graph index and the seven Ninja files `graph.py` re-reads
-   (it refuses a file whose size or `mtime_ns` changed) come from the `graph`
-   release named in the registry, together with the frozen shared prebuilt layer
-   manifest and the three audit inputs `finalize_slices.py` consumes;
-2. the frozen source tree is reconstructed from the capsules already published in
-   the `inputs-release-*` releases, and each capsule is extracted with its
-   recorded ownership so the packer reproduces the same member identities;
-3. toolchain directories are restored from their pinned public archives
-   (`scripts/source_archives.py`) and verified against the same frozen digests;
-4. `graph.py shard` and `scripts/finalize_slices.py` regenerate the slice set, and
-   the run fails unless `plan.json` and all 39 `manifest.json` digests equal the
-   frozen ones;
-5. `scripts/capsule.py pack` regenerates every capsule, and each archive's size and
-   SHA256 must equal the published asset digest of the frozen input release.
-
-Each capsule records the input-discovery revision and flag set that reproduce its
-published bytes (`packer`). The frozen set was filled across the discovery-fix
-series, so the recorded revision is per capsule; the run extracts each one from the
-repository history, checks its script digest and, when it requires the frozen graph
-index, also extracts that revision's `graph.py` next to it.
-
-`mode=probe` slices and packs only `probe_shards` and reports; `mode=full`
-regenerates all shards and, when `output_tag` is set, publishes them as a new
-input release. Both modes upload their evidence (slice and pack comparison,
-source-archive receipt, runner records) as artifacts.
-
-`scripts/prune-index.py` derives the hosted index: the full 2026101104 index holds
-1,749,432 edges (8.1 GB), while the dispatch closure of `target-files-package`
-holds 135,372, so the retained database is 1.4 GB and still answers the same
-closure (the script verifies that before it writes anything).
+Android source/toolchain revisions stay pinned to the PE13 build configuration.
+Current Actions dependencies are `actions/checkout@v7.0.1` and
+`actions/upload-artifact@v7.0.2`, both using Node.js 24.
