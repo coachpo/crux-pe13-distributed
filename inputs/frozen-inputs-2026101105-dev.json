@@ -136,14 +136,14 @@
       "wave": 0,
       "release_tag": "inputs-release-2026101105-dev-v3",
       "asset": "w000-s000.tar.zst",
-      "bytes": 494691796,
-      "sha256": "934cb1251a54246448acf4eb6a7d98c9c23a0f4c3c91dc410db789631f47d5c9",
-      "local_repack_sha256": "934cb1251a54246448acf4eb6a7d98c9c23a0f4c3c91dc410db789631f47d5c9",
+      "bytes": 494690693,
+      "sha256": "4f4d4e6042de7d6a75f6757b58e84820e39ec47e224769c7c2668621b6266690",
+      "local_repack_sha256": "4f4d4e6042de7d6a75f6757b58e84820e39ec47e224769c7c2668621b6266690",
       "local_repack_matches_published": true,
       "manifest_sha256": "45e86e61354440c2641dcee531af99eb706c5e9b293ad12c78421fc13db6e107",
       "metadata_available": true,
-      "metadata_sha256": "794b3c001360270ed7740c9633221d32563f8a776368365da672e4d7f10b45e3",
-      "file_count": 31831,
+      "metadata_sha256": "0079eaad7c25a4a249134698473dc0f4ff86ab99ebf3be8b3f4053f61ed1bb2b",
+      "file_count": 31827,
       "input_bytes": 4082837460,
       "archive_plan_input_bytes": 1042694172,
       "packer": {
@@ -153,10 +153,10 @@
       },
       "payload": {
         "archive": "capsules/w000-s000.tar.zst",
-        "uncompressed_sha256": "7098de813058f5bec948842fcebed5d868e6d6422cbc5b7c5747425cb999e9eb",
-        "uncompressed_bytes": 1071912960,
-        "member_count": 7689,
-        "member_table_sha256": "d6662480433d514b19a6fe17243bebc8b2da2ec1bf177ff282acfd29488ec6a4"
+        "uncompressed_sha256": "7145c89f9554aad460b7db78ea894a001cf7f9162da7b6c0e80cc0d8142ec2e6",
+        "uncompressed_bytes": 1071902720,
+        "member_count": 7685,
+        "member_table_sha256": "15ef4f19d1cad5414d9054afd4fd35729320bd2d08d0bae145e3b747268c7fea"
       }
     },
     {
@@ -948,14 +948,14 @@
       "wave": 4,
       "release_tag": "inputs-release-2026101105-dev-v3",
       "asset": "w004-s000.tar.zst",
-      "bytes": 140670320,
-      "sha256": "16d051148726c11185a02e713f90c651c3e33e8ffb662d60975749454081b24d",
-      "local_repack_sha256": "16d051148726c11185a02e713f90c651c3e33e8ffb662d60975749454081b24d",
+      "bytes": 140680028,
+      "sha256": "5d4c827a142edda76e1176f6a7f33b349775349b69ec4500823bd88639857183",
+      "local_repack_sha256": "5d4c827a142edda76e1176f6a7f33b349775349b69ec4500823bd88639857183",
       "local_repack_matches_published": true,
       "manifest_sha256": "aaf5acdf17b8fda3fbeab05b95bc8b0ee68eeee7efcaf971c2b563dd8d0eae19",
       "metadata_available": true,
-      "metadata_sha256": "ed8fbaaa93d4a46ac41150fd0c1aa6a4fb1c662034501d01377d528c1fd0416f",
-      "file_count": 26410,
+      "metadata_sha256": "42bb540d164b62d9ee495fc1974da7dc3f566c35f46a4b6366ca545a24f7c2da",
+      "file_count": 26224,
       "input_bytes": 3246415574,
       "archive_plan_input_bytes": 565561705,
       "packer": {
@@ -965,10 +965,10 @@
       },
       "payload": {
         "archive": "capsules/w004-s000.tar.zst",
-        "uncompressed_sha256": "7b1f5ef2073769e5b546f88a0e7ec33610f00d4aa85fc5bf9f9e487890a8bf58",
-        "uncompressed_bytes": 609474560,
-        "member_count": 15147,
-        "member_table_sha256": "2ad5c5c5bb800f72e0eec58975924552afea75bcd1109741f33709ded7df7636"
+        "uncompressed_sha256": "2fcf5d8c53e75985069d662dc572316f908e0b02580fb0222059e5ee39318a0f",
+        "uncompressed_bytes": 609136640,
+        "member_count": 14961,
+        "member_table_sha256": "b3c9d68be01545dbe6af8325d068ce12c10d4221d7a1b71efce05ac820c3fd31"
       }
     },
     {
@@ -1200,13 +1200,13 @@
       "wave": 7,
       "release_tag": "inputs-release-2026101105-dev-v3",
       "asset": "w007-s000.tar.zst",
-      "bytes": 36142044,
-      "sha256": "9c7e56a1c1504ffcb43ad762f4c3ab0aac55954a2f362d7e149f5ff233629706",
-      "local_repack_sha256": "9c7e56a1c1504ffcb43ad762f4c3ab0aac55954a2f362d7e149f5ff233629706",
+      "bytes": 36142074,
+      "sha256": "3baa81465fdb170d3d10accf4c780ea68f750d37a83043693f3f9f54132dda74",
+      "local_repack_sha256": "3baa81465fdb170d3d10accf4c780ea68f750d37a83043693f3f9f54132dda74",
       "local_repack_matches_published": true,
       "manifest_sha256": "96e2832daa92caf56203c4b76dcd2fa3e2f2cff75fe8fbe695609d923763da7c",
       "metadata_available": true,
-      "metadata_sha256": "d2503d0ba633caf1f059f9b375fedf7948f8cc1eea58486bccfa451d86e99897",
+      "metadata_sha256": "504b7df01e03acd73bcf15fbeff30917ba9e50b9674db57806cf42b1d828a3de",
       "file_count": 9243,
       "input_bytes": 2482263357,
       "archive_plan_input_bytes": 174352690,
@@ -1217,7 +1217,7 @@
       },
       "payload": {
         "archive": "capsules/w007-s000.tar.zst",
-        "uncompressed_sha256": "2c750c27600b97ad5d4db462b285f245e6fbcbe28f678e1fc0cdee4de96df77d",
+        "uncompressed_sha256": "f6f02b23733a41fdf8ef63c683243b16978c71fbf2c3906a249bc5e934f9a828",
         "uncompressed_bytes": 184135680,
         "member_count": 1963,
         "member_table_sha256": "b87b6f11455f55184a41ead6c09320b14c1252066b0c6eca14adf04b4fc31a2e"
