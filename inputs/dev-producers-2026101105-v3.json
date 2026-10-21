@@ -1,0 +1,72 @@
+[
+  {
+    "id": "w000-s000",
+    "run_id": 39629184599,
+    "artifact": "shard-w000-s000",
+    "expected_worker_commit": "4130287984840a935ad3494f423147443ff00659",
+    "expected_manifest_sha256": "45e86e61354440c2641dcee531af99eb706c5e9b293ad12c78421fc13db6e107",
+    "roles": [
+      "build_number"
+    ]
+  },
+  {
+    "id": "w000-s012",
+    "run_id": 38826591609,
+    "artifact": "shard-w000-s012",
+    "expected_worker_commit": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+    "expected_manifest_sha256": "e4d123ad88d74e62ef6edfd296894e154109dbb6fab2dfc6404969d59f6deb58",
+    "roles": [
+      "build_fingerprint"
+    ]
+  },
+  {
+    "id": "w001-s000",
+    "run_id": 38828974728,
+    "artifact": "shard-w001-s000",
+    "expected_worker_commit": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+    "expected_manifest_sha256": "b665903c257793c07137512716330a3032077d21d97c1e1b4a6abba7791ba741",
+    "roles": [
+      "buildinfo"
+    ]
+  },
+  {
+    "id": "w001-s001",
+    "run_id": 38828974728,
+    "artifact": "shard-w001-s001",
+    "expected_worker_commit": "e80520254965ad46aabe36f8b05a07aa1a26b0f7",
+    "expected_manifest_sha256": "b5de9739961ec735282c521f44dc9d8a38d4577829b87c4164eab4694c800b01",
+    "roles": [
+      "kernel"
+    ]
+  },
+  {
+    "id": "w004-s000",
+    "run_id": 39630578676,
+    "artifact": "shard-w004-s000",
+    "expected_worker_commit": "4130287984840a935ad3494f423147443ff00659",
+    "expected_manifest_sha256": "aaf5acdf17b8fda3fbeab05b95bc8b0ee68eeee7efcaf971c2b563dd8d0eae19",
+    "roles": [
+      "boot_ramdisk"
+    ]
+  },
+  {
+    "id": "w006-s000",
+    "run_id": 39636459682,
+    "artifact": "shard-w006-s000",
+    "expected_worker_commit": "4130287984840a935ad3494f423147443ff00659",
+    "expected_manifest_sha256": "446a65af006076a6ec2eff01fb64f9979f7ab0fc03982cc1fe96e22e8923f976",
+    "roles": [
+      "recovery_ramdisk"
+    ]
+  },
+  {
+    "id": "w007-s000",
+    "run_id": 39655595440,
+    "artifact": "shard-w007-s000",
+    "expected_worker_commit": "62b3477210c9f87b48f60a2fe88c6578e3502c47",
+    "expected_manifest_sha256": "96e2832daa92caf56203c4b76dcd2fa3e2f2cff75fe8fbe695609d923763da7c",
+    "roles": [
+      "terminal"
+    ]
+  }
+]
