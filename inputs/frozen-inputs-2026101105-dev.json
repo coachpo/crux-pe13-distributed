@@ -1116,13 +1116,13 @@
       "wave": 6,
       "release_tag": "inputs-release-2026101105-dev-v3",
       "asset": "w006-s000.tar.zst",
-      "bytes": 288864515,
-      "sha256": "ef9c314365e7d6ecffd16ddeef3cff18400f004d65a743d8f30ed9ea777dbe03",
-      "local_repack_sha256": "ef9c314365e7d6ecffd16ddeef3cff18400f004d65a743d8f30ed9ea777dbe03",
+      "bytes": 288864147,
+      "sha256": "4a34602c4361ab181b31d1286738d49cb6a8b6e81902bd7ec3ae719e922e5441",
+      "local_repack_sha256": "4a34602c4361ab181b31d1286738d49cb6a8b6e81902bd7ec3ae719e922e5441",
       "local_repack_matches_published": true,
       "manifest_sha256": "446a65af006076a6ec2eff01fb64f9979f7ab0fc03982cc1fe96e22e8923f976",
       "metadata_available": true,
-      "metadata_sha256": "e8332721a560e3fe6ac7d4cc8825d91e027a50e9659f5a54330946b944c0fe4f",
+      "metadata_sha256": "2c214855834c6a0bcc01d5dc5f79513adace3f8b527abbad3c0ba242bc8f7ba9",
       "file_count": 27754,
       "input_bytes": 3182100224,
       "archive_plan_input_bytes": 848366328,
@@ -1133,8 +1133,8 @@
       },
       "payload": {
         "archive": "capsules/w006-s000.tar.zst",
-        "uncompressed_sha256": "181c3265be84c03c105bcaa83009338de21138fb97e6d1fd555362decc810dc3",
-        "uncompressed_bytes": 898324480,
+        "uncompressed_sha256": "0c8dbf4fec4a71f308e8d6589599fb0460a9c63c6b997274eacd032cbfb1ebf1",
+        "uncompressed_bytes": 898334720,
         "member_count": 20469,
         "member_table_sha256": "1e1e8e2afbd6eaff43a905ea8b86900dcaade2d4c4c9a5200a503eeae56dc5cf"
       }
