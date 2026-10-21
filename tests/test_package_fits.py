@@ -20,7 +20,7 @@ recipe = package_fits.load_recipe()
 FSTAB = b"""/dev/block/by-name/pesystem /system ext4 ro wait,first_stage_mount
 /dev/block/by-name/pevendor /vendor ext4 ro wait,first_stage_mount
 /dev/block/by-name/pemetadata /metadata ext4 noatime wait,first_stage_mount
-/dev/block/by-name/peuserdata /data ext4 noatime wait,fileencryption=ice,keydirectory=/metadata/vold/metadata_encryption
+/dev/block/by-name/peuserdata /data ext4 noatime wait,formattable,fileencryption=ice::v2,keydirectory=/metadata/vold/metadata_encryption
 """
 LTO_ORDER = """SECTIONS {
 \t.initcall1.init : {

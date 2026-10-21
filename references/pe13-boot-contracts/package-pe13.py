@@ -292,9 +292,10 @@ def validate_dualboot_fstab(data):
             entries[mount] = {"device": device, "filesystem": filesystem,
                               "mount_options": options.split(","), "fs_mgr_flags": flags.split(",")}
     require(set(entries) == set(expected), "Dualboot fstab lacks a required PE mount")
-    require({"fileencryption=ice", "keydirectory=/metadata/vold/metadata_encryption"}
+    require({"fileencryption=ice::v2", "formattable",
+             "keydirectory=/metadata/vold/metadata_encryption"}
             <= set(entries["/data"]["fs_mgr_flags"]),
-            "Dualboot fstab must retain native FBE and metadata keydirectory")
+            "Dualboot fstab must retain native FBE v2, formattable and metadata keydirectory")
     return {"sha256": sha256(data), "mounts": entries,
             "native_fbe_flags_present": True, "device_encryption_verified": False}
 
