@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -18,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 
 SCHEMA_VERSION = 1
@@ -78,6 +80,24 @@ def _validate_manifest(manifest):
         revision = item.get("revision")
         if not isinstance(revision, str) or not revision.strip():
             raise SourceError(f"project {path}: revision is required")
+        archive_revision = item.get("archive_revision")
+        if archive_revision is not None and (not isinstance(archive_revision, str) or not archive_revision.strip()):
+            raise SourceError(f"project {path}: archive_revision must be a non-empty string")
+        patches = item.get("patches", [])
+        if not isinstance(patches, list):
+            raise SourceError(f"project {path}: patches must be a list")
+        for patch in patches:
+            if (not isinstance(patch, dict) or not isinstance(patch.get("path"), str)
+                    or not patch["path"] or not isinstance(patch.get("sha256"), str)
+                    or not re.fullmatch(r"[a-fA-F0-9]{64}", patch["sha256"])):
+                raise SourceError(f"project {path}: each patch requires a path and SHA-256")
+        expected_tree = item.get("expected_tree")
+        if patches and (not isinstance(expected_tree, str)
+                        or not re.fullmatch(r"[a-fA-F0-9]{40,64}", expected_tree)):
+            raise SourceError(f"project {path}: patches require a full expected_tree object id")
+        if expected_tree is not None and (not isinstance(expected_tree, str)
+                                          or not re.fullmatch(r"[a-fA-F0-9]{40,64}", expected_tree)):
+            raise SourceError(f"project {path}: expected_tree must be a full Git tree object id")
         url = item.get("url")
         archive_url = item.get("archive_url")
         if not isinstance(url, str) and not isinstance(archive_url, str):
@@ -202,7 +222,7 @@ def resolve_archive_url(project):
         raise SourceError(f"project {project.get('path')}: url must use HTTPS")
     if "+archive/" in parsed.path or "/-/archive/" in parsed.path or parsed.path.endswith((".tar.gz", ".tgz")):
         return url
-    revision = urllib.parse.quote(project["revision"], safe="")
+    revision = urllib.parse.quote(project.get("archive_revision", project["revision"]), safe="")
     host = (parsed.hostname or "").lower()
     path = parsed.path.rstrip("/")
     if path.endswith(".git"):
@@ -297,6 +317,33 @@ def _extract_tar_stream(archive, project, destination, strip_components):
     return directory_modes
 
 
+def _stream_git_archive(repository, commit, project, destination, env=None):
+    process = subprocess.Popen(["git", "--git-dir", str(repository), "archive", "--format=tar", commit],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    try:
+        with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+            directory_modes = _extract_tar_stream(archive, project, destination, 0)
+        stderr = process.stderr.read().decode("utf-8", errors="replace")
+        result = process.wait()
+    except Exception as error:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        stderr = process.stderr.read().decode("utf-8", errors="replace")
+        if isinstance(error, (EOFError, tarfile.TarError)) and process.returncode:
+            raise SourceError(f"project {project['path']} git archive failed "
+                              f"({process.returncode}): {stderr[-2000:]}") from error
+        raise
+    finally:
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+    if result:
+        raise SourceError(f"project {project['path']} git archive failed ({result}): {stderr[-2000:]}")
+    return directory_modes
+
+
 def _extract_git_bundle(project, destination, timeout):
     url = project["archive_url"]
     try:
@@ -315,26 +362,12 @@ def _extract_git_bundle(project, destination, timeout):
             if resolved.returncode:
                 raise SourceError(f"project {project['path']} revision is absent from bundle: {project['revision']}")
             commit = resolved.stdout.strip()
-            process = subprocess.Popen(["git", "--git-dir", str(repository), "archive", "--format=tar", commit],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
-                    directory_modes = _extract_tar_stream(archive, project, destination, 0)
-                stderr = process.stderr.read().decode("utf-8", errors="replace")
-                result = process.wait()
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
-                if process.stdout:
-                    process.stdout.close()
-                if process.stderr:
-                    process.stderr.close()
-            if result:
-                raise SourceError(f"project {project['path']} git archive failed ({result}): {stderr[-2000:]}")
+            directory_modes = _stream_git_archive(repository, commit, project, destination)
             if re.fullmatch(r"[a-fA-F0-9]{40,64}", project["revision"]) and commit.lower() != project["revision"].lower():
                 raise SourceError(f"project {project['path']} bundle revision resolved to unexpected commit {commit}")
-            return {"path": project["path"], "revision": project["revision"], "resolved_commit": commit,
+            return {"path": project["path"], "revision": project["revision"],
+                    "archive_revision": project.get("archive_revision", project["revision"]),
+                    "resolved_commit": commit,
                     "revision_status": ("resolved-and-matched-pin" if re.fullmatch(r"[a-fA-F0-9]{40,64}", project["revision"])
                                         else "resolved-reference"),
                     "archive_url": _sanitized_url(url),
@@ -357,13 +390,134 @@ def _extract_archive(project, destination, timeout):
             directory_modes = _extract_tar_stream(archive, project, destination, strip_components)
     except SourceError:
         raise
-    except (OSError, tarfile.TarError, urllib.error.URLError) as error:
+    except (OSError, EOFError, tarfile.TarError, urllib.error.URLError, zlib.error, http.client.IncompleteRead) as error:
+        project_url = project.get("url", "")
+        host = urllib.parse.urlsplit(project_url).hostname or ""
+        if host == "googlesource.com" or host.endswith(".googlesource.com"):
+            shutil.rmtree(destination)
+            return _extract_gitiles_archive(project, destination, error, timeout)
         safe_url = _sanitized_url(url)
         raise SourceError(f"project {project['path']} fetch/extract failed from {safe_url}: "
                           f"{_network_error_detail(error)}") from error
     return {"path": project["path"], "revision": project["revision"],
+            "archive_revision": project.get("archive_revision", project["revision"]),
             "revision_status": "pinned-archive-url", "archive_url": _sanitized_url(url),
             "status": "fetched-and-extracted"}, directory_modes
+
+
+def _extract_gitiles_archive(project, destination, archive_error, timeout):
+    """Recover a failed Gitiles archive through a depth-one fetch of its exact pin."""
+    source_url = project["url"]
+    archive_revision = project.get("archive_revision", project["revision"])
+    with tempfile.TemporaryDirectory(prefix="cloud-source-gitiles-") as temporary:
+        temporary = Path(temporary)
+        repository = temporary / "repository.git"
+        template = temporary / "template"
+        template.mkdir()
+        env = os.environ.copy()
+        env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_TEMPLATE_DIR": str(template), "GIT_TERMINAL_PROMPT": "0"})
+        try:
+            initialized = subprocess.run(["git", "init", "--bare", "--quiet", str(repository)],
+                                         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         env=env, timeout=timeout)
+        except subprocess.SubprocessError as error:
+            raise SourceError(f"project {project['path']} Gitiles fallback init failed: {error}") from error
+        if initialized.returncode:
+            raise SourceError(f"project {project['path']} Gitiles fallback init failed: "
+                              f"{initialized.stderr[-2000:]}")
+        try:
+            fetched = subprocess.run(["git", "-c", "http.version=HTTP/1.1", "--git-dir", str(repository),
+                                      "fetch", "--depth=1", "--no-tags", source_url, archive_revision],
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        except subprocess.SubprocessError as error:
+            raise SourceError(f"project {project['path']} Gitiles fallback fetch failed from "
+                              f"{_sanitized_url(source_url)} at {archive_revision}: {error}") from error
+        if fetched.returncode:
+            raise SourceError(f"project {project['path']} Gitiles fallback fetch failed from "
+                              f"{_sanitized_url(source_url)} at {archive_revision}: {fetched.stderr[-3000:]}")
+        try:
+            resolved = subprocess.run(["git", "--git-dir", str(repository), "rev-parse", "--verify",
+                                       archive_revision + "^{commit}"], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=timeout)
+        except subprocess.SubprocessError as error:
+            raise SourceError(f"project {project['path']} Gitiles fallback revision resolution failed: {error}") from error
+        if resolved.returncode:
+            raise SourceError(f"project {project['path']} Gitiles fallback could not resolve "
+                              f"{archive_revision}: {resolved.stderr[-2000:]}")
+        commit = resolved.stdout.strip()
+        if re.fullmatch(r"[a-fA-F0-9]{40,64}", archive_revision) and commit.lower() != archive_revision.lower():
+            raise SourceError(f"project {project['path']} Gitiles fallback resolved unexpected commit {commit}")
+        directory_modes = _stream_git_archive(repository, commit, project, destination, env)
+    archive_failure = {"archive_url": _sanitized_url(project["archive_url"]),
+                       "type": type(archive_error).__name__,
+                       "message": _network_error_detail(archive_error)}
+    receipt = {"path": project["path"], "revision": project["revision"],
+               "archive_revision": archive_revision, "resolved_commit": commit,
+               "revision_status": "fetched-git-and-archived",
+               "archive_url": _sanitized_url(project["archive_url"]),
+               "source_url": _sanitized_url(source_url),
+               "source_method": "git-fetch-archive", "archive_failure": archive_failure,
+               "status": "fetched-git-and-archived"}
+    return receipt, directory_modes
+
+
+def _git_tree_id(worktree):
+    """Compute Git's tree object for a tree without adding Git metadata to it."""
+    with tempfile.TemporaryDirectory(prefix="cloud-source-tree-") as temporary:
+        temporary = Path(temporary)
+        git_dir = temporary / "git"
+        template = temporary / "template"
+        template.mkdir()
+        env = os.environ.copy()
+        env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_TEMPLATE_DIR": str(template)})
+        initialized = subprocess.run(["git", "init", "--bare", "--quiet", str(git_dir)],
+                                     text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        if initialized.returncode:
+            raise SourceError(f"temporary Git index initialization failed: {initialized.stderr[-2000:]}")
+        env.update({"GIT_DIR": str(git_dir), "GIT_INDEX_FILE": str(temporary / "index"),
+                    "GIT_WORK_TREE": str(Path(worktree).resolve())})
+        added = subprocess.run(["git", "-c", "core.filemode=true", "-c", "core.autocrlf=false",
+                                "add", "-f", "-A", "--", "."], cwd=worktree, env=env,
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if added.returncode:
+            raise SourceError(f"temporary Git index staging failed: {added.stderr[-2000:]}")
+        tree = subprocess.run(["git", "write-tree"], cwd=worktree, env=env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if tree.returncode:
+            raise SourceError(f"temporary Git tree write failed: {tree.stderr[-2000:]}")
+        return tree.stdout.strip()
+
+
+def _apply_project_patches(project, project_root):
+    patch_records = []
+    for patch in project.get("patches", []):
+        path = Path(patch["path"])
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        path = path.resolve()
+        try:
+            actual_hash = _digest(path)
+        except OSError as error:
+            raise SourceError(f"project {project['path']} patch is unavailable: {patch['path']}: {error}") from error
+        expected_hash = patch["sha256"].lower()
+        if actual_hash != expected_hash:
+            raise SourceError(f"project {project['path']} patch SHA-256 mismatch for {patch['path']}: "
+                              f"expected {expected_hash}, got {actual_hash}")
+        applied = subprocess.run(["git", "apply", "--binary", "--", str(path)], cwd=project_root,
+                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if applied.returncode:
+            details = applied.stderr.strip() or applied.stdout.strip()
+            raise SourceError(f"project {project['path']} patch failed ({patch['path']}): {details[-3000:]}")
+        patch_records.append({"path": patch["path"], "sha256": actual_hash, "status": "applied"})
+
+    expected_tree = project.get("expected_tree")
+    reconstructed_tree = _git_tree_id(project_root) if expected_tree is not None else None
+    if expected_tree is not None and reconstructed_tree.lower() != expected_tree.lower():
+        raise SourceError(f"project {project['path']} reconstructed Git tree mismatch: "
+                          f"expected {expected_tree}, got {reconstructed_tree}")
+    return patch_records, reconstructed_tree
 
 
 def _merge_tree(source, destination, relative_root, directory_modes, archive_directory_modes=None):
@@ -477,6 +631,9 @@ def _write_failure(path, layer_id, error, stage, project=None):
                "stage": stage, "error": {"type": type(error).__name__, "message": str(error)}}
     if project is not None:
         failure["project"] = {"path": project["path"], "revision": project["revision"],
+                              "archive_revision": project.get("archive_revision", project["revision"]),
+                              "expected_tree": project.get("expected_tree"),
+                              "patches": project.get("patches", []),
                               "archive_url": _sanitized_url(project["archive_url"])}
     temporary = path.with_suffix(".json.tmp")
     try:
@@ -575,6 +732,15 @@ def build(manifest_path, layer_id, output_dir, timeout=300):
                   f"at {project['revision']} from {_sanitized_url(project['archive_url'])}", flush=True)
             try:
                 status, archive_directory_modes = _extract_archive(project, destination, timeout)
+                patch_records, reconstructed_tree = _apply_project_patches(project, destination)
+                if project.get("patches"):
+                    status["patches"] = patch_records
+                    status["expected_tree"] = project["expected_tree"]
+                    status["reconstructed_tree"] = reconstructed_tree
+                    status["revision_status"] = "patched-tree-matched-local-revision"
+                elif reconstructed_tree is not None:
+                    status["expected_tree"] = project["expected_tree"]
+                    status["reconstructed_tree"] = reconstructed_tree
                 _merge_tree(destination, overlay, project_path, directory_modes, archive_directory_modes)
                 project_receipts.append(status)
                 print(f"layer {layer_id}: completed project {project_path} ({status['status']})", flush=True)

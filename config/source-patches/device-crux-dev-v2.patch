@@ -1,0 +1,37 @@
+diff --git a/rootdir/etc/fstab.crux_uboot b/rootdir/etc/fstab.crux_uboot
+index 2b8e41a..dbe31ed 100644
+--- a/rootdir/etc/fstab.crux_uboot
++++ b/rootdir/etc/fstab.crux_uboot
+@@ -38,7 +38,7 @@
+ /dev/block/by-name/pevendor                   /vendor                  ext4    ro,barrier=1                                         wait,first_stage_mount
+ /dev/block/by-name/pemetadata                             /metadata                ext4    noatime,nosuid,nodev,discard,data=journal,commit=1   wait,check,formattable,first_stage_mount
+ /dev/block/by-name/vbmeta                               /vbmeta                  emmc    defaults                                             first_stage_mount
+-/dev/block/bootdevice/by-name/peuserdata                  /data                    ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc,inlinecrypt       latemount,wait,check,fileencryption=ice,keydirectory=/metadata/vold/metadata_encryption,quota,reservedsize=128M
++/dev/block/bootdevice/by-name/peuserdata                  /data                    ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc,inlinecrypt       latemount,wait,check,formattable,fileencryption=ice::v2,keydirectory=/metadata/vold/metadata_encryption,quota,reservedsize=128M
+ /dev/block/bootdevice/by-name/modem                     /vendor/firmware_mnt     vfat    ro,shortname=lower,uid=0,gid=1000,dmask=227,fmask=337,context=u:object_r:firmware_file:s0 wait
+ /dev/block/bootdevice/by-name/dsp                       /vendor/dsp              ext4    ro,nosuid,nodev,barrier=1                            wait
+ /dev/block/bootdevice/by-name/persist                   /mnt/vendor/persist      ext4    noatime,nosuid,nodev,barrier=1                       wait,check
+diff --git a/tests/test_product_contract.py b/tests/test_product_contract.py
+index 0b000ca..fd6344d 100644
+--- a/tests/test_product_contract.py
++++ b/tests/test_product_contract.py
+@@ -200,8 +200,7 @@ class ProductContractTest(unittest.TestCase):
+             with self.subTest(product=product, variant=variant):
+                 entries = read_fstab(values["TARGET_RECOVERY_FSTAB"])
+                 # Recovery raw-wipes metadata-encrypted data; init must format blank public data.
+-                self.assertEqual("formattable" in entries["/data"][3],
+-                                 product == "aosp_crux_release")
++                self.assertTrue("formattable" in entries["/data"][3])
+ 
+     def test_selected_fstab_preserves_encryption_firmware_and_recovery_contracts(self):
+         for (product, variant), values in self.contracts.items():
+@@ -231,8 +230,7 @@ class ProductContractTest(unittest.TestCase):
+                 self.assertIn("inlinecrypt", entries["/data"][2])
+                 self.assertEqual({flag for flag in entries["/data"][3]
+                                   if flag.startswith("fileencryption=")},
+-                                 {"fileencryption=ice::v2"} if product == "aosp_crux_release"
+-                                 else {"fileencryption=ice"})
++                                 {"fileencryption=ice::v2"})
+                 self.assertTrue({"latemount", "wait", "check",
+                                  "keydirectory=/metadata/vold/metadata_encryption", "quota",
+                                  "reservedsize=128M"} <= entries["/data"][3])

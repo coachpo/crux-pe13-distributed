@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import xml.etree.ElementTree as ET
 
 
-def convert(xml_path, layout_path, layer_count):
+def convert(xml_path, layout_path, layer_count, overrides_path=None):
     if layer_count < 1:
         raise ValueError('layer count must be positive')
     manifest = ET.parse(xml_path).getroot()
@@ -52,6 +52,13 @@ def convert(xml_path, layout_path, layer_count):
             raise ValueError('source layout link escapes tree: ' + destination)
         layout[destination] = {'type': 'link', 'source': source, 'destination': destination}
     layout['Makefile'] = {'type': 'copy', 'source': 'build/make/core/root.mk', 'destination': 'Makefile'}
+    if overrides_path:
+        overrides = json.loads(Path(overrides_path).read_text())['projects']
+        known = {project['path'] for project in projects}
+        if set(overrides) - known:
+            raise ValueError('Source overrides include projects absent from the manifest')
+        for project in projects:
+            project.update(overrides.get(project['path'], {}))
     projects.sort(key=lambda item: item['path'])
     layers = [{'id': f'source-{i:02d}', 'projects': []} for i in range(layer_count)]
     for number, project in enumerate(projects):
@@ -73,8 +80,9 @@ def main():
     parser.add_argument('--layout', required=True)
     parser.add_argument('--layers', type=int, default=32)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--overrides')
     args = parser.parse_args()
-    result = convert(args.xml, args.layout, args.layers)
+    result = convert(args.xml, args.layout, args.layers, args.overrides)
     Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
     print(json.dumps({'projects': len(result['projects']), 'layers': len(result['layers']),
                       'layout': len(result['layout'])}))

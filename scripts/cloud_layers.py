@@ -31,7 +31,7 @@ def restore_layer(manifest_sha, layer, revisions, run_id, repository, staging):
         raise ValueError('Source layer identity differs from the pinned manifest: ' + name)
     expected = set(layer['projects'])
     projects = receipt['projects']
-    successes = {'fetched-and-extracted', 'fetched-bundle-and-archived'}
+    successes = {'fetched-and-extracted', 'fetched-bundle-and-archived', 'fetched-git-and-archived'}
     if (len(projects) != len(expected) or {item['path'] for item in projects} != expected
             or any(item['status'] not in successes or item['revision'] != revisions[item['path']]
                    for item in projects)):

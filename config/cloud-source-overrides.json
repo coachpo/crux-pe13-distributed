@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "projects": {
+    "bootable/recovery": {
+      "url": "https://github.com/coachpo/crux-pe13-recovery"
+    },
+    "frameworks/base": {
+      "url": "https://github.com/coachpo/crux-pe13-frameworks-base"
+    },
+    "art": {
+      "url": "https://github.com/coachpo/crux-pe13-art"
+    },
+    "hardware/qcom-caf/sm8150/display": {
+      "url": "https://github.com/coachpo/crux-pe13-caf-display"
+    },
+    "packages/apps/Updates": {
+      "url": "https://github.com/coachpo/crux-pe13-updates"
+    },
+    "device/xiaomi/crux": {
+      "archive_revision": "e606ed75177a25f97c931337eb3c7727f8a6ee32",
+      "expected_tree": "e5779e581e6f49b590dc655ac7947e466be4d061",
+      "patches": [
+        {
+          "path": "config/source-patches/device-crux-dev-v2.patch",
+          "sha256": "1dcb4e0feaf4f06bfac8f7324f517bf4538f6e60999513334c34ea86b230ee1a"
+        }
+      ]
+    }
+  }
+}

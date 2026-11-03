@@ -1,6 +1,6 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 1 / active (2026-11-03).
+Plan: standard-runner-freeze / revision 2 / active (2026-11-03).
 
 The owner authorized implementation, commits/pushes and Actions execution to
 replace local PE13 build preparation using only public-repository standard Linux
@@ -43,6 +43,13 @@ return any remaining failure to root with evidence; never lower acceptance.
   hosted acceptance gate, not established by fixture tests.
 - Actions graph gate: pending; retain run IDs, commit IDs, raw logs and artifact
   receipts under the workspace task evidence directory.
+- First hosted probe: `41664251881`, commit `b988133`. Standard runner source
+  layers were produced successfully; other layers exposed upstream-vs-maintained
+  fork URL drift, the local-only device v2 commit, and Gitiles 503/truncated
+  archives. The next probe uses corrected maintained repository URLs, an exact
+  source patch with a checked Git tree for device commit `80c137e`, and a
+  commit-verified Git fetch fallback for failed Gitiles archives. Unchanged source
+  layers may be reused only after complete layer-contract and part verification.
 - Integration decision: pending. This plan remains active until every gate passes
   or a concrete external/source/runner blocker is established and reported.
 

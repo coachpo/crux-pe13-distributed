@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import threading
 import time
 
 
@@ -112,6 +113,26 @@ def build_command() -> list[str]:
     return ["/usr/bin/time", "-v", "bash", "-c", shell]
 
 
+def monitor_resources(directory: Path, stop: threading.Event) -> None:
+    with (directory / "resources.jsonl").open("x") as stream:
+        while True:
+            disk = os.statvfs(directory)
+            sample = {"unix_time": time.time(), "disk_available_bytes": disk.f_bavail * disk.f_frsize}
+            try:
+                memory = {}
+                for line in Path("/proc/meminfo").read_text().splitlines():
+                    name, value = line.split(":", 1)
+                    if name in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+                        memory[name] = int(value.split()[0]) * 1024
+                sample.update(memory)
+            except OSError:
+                pass
+            stream.write(json.dumps(sample) + "\n")
+            stream.flush()
+            if stop.wait(2):
+                return
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", required=True)
@@ -173,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         "graph_files": [],
     }
     start = time.monotonic()
+    stop_monitor = threading.Event()
+    monitor = threading.Thread(target=monitor_resources, args=(evidence_dir, stop_monitor), daemon=True)
+    monitor.start()
     try:
         with log_path.open("x") as log:
             log.write("Command: " + " ".join(command) + "\n")
@@ -201,6 +225,9 @@ def main(argv: list[str] | None = None) -> int:
         receipt["error"] = str(error)
         receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
         raise
+    finally:
+        stop_monitor.set()
+        monitor.join()
 
 
 if __name__ == "__main__":

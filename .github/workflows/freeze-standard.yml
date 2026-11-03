@@ -19,6 +19,11 @@ on:
         required: false
         default: ''
         type: string
+      reuse_sources_from:
+        description: Reuse verified unchanged layers from an earlier partial source run
+        required: false
+        default: ''
+        type: string
       gogc:
         description: Soong Go GC percentage
         default: '50'
@@ -77,7 +82,16 @@ jobs:
       - name: Fetch complete pinned projects and build compressed layer
         env:
           LAYER: ${{ matrix.layer }}
+          REUSE_SOURCE_RUN: ${{ inputs.reuse_sources_from }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -n "$REUSE_SOURCE_RUN" ]; then
+            if python3 scripts/cloud_source_reuse.py --manifest config/cloud-source-manifest.json \
+              --layer "$LAYER" --source-run "$REUSE_SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
+              --output "$RUNNER_TEMP/layer"; then
+              exit 0
+            fi
+          fi
           python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
             --layer "$LAYER" --output "$RUNNER_TEMP/layer"
       - name: Retain complete source layer
@@ -135,6 +149,7 @@ jobs:
           free -b > "$RUNNER_TEMP/evidence/memory-before.txt"
           uname -a > "$RUNNER_TEMP/evidence/runner.txt"
           nproc >> "$RUNNER_TEMP/evidence/runner.txt"
+          java -version 2>> "$RUNNER_TEMP/evidence/runner.txt"
       - name: Verify and mount complete compressed source layers
         run: |
           python3 scripts/cloud_layers.py --manifest config/cloud-source-manifest.json \
