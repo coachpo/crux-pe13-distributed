@@ -192,6 +192,54 @@ class CloudSourceReuseTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
         self.assertEqual(self.download_calls, 1)
 
+    def test_ready_alternative_is_used_without_waiting(self):
+        ready = {"layer_id": "source-00", "reuse": {"source_run": "ready"}}
+        with mock.patch.object(cloud_source_reuse, "reuse_layer",
+                               side_effect=[cloud_source_reuse.ReuseError("artifact pending"), ready]) as attempt, \
+                mock.patch.object(cloud_source_reuse, "source_job_active") as active, \
+                mock.patch.object(cloud_source_reuse.time, "sleep") as sleep:
+            result = cloud_source_reuse.reuse_candidates(self.manifest_path, "source-00", ["pending", "ready"],
+                                                         self.repository, self.output, wait_active=True)
+        self.assertIs(result, ready)
+        self.assertEqual([call.args[2] for call in attempt.call_args_list], ["pending", "ready"])
+        active.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_pending_candidate_is_retried_after_active_job_wait(self):
+        ready = {"layer_id": "source-00", "reuse": {"source_run": self.source_run}}
+        with mock.patch.object(cloud_source_reuse, "reuse_layer",
+                               side_effect=[cloud_source_reuse.ReuseError("artifact pending"), ready]) as attempt, \
+                mock.patch.object(cloud_source_reuse, "source_job_active", return_value=True) as active, \
+                mock.patch.object(cloud_source_reuse.time, "sleep") as sleep:
+            result = cloud_source_reuse.reuse_candidates(self.manifest_path, "source-00", [self.source_run],
+                                                         self.repository, self.output, wait_active=True)
+        self.assertIs(result, ready)
+        self.assertEqual(attempt.call_count, 2)
+        active.assert_called_once_with(self.source_run, self.repository, "source-00")
+        sleep.assert_called_once_with(30)
+
+    def test_completed_missing_candidate_fails_without_waiting(self):
+        with mock.patch.object(cloud_source_reuse, "reuse_layer",
+                               side_effect=cloud_source_reuse.ReuseError("artifact unavailable")), \
+                mock.patch.object(cloud_source_reuse, "source_job_active", return_value=False) as active, \
+                mock.patch.object(cloud_source_reuse.time, "sleep") as sleep:
+            with self.assertRaisesRegex(cloud_source_reuse.ReuseError, "no matching source job is active"):
+                cloud_source_reuse.reuse_candidates(self.manifest_path, "source-00", [self.source_run],
+                                                     self.repository, self.output, wait_active=True)
+        active.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_contract_changed_candidate_is_not_polled_or_waited_on(self):
+        with mock.patch.object(cloud_source_reuse, "reuse_layer",
+                               side_effect=cloud_source_reuse.ContractChangedError("Layer contract changed")), \
+                mock.patch.object(cloud_source_reuse, "source_job_active") as active, \
+                mock.patch.object(cloud_source_reuse.time, "sleep") as sleep:
+            with self.assertRaisesRegex(cloud_source_reuse.ReuseError, "contract changed"):
+                cloud_source_reuse.reuse_candidates(self.manifest_path, "source-00", [self.source_run],
+                                                     self.repository, self.output, wait_active=True)
+        active.assert_not_called()
+        sleep.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

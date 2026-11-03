@@ -41,6 +41,10 @@ To repair a failed layer while other large layers are still downloading, dispatc
 `mode=source-only source_layers=source-07` with its own build identity. This
 produces a source checkpoint only and never claims graph acceptance. A later full
 run can combine verified layers from those runs. Full mode requires all 32 layers.
+With `wait_for_sources=true`, a missing layer is not downloaded again while a
+matching source job in one of the selected runs is still active. The workflow
+checks all candidates for a verified artifact before waiting, so a ready layer
+from another run is consumed immediately.
 
 ## Source identity
 

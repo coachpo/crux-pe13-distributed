@@ -31,10 +31,15 @@ on:
         default: ''
         type: string
       reuse_sources_from:
-        description: Reuse verified unchanged layers from an earlier partial source run
+        description: Comma-separated runs with verified reusable source layers
         required: false
         default: ''
         type: string
+      wait_for_sources:
+        description: Wait for matching active source jobs instead of starting duplicate downloads
+        required: true
+        default: false
+        type: boolean
       gogc:
         description: Soong Go GC percentage
         default: '50'
@@ -104,17 +109,19 @@ jobs:
         env:
           LAYER: ${{ matrix.layer }}
           REUSE_SOURCE_RUN: ${{ inputs.reuse_sources_from }}
+          WAIT_FOR_SOURCES: ${{ inputs.wait_for_sources }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -n "$REUSE_SOURCE_RUN" ]; then
-            IFS=, read -ra prior_runs <<< "$REUSE_SOURCE_RUN"
-            for prior_run in "${prior_runs[@]}"; do
-              if python3 scripts/cloud_source_reuse.py --manifest config/cloud-source-manifest.json \
-                --layer "$LAYER" --source-run "$prior_run" --repository "$GITHUB_REPOSITORY" \
-                --output "$RUNNER_TEMP/layer"; then
-                exit 0
-              fi
-            done
+            reuse_args=(--manifest config/cloud-source-manifest.json --layer "$LAYER"
+              --source-runs "$REUSE_SOURCE_RUN" --repository "$GITHUB_REPOSITORY"
+              --output "$RUNNER_TEMP/layer")
+            if [ "$WAIT_FOR_SOURCES" = true ]; then
+              reuse_args+=(--wait-active)
+            fi
+            if python3 scripts/cloud_source_reuse.py "${reuse_args[@]}"; then
+              exit 0
+            fi
           fi
           python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
             --layer "$LAYER" --output "$RUNNER_TEMP/layer"

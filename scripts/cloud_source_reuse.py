@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 SUCCESS_STATUSES = {"fetched-and-extracted", "fetched-bundle-and-archived",
@@ -23,6 +24,10 @@ PROJECT_CONTRACT_FIELDS = (
 
 
 class ReuseError(ValueError):
+    pass
+
+
+class ContractChangedError(ReuseError):
     pass
 
 
@@ -212,7 +217,7 @@ def reuse_layer(manifest_path: Path, layer_id: str, source_run: str, repository:
     old_manifest = json.loads(old_manifest_bytes)
     prior_contract_sha = layer_contract_sha256(old_manifest, layer_id)
     if prior_contract_sha != current_contract_sha:
-        raise ReuseError("Layer contract changed; use a fresh source build for " + layer_id)
+        raise ContractChangedError("Layer contract changed; use a fresh source build for " + layer_id)
     with tempfile.TemporaryDirectory(prefix="cloud-source-reuse-") as temporary:
         artifact_dir = Path(temporary) / "artifact"
         artifact_dir.mkdir()
@@ -258,24 +263,74 @@ def reuse_layer(manifest_path: Path, layer_id: str, source_run: str, repository:
     return current_receipt
 
 
+def source_job_active(source_run: str, repository: str, layer_id: str) -> bool:
+    result = gh_json([f"repos/{repository}/actions/runs/{source_run}/jobs?per_page=100"])
+    jobs = result.get("jobs")
+    if not isinstance(jobs, list):
+        raise ReuseError("Source run job listing is invalid: " + str(source_run))
+    expected_name = f"sources ({layer_id})"
+    active_statuses = {"queued", "in_progress", "waiting"}
+    return any(isinstance(job, dict) and job.get("name") == expected_name
+               and job.get("status") in active_statuses for job in jobs)
+
+
+def reuse_candidates(manifest_path: Path, layer_id: str, source_runs: list[str],
+                     repository: str, output: Path, wait_active: bool = False) -> dict:
+    if not source_runs:
+        raise ReuseError("No source run candidates were provided")
+    contract_changed = set()
+    last_errors = {}
+    while True:
+        for source_run in source_runs:
+            if source_run in contract_changed:
+                continue
+            try:
+                return reuse_layer(manifest_path, layer_id, source_run, repository, output)
+            except ContractChangedError as error:
+                contract_changed.add(source_run)
+                last_errors[source_run] = str(error)
+            except ReuseError as error:
+                last_errors[source_run] = str(error)
+        if not wait_active:
+            raise ReuseError("No candidate source artifact could be reused: " +
+                             "; ".join(f"{run}: {reason}" for run, reason in last_errors.items()))
+        active_runs = []
+        for source_run in source_runs:
+            if source_run in contract_changed:
+                continue
+            if source_job_active(source_run, repository, layer_id):
+                active_runs.append(source_run)
+        if not active_runs:
+            raise ReuseError("No reusable artifact and no matching source job is active: " +
+                             "; ".join(f"{run}: {reason}" for run, reason in last_errors.items()))
+        print("Waiting 30 seconds for active source layer job(s): " + ", ".join(active_runs), flush=True)
+        time.sleep(30)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--layer", required=True)
-    parser.add_argument("--source-run", required=True)
+    runs = parser.add_mutually_exclusive_group(required=True)
+    runs.add_argument("--source-run")
+    runs.add_argument("--source-runs", help="Comma-separated source run IDs, tried in order")
+    parser.add_argument("--wait-active", action="store_true",
+                        help="Wait and retry while a matching source layer job is active")
     parser.add_argument("--repository", required=True, help="owner/repository")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
-    if (not args.source_run.isdecimal() or args.repository.count("/") != 1
+    source_runs = ([args.source_run] if args.source_run else args.source_runs.split(","))
+    if (not source_runs or any(not run.isdecimal() for run in source_runs)
+            or args.repository.count("/") != 1
             or any(not part for part in args.repository.split("/"))):
-        parser.error("--source-run must be numeric and --repository must be owner/repository")
+        parser.error("source run IDs must be numeric and --repository must be owner/repository")
     try:
-        receipt = reuse_layer(Path(args.manifest), args.layer, args.source_run,
-                              args.repository, Path(args.output))
+        receipt = reuse_candidates(Path(args.manifest), args.layer, source_runs,
+                                   args.repository, Path(args.output), args.wait_active)
     except (ReuseError, OSError, json.JSONDecodeError) as error:
         print("cloud_source_reuse: " + str(error), file=sys.stderr)
         return 1
-    print(json.dumps({"layer": receipt["layer_id"], "reused_from": args.source_run,
+    print(json.dumps({"layer": receipt["layer_id"], "reused_from": receipt["reuse"]["source_run"],
                       "manifest_sha256": receipt["manifest_sha256"],
                       "contract_sha256": receipt["reuse"]["contract_sha256"]}, sort_keys=True))
     return 0

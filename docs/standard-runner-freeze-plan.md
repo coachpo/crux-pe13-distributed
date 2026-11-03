@@ -1,6 +1,6 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 2 / active (2026-11-03).
+Plan: standard-runner-freeze / revision 3 / active (2026-11-03).
 
 The owner authorized implementation, commits/pushes and Actions execution to
 replace local PE13 build preparation using only public-repository standard Linux
@@ -63,6 +63,14 @@ return any remaining failure to root with evidence; never lower acceptance.
   checks. The source/graph observer is read-only. Source VM/device trees remain
   unchanged; local inspection exported revision/layout metadata and one existing
   source patch only. No local graph generation or source capsule packaging ran.
+- Current graph acceptance target: full run `41674662924`, commit `9ea420e`,
+  build `2026110302`, with verified source reuse from `41666229218` plus the
+  parallel source-07 repair `41673377043` (`mode=source-only`). The source-only
+  run cannot satisfy graph acceptance. Pending runs `41668368879` and
+  `41673697025` were intentionally canceled with zero jobs when superseded.
+  No generated graph has passed the gate yet. Before graph execution, CI
+  authentication is removed from the Android child environment so it cannot
+  enter Soong's persisted available-environment snapshot.
 
 ## Executor protocol
 
