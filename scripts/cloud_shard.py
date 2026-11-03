@@ -347,6 +347,13 @@ def integrate(args):
                 **manifest.get('build_environment', {}), 'OUT_DIR': str(out_root),
                 'ANDROID_BUILD_TOP': str(source_root), 'PATH': str(path_directory) + ':' + str(out_root / '.path')}
             path.write_text(json.dumps(manifest, indent=2) + '\n')
+        slice_inventory = {'schema_version': 1, 'plan_sha256': cloud_index.sha256(shards / 'plan.json'),
+                           'shards': {path.parent.name: {
+                               'manifest_sha256': cloud_index.sha256(path),
+                               'ninja_files': {ninja.name: cloud_index.sha256(ninja)
+                                               for ninja in sorted(path.parent.glob('*.ninja'))}}
+                               for path in sorted(shards.glob('*/manifest.json'))}}
+        (output / 'slice-inventory.json').write_text(json.dumps(slice_inventory, indent=2, sort_keys=True) + '\n')
         graph_inventory = []
         original_hashes = {row['path']: row['sha256'] for row in graph_receipt['graph_files']}
         for name, details in sorted(file_stats.items()):
