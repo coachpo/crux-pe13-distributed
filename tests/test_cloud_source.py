@@ -135,6 +135,16 @@ class CloudSourceTests(unittest.TestCase):
         invalid["layers"][0]["projects"].append("platform/../../outside")
         with self.assertRaises(cloud_source.SourceError):
             cloud_source._validate_manifest(invalid)
+
+    def test_layout_preserves_a_dangling_repo_link_without_creating_its_target(self):
+        tree = self.root / 'tree'
+        (tree / 'platform').mkdir(parents=True)
+        layout = {'linkfiles': [{'source': 'platform/absent.mk', 'destination': 'other/Android.mk'}]}
+        cloud_source._apply_layout(tree, layout, 'linkfiles', ['platform'], ['platform'])
+        link = tree / 'other/Android.mk'
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.readlink().as_posix(), '../platform/absent.mk')
+        self.assertFalse((tree / 'platform/absent.mk').exists())
         invalid = json.loads(json.dumps(self.manifest))
         invalid["layers"][0]["projects"].append("unknown/project")
         with self.assertRaises(cloud_source.SourceError):

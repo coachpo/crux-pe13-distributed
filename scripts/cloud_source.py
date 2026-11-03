@@ -574,7 +574,9 @@ def _apply_layout(root, layout, kind, included_projects, all_projects):
         if kind == "copyfiles":
             valid_source = not source_path.is_symlink() and source_path.is_file()
         else:
-            valid_source = source_path.is_symlink() or source_path.is_file() or source_path.is_dir()
+            # Repo layouts include dangling links for inactive platform families.
+            # Preserve the link itself; inventing its target changes source discovery.
+            valid_source = True
         if not valid_source:
             expected = "regular file" if kind == "copyfiles" else "file, directory, or symlink"
             raise SourceError(f"layout {kind} source is missing or not a {expected}: {source}")

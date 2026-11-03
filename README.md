@@ -11,6 +11,10 @@ written by anything here.
 
 ## Pipeline
 
+The [standard-runner preparation workflow](docs/standard-runner-freeze.md)
+validates complete cloud source acquisition and fresh Soong/Kati graph
+generation. It is separate from the accepted frozen-graph pipeline below.
+
 1. **Freeze** the development graph and pack the cold source capsules.
 2. **Prepare** (`prepare.yml`) reconstructs the frozen source tree, restores the
    toolchains, re-slices the graph and re-packs every capsule. `mode=full`
