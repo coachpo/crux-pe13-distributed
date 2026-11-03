@@ -168,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     patch = inject_gogc(source_root)
     command = build_command()
     environment = os.environ.copy()
+    # Soong persists its available environment under OUT_DIR. Job authentication
+    # belongs to the workflow's transport steps, not to the Android build inputs.
+    removed_environment = sorted(variable for variable in environment
+                                 if variable.startswith(("ACTIONS_", "GITHUB_"))
+                                 or variable == "GH_TOKEN")
+    for variable in removed_environment:
+        environment.pop(variable)
     for variable in ("CRUX_UBOOT_DUALBOOT", "CC_WRAPPER", "OUT_DIR_COMMON_BASE"):
         environment.pop(variable, None)
     environment.update({"OUT_DIR": str(out_root), "BUILD_NUMBER": args.build_number,
@@ -190,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         "soong_source_revision": soong_revision,
         "gogc": args.gogc,
         "host_source_patch": patch,
+        "removed_ci_environment_variables": removed_environment,
         "command": command,
         "graph_files": [],
     }

@@ -24,6 +24,9 @@ An empty `build_datetime` selects the run's UTC start time. `gogc` is explicitly
 injected into the Soong child process because its normal `env -i` launcher
 discards inherited environment settings. The patch exists only in the runner's
 writable source overlay and is included in the graph receipt.
+CI authentication and GitHub job variables are removed from the Android child
+environment before Soong can persist its available-environment snapshot in out.
+Transport and artifact steps retain their normal workflow authentication.
 
 To retry with reusable source layers after a partial failure, set
 `reuse_sources_from=<run ID>`. A layer is reused only if its pinned projects and

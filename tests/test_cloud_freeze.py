@@ -1,6 +1,7 @@
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -98,6 +99,24 @@ class CloudFreezeTests(unittest.TestCase):
         self.assertEqual(self.run_freeze(fake_run, gogc="75"), 0)
         receipt = json.loads((self.evidence / "graph-receipt.json").read_text())
         self.assertEqual(receipt["gogc"], 75)
+
+    def test_ci_authentication_is_not_passed_to_the_android_environment_snapshot(self):
+        def fake_run(command, cwd, env, stdout, stderr, check):
+            self.assertNotIn('GH_TOKEN', env)
+            self.assertNotIn('ACTIONS_RUNTIME_TOKEN', env)
+            self.assertNotIn('GITHUB_RUN_ID', env)
+            for relative in cloud_freeze.EXPECTED_GRAPHS:
+                path = self.out / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative)
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.dict(os.environ, {'GH_TOKEN': 'fixture', 'ACTIONS_RUNTIME_TOKEN': 'fixture',
+                                         'GITHUB_RUN_ID': '123'}):
+            self.assertEqual(self.run_freeze(fake_run), 0)
+            self.assertEqual(os.environ['GH_TOKEN'], 'fixture')
+        receipt = json.loads((self.evidence / 'graph-receipt.json').read_text())
+        self.assertIn('GH_TOKEN', receipt['removed_ci_environment_variables'])
 
     def test_nonzero_build_exit_is_recorded_and_fails(self):
         result = self.run_freeze(lambda command, **kwargs: subprocess.CompletedProcess(command, 7))
