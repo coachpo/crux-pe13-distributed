@@ -1,6 +1,6 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 3 / active (2026-11-03).
+Plan: standard-runner-freeze / revision 4 / active (2026-11-03).
 
 The owner authorized implementation, commits/pushes and Actions execution to
 replace local PE13 build preparation using only public-repository standard Linux
@@ -71,6 +71,18 @@ return any remaining failure to root with evidence; never lower acceptance.
   No generated graph has passed the gate yet. Before graph execution, CI
   authentication is removed from the Android child environment so it cannot
   enter Soong's persisted available-environment snapshot.
+- Superseding active target: full run `41677764699`, commit `154c1dc`, build
+  `2026110303`. It combines verified source layers from `41666229218`,
+  `41673377043` and `41664251881`; the first run's source-01 artifact became
+  available before the duplicated second download. The complete 32-layer input
+  selection totaled 32,311,000,918 artifact bytes including receipts/ZIP framing.
+  Source-01's old/current layer contracts were independently compared and match.
+- Source gate accepted: all 32 source jobs plus plan succeeded in
+  `41677764699`. Graph job `126065932319` is active, initially restoring and
+  mounting the compressed source view. This accepts source acquisition and
+  transport, not graph generation or the overall plan. Superseded pending run
+  `41674662924` was canceled with zero jobs. Current local suite: 331 tests,
+  15 skips, actionlint passed. P1 remains draft until the hosted graph succeeds.
 
 ## Executor protocol
 
