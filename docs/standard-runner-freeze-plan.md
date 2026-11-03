@@ -52,6 +52,17 @@ return any remaining failure to root with evidence; never lower acceptance.
   layers may be reused only after complete layer-contract and part verification.
 - Integration decision: pending. This plan remains active until every gate passes
   or a concrete external/source/runner blocker is established and reported.
+- Revised source probe: `41666229218`, commit `dafe3a4`, build `2026110302`.
+  It has produced the patched device tree and most source layers; source-07
+  exposed two existing dangling QCOM layout links. Commit `1cf0910` preserves
+  those links. Follow-up `41668368879` is queued behind that probe, with the same
+  build identity and verified reuse from `41666229218`.
+- Execution owners: root integrates, commits, pushes and dispatches. Source,
+  frontend and source-reuse helpers were delivered by reused `gpt-6-luna`
+  subagents; root independently inspected the diffs and ran the unit/actionlint
+  checks. The source/graph observer is read-only. Source VM/device trees remain
+  unchanged; local inspection exported revision/layout metadata and one existing
+  source patch only. No local graph generation or source capsule packaging ran.
 
 ## Executor protocol
 

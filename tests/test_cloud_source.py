@@ -135,6 +135,10 @@ class CloudSourceTests(unittest.TestCase):
         invalid["layers"][0]["projects"].append("platform/../../outside")
         with self.assertRaises(cloud_source.SourceError):
             cloud_source._validate_manifest(invalid)
+        invalid = json.loads(json.dumps(self.manifest))
+        invalid["layers"][0]["projects"].append("unknown/project")
+        with self.assertRaises(cloud_source.SourceError):
+            cloud_source._validate_manifest(invalid)
 
     def test_layout_preserves_a_dangling_repo_link_without_creating_its_target(self):
         tree = self.root / 'tree'
@@ -145,10 +149,6 @@ class CloudSourceTests(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.readlink().as_posix(), '../platform/absent.mk')
         self.assertFalse((tree / 'platform/absent.mk').exists())
-        invalid = json.loads(json.dumps(self.manifest))
-        invalid["layers"][0]["projects"].append("unknown/project")
-        with self.assertRaises(cloud_source.SourceError):
-            cloud_source._validate_manifest(invalid)
 
     def test_archive_failure_writes_project_failure_receipt(self):
         with mock.patch.object(cloud_source.urllib.request, "urlopen", return_value=io.BytesIO(b"not gzip")), \
