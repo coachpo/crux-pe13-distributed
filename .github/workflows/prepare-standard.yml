@@ -1,0 +1,103 @@
+name: Prepare a fresh PE13 hosted graph
+run-name: PE13 hosted index ${{ inputs.build_number }} from ${{ inputs.graph_run }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      graph_run:
+        description: Successful standard freeze run containing the fresh graph
+        required: true
+        default: '41677764699'
+        type: string
+      build_number:
+        description: Exact graph build identity
+        required: true
+        default: '2026110303'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: standard-prepare-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GRAPH_RUN: ${{ inputs.graph_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install index transport tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/index-evidence"
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          uname -a > "$RUNNER_TEMP/index-evidence/runner.txt"
+          nproc >> "$RUNNER_TEMP/index-evidence/runner.txt"
+          free -b >> "$RUNNER_TEMP/index-evidence/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/index-evidence/runner.txt"
+      - name: Restore the cloud-generated graph and frontend metadata
+        run: |
+          gh run download "$GRAPH_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "cloud-graph-$BUILD_NUMBER" --dir "$RUNNER_TEMP/graph-input"
+          tar --zstd -xf "$RUNNER_TEMP/graph-input/graph-out.tar.zst" -C "$RUNNER_TEMP"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          source = json.loads((root / 'graph-input/source/source-mount.json').read_text())
+          samples = [json.loads(line) for line in (root / 'graph-input/graph/resources.jsonl').read_text().splitlines()]
+          summary = {'source_images_bytes': source['images_bytes'], 'source_layers': source['layer_count'],
+                     'minimum_disk_available_bytes': min(row['disk_available_bytes'] for row in samples),
+                     'minimum_memory_available_bytes': min(row['MemAvailable'] for row in samples),
+                     'maximum_swap_used_bytes': max(row['SwapTotal'] - row['SwapFree'] for row in samples)}
+          (root / 'index-evidence/graph-resource-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Validate graph identity and create the canonical index
+        run: |
+          /usr/bin/time -v python3 scripts/cloud_index.py \
+            --graph-evidence "$RUNNER_TEMP/graph-input" \
+            --source-manifest config/cloud-source-manifest.json \
+            --graph-run "$GRAPH_RUN" --build-number "$BUILD_NUMBER" \
+            --output "$RUNNER_TEMP/index-evidence" \
+            2>&1 | tee "$RUNNER_TEMP/index-evidence/index.log"
+      - name: Compress the canonical index
+        run: |
+          zstd -T4 -3 "$RUNNER_TEMP/index-evidence/index.sqlite" \
+            -o "$RUNNER_TEMP/index-evidence/index.sqlite.zst"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          directory = Path(os.environ['RUNNER_TEMP']) / 'index-evidence'
+          path = directory / 'index.sqlite.zst'
+          digest = hashlib.sha256()
+          with path.open('rb') as stream:
+              for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+                  digest.update(block)
+          receipt_path = directory / 'index-receipt.json'
+          receipt = json.loads(receipt_path.read_text())
+          receipt['compressed_database'] = {'file': path.name, 'size': path.stat().st_size,
+                                            'sha256': digest.hexdigest(), 'compression': 'zstd -T4 -3'}
+          receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(receipt, sort_keys=True))
+          PY
+      - name: Retain canonical index and evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-index-${{ inputs.build_number }}
+          path: |
+            ${{ runner.temp }}/index-evidence/*.json
+            ${{ runner.temp }}/index-evidence/*.log
+            ${{ runner.temp }}/index-evidence/*.txt
+            ${{ runner.temp }}/index-evidence/*.zst
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn

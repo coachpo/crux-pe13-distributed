@@ -33,6 +33,7 @@ return any remaining failure to root with evidence; never lower acceptance.
 | F1 graph frontend | ready | frontend_decomposition | `scripts/cloud_freeze.py`, `tests/test_cloud_freeze.py`; mount source layers at their recorded paths, fresh external OUT_DIR, explicit build identity, `--skip-ninja` four-image graph only; no graph restore or local binary seeds. Report subprocess failures and graph/resource evidence. Explicit GOGC injection under env reset if needed. No workflow/source manifest edits. |
 | W1 integration probe | active | root | workflow, pinned manifest, docs; standard `ubuntu-22.04` only, complete-source layer fanout, graph job and always-uploaded logs/receipts; local unit suite plus actual Actions acceptance. |
 | P1 index/slice/pack | draft | root | Start after usable generated graph and full source-layer receipts exist. Preserve canonical producer/scope semantics, audit new graph ownership and package shards in parallel. |
+| P1-I canonical index | active | frontend_decomposition + root integration | `scripts/cloud_index.py`, fixture tests and `prepare-standard.yml`; input is accepted graph run `41677764699` and the same source manifest. Validate all four graph digests, create a new canonical SQLite index and verify the four target producers. No existing index reuse. Actual index/closure work runs only on standard runners. |
 
 ## Execution and acceptance
 
@@ -83,6 +84,13 @@ return any remaining failure to root with evidence; never lower acceptance.
   transport, not graph generation or the overall plan. Superseded pending run
   `41674662924` was canceled with zero jobs. Current local suite: 331 tests,
   15 skips, actionlint passed. P1 remains draft until the hosted graph succeeds.
+- Fresh graph gate accepted: `41677764699` succeeded, graph job
+  `126065932319`, artifact `cloud-graph-2026110303` ID `13254050598`,
+  800,535,901 bytes. The mounted source images total 31,927,148,544 bytes.
+  The graph command completed in 7:28.79 with maximum RSS 14,700,164 KiB and
+  exit 0. The full graph job (transport/setup/graph/archive) took about 22 minutes.
+  This is a fresh hosted graph, not a frozen-graph replay. Canonical indexing is
+  now ready and is being connected through `prepare-standard.yml`.
 
 ## Executor protocol
 
