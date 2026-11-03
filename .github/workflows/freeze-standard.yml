@@ -1,9 +1,20 @@
 name: Freeze PE13 on standard Linux runners
-run-name: PE13 standard freeze ${{ inputs.build_number }}
+run-name: PE13 standard freeze ${{ inputs.mode }} ${{ inputs.build_number }}
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Full graph validation or a source-layer checkpoint only
+        required: true
+        default: full
+        type: choice
+        options: [full, source-only]
+      source_layers:
+        description: Space-separated layer IDs for source-only mode; empty selects all
+        required: false
+        default: ''
+        type: string
       build_number:
         description: New development build identity
         default: '2026110301'
@@ -51,13 +62,23 @@ jobs:
         env:
           BUILD_DATETIME: ${{ inputs.build_datetime }}
           SOURCE_RUN: ${{ inputs.source_run }}
+          MODE: ${{ inputs.mode }}
+          SOURCE_LAYERS: ${{ inputs.source_layers }}
         run: |
           python3 - <<'PY'
           import json, os, time
           from pathlib import Path
           manifest = json.loads(Path('config/cloud-source-manifest.json').read_text())
+          all_layers = [layer['id'] for layer in manifest['layers']]
+          selected = os.environ['SOURCE_LAYERS'].split() or all_layers
+          if len(selected) != len(set(selected)) or set(selected) - set(all_layers):
+              raise SystemExit('Source layer selection is unknown or duplicated')
+          if os.environ['MODE'] != 'source-only' and set(selected) != set(all_layers):
+              raise SystemExit('Full graph validation requires all source layers')
+          if os.environ['MODE'] == 'source-only' and os.environ['SOURCE_RUN']:
+              raise SystemExit('Source-only mode must build or verify its selected source layers')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              print('layers=' + json.dumps([layer['id'] for layer in manifest['layers']]), file=output)
+              print('layers=' + json.dumps(selected), file=output)
               print('datetime=' + str(int(os.environ['BUILD_DATETIME'] or time.time())), file=output)
               print('source_run=' + (os.environ['SOURCE_RUN'] or os.environ['GITHUB_RUN_ID']), file=output)
           PY
@@ -86,11 +107,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -n "$REUSE_SOURCE_RUN" ]; then
-            if python3 scripts/cloud_source_reuse.py --manifest config/cloud-source-manifest.json \
-              --layer "$LAYER" --source-run "$REUSE_SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
-              --output "$RUNNER_TEMP/layer"; then
-              exit 0
-            fi
+            IFS=, read -ra prior_runs <<< "$REUSE_SOURCE_RUN"
+            for prior_run in "${prior_runs[@]}"; do
+              if python3 scripts/cloud_source_reuse.py --manifest config/cloud-source-manifest.json \
+                --layer "$LAYER" --source-run "$prior_run" --repository "$GITHUB_REPOSITORY" \
+                --output "$RUNNER_TEMP/layer"; then
+                exit 0
+              fi
+            done
           fi
           python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
             --layer "$LAYER" --output "$RUNNER_TEMP/layer"
@@ -113,7 +137,7 @@ jobs:
 
   graph:
     needs: [plan, sources]
-    if: always() && needs.plan.result == 'success' && (needs.sources.result == 'success' || needs.sources.result == 'skipped')
+    if: always() && inputs.mode != 'source-only' && needs.plan.result == 'success' && (needs.sources.result == 'success' || needs.sources.result == 'skipped')
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     env:

@@ -33,6 +33,12 @@ Changed or unavailable layers are rebuilt from their cloud sources. A complete
 source run can instead be selected with `source_run=<run ID>`; that skips the
 source matrix and requires every layer to match the current manifest.
 
+`reuse_sources_from` also accepts a comma-separated list of runs, tried in order.
+To repair a failed layer while other large layers are still downloading, dispatch
+`mode=source-only source_layers=source-07` with its own build identity. This
+produces a source checkpoint only and never claims graph acceptance. A later full
+run can combine verified layers from those runs. Full mode requires all 32 layers.
+
 ## Source identity
 
 Project archives come from exact public Git revisions. Failed Google Gitiles
