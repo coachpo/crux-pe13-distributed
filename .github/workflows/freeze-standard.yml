@@ -1,0 +1,170 @@
+name: Freeze PE13 on standard Linux runners
+run-name: PE13 standard freeze ${{ inputs.build_number }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: New development build identity
+        default: '2026110301'
+        required: true
+        type: string
+      build_datetime:
+        description: Unix epoch; empty selects this run's start
+        required: false
+        default: ''
+        type: string
+      source_run:
+        description: Reuse source-layer artifacts from this run ID, or empty to fetch fresh
+        required: false
+        default: ''
+        type: string
+      gogc:
+        description: Soong Go GC percentage
+        default: '50'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: standard-freeze-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      layers: ${{ steps.plan.outputs.layers }}
+      datetime: ${{ steps.plan.outputs.datetime }}
+      source_run: ${{ steps.plan.outputs.source_run }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: plan
+        env:
+          BUILD_DATETIME: ${{ inputs.build_datetime }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          manifest = json.loads(Path('config/cloud-source-manifest.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('layers=' + json.dumps([layer['id'] for layer in manifest['layers']]), file=output)
+              print('datetime=' + str(int(os.environ['BUILD_DATETIME'] or time.time())), file=output)
+              print('source_run=' + (os.environ['SOURCE_RUN'] or os.environ['GITHUB_RUN_ID']), file=output)
+          PY
+
+  sources:
+    needs: plan
+    if: inputs.source_run == ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: ${{ fromJSON(needs.plan.outputs.layers) }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install source image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools git curl
+          df -B1
+          free -b
+      - name: Fetch complete pinned projects and build compressed layer
+        env:
+          LAYER: ${{ matrix.layer }}
+        run: |
+          python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
+            --layer "$LAYER" --output "$RUNNER_TEMP/layer"
+      - name: Retain complete source layer
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-${{ matrix.layer }}
+          path: ${{ runner.temp }}/layer
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain source failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: failure-${{ matrix.layer }}
+          path: ${{ runner.temp }}/layer/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  graph:
+    needs: [plan, sources]
+    if: always() && needs.plan.result == 'success' && (needs.sources.result == 'success' || needs.sources.result == 'skipped')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN: ${{ needs.plan.outputs.source_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      BUILD_DATETIME: ${{ needs.plan.outputs.datetime }}
+      GOGC_PERCENT: ${{ inputs.gogc }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Free disk space
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+          remove-swapfile: 'true'
+      - name: Install native Linux build dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools zstd build-essential git curl flex bison gperf \
+            libssl-dev libxml2-utils xsltproc zip unzip rsync python-is-python3 \
+            lib32z1 lib32stdc++6 libncurses5 libtinfo5 bc lz4
+          sudo fallocate -l 16G "$RUNNER_TEMP/soong.swap"
+          sudo chmod 600 "$RUNNER_TEMP/soong.swap"
+          sudo mkswap "$RUNNER_TEMP/soong.swap"
+          sudo swapon "$RUNNER_TEMP/soong.swap"
+          df -B1 > "$RUNNER_TEMP/evidence/disk-before.txt"
+          free -b > "$RUNNER_TEMP/evidence/memory-before.txt"
+          uname -a > "$RUNNER_TEMP/evidence/runner.txt"
+          nproc >> "$RUNNER_TEMP/evidence/runner.txt"
+      - name: Verify and mount complete compressed source layers
+        run: |
+          python3 scripts/cloud_layers.py --manifest config/cloud-source-manifest.json \
+            --source-run "$SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
+            --staging "$RUNNER_TEMP/source-layers" --evidence "$RUNNER_TEMP/evidence/source"
+      - name: Generate fresh Soong and Kati graphs
+        run: |
+          python3 scripts/cloud_freeze.py --source-manifest config/cloud-source-manifest.json \
+            --source-root /home/qingli/crux-pe13-offline-2026-09-25/pe13 \
+            --out-root "$RUNNER_TEMP/android-out" --build-number "$BUILD_NUMBER" \
+            --build-datetime "$BUILD_DATETIME" --gogc "$GOGC_PERCENT" \
+            --source-receipts "$RUNNER_TEMP/evidence/source" --evidence "$RUNNER_TEMP/evidence/graph"
+      - name: Archive fresh graph and frontend metadata
+        run: |
+          tar --zstd -cf "$RUNNER_TEMP/evidence/graph-out.tar.zst" -C "$RUNNER_TEMP" android-out
+      - name: Record final resources
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          df -B1 > "$RUNNER_TEMP/evidence/disk-after.txt"
+          free -b > "$RUNNER_TEMP/evidence/memory-after.txt"
+          if [ -f "$RUNNER_TEMP/evidence/graph/cloud-freeze.log" ]; then
+            tail -100 "$RUNNER_TEMP/evidence/graph/cloud-freeze.log"
+          fi
+      - name: Retain graph and resource evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-graph-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/evidence
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
