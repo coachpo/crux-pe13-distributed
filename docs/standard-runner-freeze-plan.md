@@ -34,6 +34,7 @@ return any remaining failure to root with evidence; never lower acceptance.
 | W1 integration probe | active | root | workflow, pinned manifest, docs; standard `ubuntu-22.04` only, complete-source layer fanout, graph job and always-uploaded logs/receipts; local unit suite plus actual Actions acceptance. |
 | P1 index/slice/pack | draft | root | Start after usable generated graph and full source-layer receipts exist. Preserve canonical producer/scope semantics, audit new graph ownership and package shards in parallel. |
 | P1-I canonical index | active | frontend_decomposition + root integration | `scripts/cloud_index.py`, fixture tests and `prepare-standard.yml`; input is accepted graph run `41677764699` and the same source manifest. Validate all four graph digests, create a new canonical SQLite index and verify the four target producers. No existing index reuse. Actual index/closure work runs only on standard runners. |
+| P1-A/S/R runtime contracts | active | source_footprint, frontend_decomposition, postgraph_decomposition; root integrates | New source actor, source-reader and host/Rust runtime modules. Generate from the current graph/source tree; no old audit JSON or diagnostic binaries as runtime inputs. Root `cloud_shard.py` applies producer-bound order dependencies to a copied fresh index, cold-probes source-built Go actors and scalar rematerialization, then prunes and shards. |
 
 ## Execution and acceptance
 
@@ -91,6 +92,13 @@ return any remaining failure to root with evidence; never lower acceptance.
   exit 0. The full graph job (transport/setup/graph/archive) took about 22 minutes.
   This is a fresh hosted graph, not a frozen-graph replay. Canonical indexing is
   now ready and is being connected through `prepare-standard.yml`.
+- Canonical index gate accepted: run `41685367061`, commit `9c89b47`, job
+  `126089581715`, artifact `13255112960`. 1,749,436 edges / 1,961,774 outputs
+  / 2,441,929 statements across four fresh Ninja files; all four target producers
+  exist. SQLite is 8,154,189,824 bytes, compressed to 204,799,099 bytes. Indexing
+  took 5:42.37, maximum RSS 285,180 KiB. Restored graph resource samples show
+  maximum swap use 5,517,811,712 bytes and minimum available disk 61,768,339,456
+  bytes during generation. Runtime completion/slicing is the next hosted gate.
 
 ## Executor protocol
 

@@ -1,9 +1,15 @@
 name: Prepare a fresh PE13 hosted graph
-run-name: PE13 hosted index ${{ inputs.build_number }} from ${{ inputs.graph_run }}
+run-name: PE13 hosted ${{ inputs.stage }} ${{ inputs.build_number }} from ${{ inputs.graph_run }}
 
 on:
   workflow_dispatch:
     inputs:
+      stage:
+        description: Canonical index only, or complete transport graph and slices
+        type: choice
+        required: true
+        default: index
+        options: [index, shard]
       graph_run:
         description: Successful standard freeze run containing the fresh graph
         required: true
@@ -13,6 +19,16 @@ on:
         description: Exact graph build identity
         required: true
         default: '2026110303'
+        type: string
+      index_run:
+        description: Reuse a successful canonical index run, or empty to create it
+        required: false
+        default: ''
+        type: string
+      source_run:
+        description: Optional complete source-layer run override
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -25,6 +41,7 @@ concurrency:
 
 jobs:
   index:
+    if: inputs.index_run == ''
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     env:
@@ -98,6 +115,91 @@ jobs:
             ${{ runner.temp }}/index-evidence/*.log
             ${{ runner.temp }}/index-evidence/*.txt
             ${{ runner.temp }}/index-evidence/*.zst
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn
+
+  shard:
+    needs: index
+    if: always() && inputs.stage == 'shard' && (needs.index.result == 'success' || needs.index.result == 'skipped')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GRAPH_RUN: ${{ inputs.graph_run }}
+      INDEX_RUN: ${{ inputs.index_run || github.run_id }}
+      SOURCE_RUN_OVERRIDE: ${{ inputs.source_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Free disk space
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+      - name: Install source actor and transport tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard-evidence"
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools zstd ninja-build build-essential
+          df -B1 > "$RUNNER_TEMP/shard-evidence/disk-before.txt"
+          free -b > "$RUNNER_TEMP/shard-evidence/memory-before.txt"
+      - name: Restore accepted graph and canonical index
+        run: |
+          gh run download "$GRAPH_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "cloud-graph-$BUILD_NUMBER" --dir "$RUNNER_TEMP/graph-input"
+          tar --zstd -xf "$RUNNER_TEMP/graph-input/graph-out.tar.zst" -C "$RUNNER_TEMP"
+          gh run download "$INDEX_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "cloud-index-$BUILD_NUMBER" --dir "$RUNNER_TEMP/index-input"
+          zstd -d "$RUNNER_TEMP/index-input/index.sqlite.zst" -o "$RUNNER_TEMP/native-index.sqlite"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          source = json.loads((Path(os.environ['RUNNER_TEMP']) / 'graph-input/source/source-mount.json').read_text())
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              print('SOURCE_RUN=' + (os.environ['SOURCE_RUN_OVERRIDE'] or str(source['source_run'])), file=output)
+          PY
+      - name: Mount the matching complete source snapshot
+        run: |
+          python3 scripts/cloud_layers.py --manifest config/cloud-source-manifest.json \
+            --source-run "$SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
+            --staging "$RUNNER_TEMP/source-layers" --evidence "$RUNNER_TEMP/shard-evidence/source"
+      - name: Complete runtime dependencies, cold-probe source actors and slice
+        run: |
+          /usr/bin/time -v python3 scripts/cloud_shard.py \
+            --graph-evidence "$RUNNER_TEMP/graph-input" --source-manifest config/cloud-source-manifest.json \
+            --graph-run "$GRAPH_RUN" --index-input "$RUNNER_TEMP/index-input" --index-run "$INDEX_RUN" \
+            --database "$RUNNER_TEMP/native-index.sqlite" --build-number "$BUILD_NUMBER" \
+            --ownership config/cloud-ownership-profile.json --output "$RUNNER_TEMP/shard-evidence" \
+            2>&1 | tee "$RUNNER_TEMP/shard-evidence/shard.log"
+      - name: Archive current slices, graph files and pruned index
+        run: |
+          out="$RUNNER_TEMP/shard-evidence"
+          zstd -T4 -3 "$out/index-pruned.sqlite" -o "$out/index-pruned.sqlite.zst"
+          tar --zstd -cf "$out/shards.tar.zst" -C "$out" shards
+          tar --zstd -cf "$out/derived-graph.tar.zst" -C / -T "$out/graph-files.txt"
+      - name: Record resources after preparation
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard-evidence"
+          df -B1 > "$RUNNER_TEMP/shard-evidence/disk-after.txt"
+          free -b > "$RUNNER_TEMP/shard-evidence/memory-after.txt"
+      - name: Retain slice preparation evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-shards-${{ inputs.build_number }}
+          path: |
+            ${{ runner.temp }}/shard-evidence/*.json
+            ${{ runner.temp }}/shard-evidence/*.log
+            ${{ runner.temp }}/shard-evidence/*.txt
+            ${{ runner.temp }}/shard-evidence/*.zst
+            ${{ runner.temp }}/shard-evidence/scalar-probe/*.log
+            ${{ runner.temp }}/shard-evidence/cold-frontend-probe/cold-probe.log
           compression-level: 0
           retention-days: 14
           if-no-files-found: warn

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "side_output_dirs": [
+    {
+      "producer": "${OUT}/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen/.dummy_dep",
+      "dirs": [
+        "${OUT}/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen"
+      ],
+      "rationale": "headers_install creates the exported include tree behind the custom generator's .dummy_dep output.",
+      "evidence": [
+        "vendor/aosp/build/soong/Android.bp generated_kernel_includes",
+        "vendor/aosp/build/soong/generator/generator.go Module.GenerateAndroidBuildActions"
+      ]
+    },
+    {
+      "producer": "${OUT}/target/product/crux/root/init.environ.rc",
+      "dirs": [
+        "${OUT}/target/product/crux/root"
+      ],
+      "rationale": "The init.environ.rc install action creates the development root skeleton and device symlinks.",
+      "evidence": [
+        "system/core/rootdir/Android.mk LOCAL_POST_INSTALL_CMD"
+      ]
+    },
+    {
+      "producer": "${OUT}/target/product/crux/obj/PACKAGING/recovery_intermediates/ramdisk_files-timestamp",
+      "dirs": [
+        "${OUT}/target/product/crux/recovery/root"
+      ],
+      "rationale": "The timestamp action completes the Recovery tree scanned by the following CPIO producer.",
+      "evidence": [
+        "build/make/core/Makefile recovery ramdisk aggregation"
+      ]
+    },
+    {
+      "producer": "${OUT}/target/product/crux/ramdisk.img",
+      "dirs": [
+        "${OUT}/target/product/crux/ramdisk/debug_ramdisk",
+        "${OUT}/target/product/crux/ramdisk/dev",
+        "${OUT}/target/product/crux/ramdisk/metadata",
+        "${OUT}/target/product/crux/ramdisk/mnt",
+        "${OUT}/target/product/crux/ramdisk/proc",
+        "${OUT}/target/product/crux/ramdisk/second_stage_resources",
+        "${OUT}/target/product/crux/ramdisk/sys"
+      ],
+      "rationale": "The ramdisk recipe creates these empty mount-point directories before mkbootfs; they must survive cold transport.",
+      "evidence": [
+        "build/make/core/Makefile ramdisk.img mkdir/mkbootfs recipe",
+        "system/core/init/first_stage_init.cpp mount/mknod CHECKCALLs"
+      ]
+    }
+  ],
+  "groups": [
+    [
+      "${OUT}/target/product/crux/obj/KERNEL_OBJ",
+      "${OUT}/target/product/crux/obj/KERNEL_OBJ/.config",
+      "${OUT}/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb"
+    ]
+  ],
+  "group_export_dirs": [
+    {
+      "producer": "${OUT}/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "dirs": [
+        "${OUT}/target/product/crux/obj/KERNEL_OBJ"
+      ],
+      "rationale": "The atomic mkdir/config/Image group owns the completed kernel tree and paired symbols.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk make-kernel-target and Image producer"
+      ]
+    }
+  ],
+  "not_applicable_side_effects": [
+    {
+      "producer": "${OUT}/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "dirs": [
+        "${OUT}/target/product/crux/vendor/lib/modules"
+      ],
+      "reason": "Accepted working assumption for the unchanged 5e4950d kernel/crux_defconfig: the selected configuration has zero =m entries. Revisit after a cold kernel build if modules are enabled.",
+      "evidence": [
+        "vendor/aosp/build/tasks/kernel.mk modules_install conditional",
+        "Accepted R5 kernel configuration at the same source and defconfig has zero =m entries"
+      ]
+    }
+  ]
+}
