@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | ready for new empty execution | root + read-only observer | Production run `41819689572` ended with 28 successes and one AIDL failure. The reviewed repair pack `41835375815` has 39 successful capsules; all native compilation will restart empty against its new registry. |
+| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, restarts all native compilation empty using repaired pack `41835375815`. All 13 wave-0 tasks passed; wave 1 is active. All 39 tasks and final summary remain required. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -233,6 +233,12 @@ Do not insert historical source overlays or old compiled artifact bindings.
   pending-only dispatch `41857418346` was cancelled before any work after the
   old build-only concurrency key delayed it. Preparation concurrency now also
   includes the worker revision, keeping independent revisions isolated.
+- New production run `41866735013` admitted the repaired registry and passed
+  all 13 native tasks in wave 0. Its exact worker revision is
+  `79c8c2f13e879803e8e15e919d17a19520b2b4d1`; subsequent dependencies bind only
+  to this run's receipts. No previously compiled object, JAR, kernel or image
+  from any earlier execution is admitted. Wave 1 has started; later compilation
+  and the separate image assembly/validation remain pending.
 
 ## Executor protocol
 
