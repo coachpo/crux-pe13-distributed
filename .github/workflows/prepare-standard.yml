@@ -41,7 +41,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: standard-prepare-${{ inputs.build_number }}
+  group: standard-prepare-${{ inputs.build_number }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
