@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 7 / active (2026-11-04).
+Plan: standard-runner-build / revision 8 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -86,14 +86,14 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, restarts all native compilation empty using repaired pack `41835375815`. All 13 wave-0 tasks passed; wave 1 is active. All 39 tasks and final summary remain required. |
+| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, has passed all 23 tasks in waves 0–2. Attempt 2 recovered the sole transport-failed task from empty state; wave 3 is active. All 39 tasks and final summary remain required. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
-| T1 | implemented, recovery pending | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures for 503 recovery, exhaustion, Retry-After and immediate non-transient failures. All identity checks stay unchanged. Current production recovery is a same-execution failed-job retry on a clean standard runner, not cross-run output reuse. |
+| T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -259,6 +259,15 @@ Do not insert historical source overlays or old compiled artifact bindings.
   [GitHub reruns retain the original commit/ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs?tool=cli):
   production retry therefore retains worker `79c8c2f` and the same context;
   the transport fix applies to future executions and the later assembly job.
+- The first compile attempt ended with 22 successful native tasks and only the
+  pre-Ninja HTTP-503 failure. GitHub rejected failed-job reruns until its
+  top-level state became completed; no live native task was cancelled. Root then
+  reran failed jobs in this execution, retaining worker `79c8c2f`. Attempt 2
+  `w002-s003` job `126758016193` passed from a new empty runner, with native
+  compile/retention complete at 18:15:10 UTC. All 23 tasks in waves 0–2 now
+  succeeded, and wave-3 plan `126768048702` started. The retry's successful
+  artifacts replace its failed artifacts; every other producer remains freshly
+  built within this same admitted execution.
 
 ## Executor protocol
 
