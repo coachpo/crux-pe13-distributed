@@ -46,6 +46,14 @@ class CloudShardTests(unittest.TestCase):
         self.assertEqual(metadata[owners[self.other]]['command'], 'touch ' + self.other)
         self.assertEqual(self.native.read_text(), original)
 
+    def test_scalar_touch_recognition_unwraps_only_the_native_writer(self):
+        self.assertTrue(shard.is_scalar_touch('/bin/bash -c "touch ' + self.number + '"',
+                                              self.number, self.source))
+        self.assertTrue(shard.is_scalar_touch('touch ' + self.number, self.number, self.source))
+        self.assertFalse(shard.is_scalar_touch('/bin/bash -c "rm -f other; touch ' + self.number + '"',
+                                               self.number, self.source))
+        self.assertFalse(shard.is_scalar_touch('touch another', self.number, self.source))
+
     def test_companion_scope_and_new_dependencies_are_canonical_and_transportable(self):
         companion = self.root / 'companion.ninja'
         produced = str(self.root / 'generated')
@@ -61,11 +69,17 @@ class CloudShardTests(unittest.TestCase):
         self.assertEqual(mutation.dependencies({consumer: [produced]}, 'generated dependency'), 1)
         mutation.publish()
         self.assertEqual(mutation.dependencies({consumer: [produced, self.other]}, 'same dependency'), 0)
+        second = str(self.root / 'second-input')
+        self.assertEqual(mutation.dependencies({consumer: [second]}, 'second dependency category'), 1)
+        mutation.publish()
         current = shard.graph.Graph(self.database)
         closure = current.closure([self.other])
         self.assertIn(owner, closure['edge_ids'])
         metadata = current.native_metadata(current.edge_records(closure['edge_ids'])[0])
         self.assertEqual(metadata[consumer]['command'], 'touch ' + self.other)
+        raw = mutation.updated[consumer]
+        self.assertIn(produced, raw)
+        self.assertIn(second, raw)
         self.assertEqual(len(current.meta['file_stats']), 3)
         current.db.close()
 

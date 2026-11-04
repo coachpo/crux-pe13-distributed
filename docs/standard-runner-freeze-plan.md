@@ -1,6 +1,6 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 4 / active (2026-11-03).
+Plan: standard-runner-freeze / revision 5 / active (2026-11-04).
 
 The owner authorized implementation, commits/pushes and Actions execution to
 replace local PE13 build preparation using only public-repository standard Linux
@@ -99,6 +99,16 @@ return any remaining failure to root with evidence; never lower acceptance.
   took 5:42.37, maximum RSS 285,180 KiB. Restored graph resource samples show
   maximum swap use 5,517,811,712 bytes and minimum available disk 61,768,339,456
   bytes during generation. Runtime completion/slicing is the next hosted gate.
+- First shard gate `41698738039` failed on the fresh native scalar command
+  `/bin/bash -c "touch .../soong/build_number.txt"`. The next revision unwraps
+  that single native writer before validation and adds regression coverage.
+  Source-reviewed kernel/DTBO/header PATH consumers are rebound by output paths
+  to fresh index IDs; their source-built interposer and alias-directory readiness
+  is explicit. Distinct dependency categories retain their union in both SQLite
+  and emitted Ninja bindings. Parallel capsule jobs restore only indexed graph
+  text from the derived graph transport, not warmed frontend binaries.
+- Pack/full workflow stages and a streaming per-capsule archive verifier are
+  implemented; actual pack acceptance remains pending a successful slice gate.
 
 ## Executor protocol
 

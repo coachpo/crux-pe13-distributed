@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: Canonical index only, or complete transport graph and slices
+        description: Canonical index, slices, cold capsules, or all preparation stages
         type: choice
         required: true
         default: index
-        options: [index, shard]
+        options: [index, shard, pack, full]
       graph_run:
         description: Successful standard freeze run containing the fresh graph
         required: true
@@ -30,6 +30,11 @@ on:
         required: false
         default: ''
         type: string
+      shard_run:
+        description: Successful shard-preparation run to package (required for pack stage)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -41,7 +46,7 @@ concurrency:
 
 jobs:
   index:
-    if: inputs.index_run == ''
+    if: (inputs.stage == 'index' || inputs.stage == 'shard' || inputs.stage == 'full') && inputs.index_run == ''
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     env:
@@ -121,7 +126,7 @@ jobs:
 
   shard:
     needs: index
-    if: always() && inputs.stage == 'shard' && (needs.index.result == 'success' || needs.index.result == 'skipped')
+    if: always() && (inputs.stage == 'shard' || inputs.stage == 'full') && (needs.index.result == 'success' || needs.index.result == 'skipped')
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     env:
@@ -179,6 +184,19 @@ jobs:
       - name: Archive current slices, graph files and pruned index
         run: |
           out="$RUNNER_TEMP/shard-evidence"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'shard-evidence/shard-receipt.json'
+          receipt = json.loads(path.read_text())
+          if receipt.get('status') != 'success':
+              raise SystemExit('Refusing to archive an unsuccessful shard receipt')
+          source_run = os.environ.get('SOURCE_RUN', '')
+          if not source_run.isdecimal():
+              raise SystemExit('The mounted source_run is missing or invalid')
+          receipt['source_run'] = source_run
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          PY
           zstd -T4 -3 "$out/index-pruned.sqlite" -o "$out/index-pruned.sqlite.zst"
           tar --zstd -cf "$out/shards.tar.zst" -C "$out" shards
           tar --zstd -cf "$out/derived-graph.tar.zst" -C / -T "$out/graph-files.txt"
@@ -200,6 +218,388 @@ jobs:
             ${{ runner.temp }}/shard-evidence/*.zst
             ${{ runner.temp }}/shard-evidence/scalar-probe/*.log
             ${{ runner.temp }}/shard-evidence/cold-frontend-probe/cold-probe.log
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn
+
+  pack-plan:
+    needs: [index, shard]
+    if: always() && (inputs.stage == 'pack' || (inputs.stage == 'full' && needs.shard.result == 'success'))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STAGE: ${{ inputs.stage }}
+      INPUT_SHARD_RUN: ${{ inputs.shard_run }}
+      INPUT_INDEX_RUN: ${{ inputs.index_run }}
+      GRAPH_RUN: ${{ inputs.graph_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      shard_run: ${{ steps.plan.outputs.shard_run }}
+      source_run: ${{ steps.plan.outputs.source_run }}
+      graph_run: ${{ steps.plan.outputs.graph_run }}
+      index_run: ${{ steps.plan.outputs.index_run }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+      source_manifest_sha256: ${{ steps.plan.outputs.source_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install shard inventory decompressor
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+      - name: Validate selected shard run and construct exact pack matrix
+        id: plan
+        run: |
+          set -euo pipefail
+          if [ "$STAGE" = full ]; then
+            shard_run="$GITHUB_RUN_ID"
+          else
+            shard_run="$INPUT_SHARD_RUN"
+          fi
+          if ! [[ "$shard_run" =~ ^[0-9]+$ ]]; then
+            echo "pack stage requires a decimal --shard_run; full stage uses its own shard job" >&2
+            exit 1
+          fi
+          input="$RUNNER_TEMP/selected-shards"
+          expanded="$RUNNER_TEMP/selected-shards-expanded"
+          mkdir -p "$input" "$expanded"
+          gh run download "$shard_run" --repo "$GITHUB_REPOSITORY" \
+            --name "cloud-shards-$BUILD_NUMBER" --dir "$input"
+          tar --zstd -xf "$input/shards.tar.zst" -C "$expanded"
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path, PurePosixPath
+          root = Path(os.environ['RUNNER_TEMP'])
+          selected = root / 'selected-shards'
+          expanded = root / 'selected-shards-expanded'
+          manifest_path = Path('config/cloud-source-manifest.json')
+          manifest = json.loads(manifest_path.read_text())
+          manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          receipt = json.loads((selected / 'shard-receipt.json').read_text())
+          inventory = json.loads((selected / 'slice-inventory.json').read_text())
+          plan_path = expanded / 'shards/plan.json'
+          plan_bytes = plan_path.read_bytes()
+          plan = json.loads(plan_bytes)
+          if receipt.get('status') != 'success':
+              raise SystemExit('Selected shard receipt is not successful')
+          if receipt.get('build_number') != os.environ['BUILD_NUMBER']:
+              raise SystemExit('Selected shard run has a different build number')
+          if receipt.get('graph_run') != os.environ['GRAPH_RUN']:
+              raise SystemExit('Selected shard run uses a different graph run')
+          if receipt.get('manifest_sha256') != manifest_sha:
+              raise SystemExit('Selected shard run uses a different source manifest')
+          if receipt.get('source_root') != manifest.get('source_root'):
+              raise SystemExit('Selected shard run uses a different source root')
+          source_run = receipt.get('source_run')
+          if not isinstance(source_run, str) or not source_run.isdecimal():
+              raise SystemExit('Selected shard receipt has no valid source_run')
+          index_run = receipt.get('index_run')
+          if not isinstance(index_run, str) or not index_run.isdecimal():
+              raise SystemExit('Selected shard receipt has no valid index_run')
+          if os.environ['STAGE'] == 'full':
+              expected_index_run = os.environ['INPUT_INDEX_RUN'] or os.environ['GITHUB_RUN_ID']
+              if index_run != expected_index_run:
+                  raise SystemExit('Full preparation shard used an unexpected canonical index run')
+          elif os.environ['INPUT_INDEX_RUN'] and index_run != os.environ['INPUT_INDEX_RUN']:
+              raise SystemExit('Selected shard run used a different canonical index run')
+          if inventory.get('schema_version') != 1:
+              raise SystemExit('Unsupported slice inventory schema')
+          plan_sha = hashlib.sha256(plan_bytes).hexdigest()
+          if inventory.get('plan_sha256') != plan_sha:
+              raise SystemExit('Slice inventory plan_sha256 differs from shards/plan.json')
+          jobs = [job for wave in plan.get('waves', []) for job in wave]
+          ids = [job.get('id') for job in jobs]
+          if (not ids or len(ids) != len(set(ids)) or plan.get('job_count') != len(ids)
+                  or any(not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name)
+                         for name in ids)):
+              raise SystemExit('Sharding plan has invalid or duplicate shard IDs')
+          entries = inventory.get('shards')
+          if not isinstance(entries, dict) or set(entries) != set(ids):
+              raise SystemExit('Slice inventory shard IDs differ from the sharding plan')
+          shard_manifests = {}
+          for job in jobs:
+              relative = PurePosixPath(job.get('manifest', ''))
+              if relative.is_absolute() or '..' in relative.parts or not relative.parts:
+                  raise SystemExit('Sharding plan has an unsafe shard manifest path')
+              shard_manifest = expanded / 'shards' / Path(*relative.parts)
+              if not shard_manifest.is_file():
+                  raise SystemExit('Sharding plan references a missing shard manifest: ' + str(relative))
+              record = entries[job['id']]
+              digest = hashlib.sha256(shard_manifest.read_bytes()).hexdigest()
+              if record.get('manifest_sha256') != digest:
+                  raise SystemExit('Slice inventory manifest hash mismatch: ' + job['id'])
+              shard_manifests[job['id']] = json.loads(shard_manifest.read_text())
+          if not isinstance(plan.get('export_producers'), dict):
+              raise SystemExit('Sharding plan has no export_producers map')
+          producers = plan['export_producers']
+          for path, owner in producers.items():
+              if owner not in shard_manifests:
+                  raise SystemExit('export_producers references a shard outside the plan: ' + str(owner))
+              manifest_outputs = set(shard_manifests[owner].get('outputs', []))
+              exported_outputs = set(shard_manifests[owner].get('export_outputs',
+                                                                shard_manifests[owner].get('outputs', [])))
+              if path not in manifest_outputs or path not in exported_outputs:
+                  raise SystemExit('export_producers disagrees with its owner manifest: ' + str(path))
+          if not set(plan.get('terminal_outputs', [])) <= set(producers):
+              raise SystemExit('export_producers is missing a terminal output owner')
+          matrix = json.dumps({'shard': sorted(ids)}, separators=(',', ':'))
+          outputs = {
+              'matrix': matrix,
+              'shard_run': os.environ['INPUT_SHARD_RUN'] if os.environ['STAGE'] == 'pack' else os.environ['GITHUB_RUN_ID'],
+              'source_run': source_run,
+              'graph_run': receipt['graph_run'],
+              'index_run': index_run,
+              'plan_sha256': plan_sha,
+              'source_manifest_sha256': manifest_sha,
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in outputs.items():
+                  print(f'{key}={value}', file=output)
+          print(json.dumps({'shard_run': outputs['shard_run'], 'source_run': source_run,
+                            'graph_run': receipt['graph_run'], 'shards': sorted(ids)}, sort_keys=True))
+          PY
+
+  pack:
+    needs: [pack-plan]
+    if: needs.pack-plan.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.pack-plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      GRAPH_RUN: ${{ needs.pack-plan.outputs.graph_run }}
+      INDEX_RUN: ${{ needs.pack-plan.outputs.index_run }}
+      SHARD_RUN: ${{ needs.pack-plan.outputs.shard_run }}
+      SOURCE_RUN: ${{ needs.pack-plan.outputs.source_run }}
+      SHARD_ID: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Free disk space
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+      - name: Install capsule verification and source mount tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/capsule-evidence"
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools zstd python3
+          df -B1 > "$RUNNER_TEMP/capsule-evidence/disk-before.txt"
+          free -b > "$RUNNER_TEMP/capsule-evidence/memory-before.txt"
+      - name: Restore accepted graph, slice, and pruned-index artifacts
+        id: restore
+        run: |
+          set -euo pipefail
+          shard_input="$RUNNER_TEMP/shard-input"
+          shard_tree="$RUNNER_TEMP/shard-tree"
+          mkdir -p "$shard_input" "$shard_tree"
+          {
+            gh run download "$SHARD_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "cloud-shards-$BUILD_NUMBER" --dir "$shard_input"
+            tar --zstd -xf "$shard_input/shards.tar.zst" -C "$shard_tree"
+            # Restore indexed graph text only, with no prepared host binaries.
+            tar --zstd -xf "$shard_input/derived-graph.tar.zst" -C /
+            zstd -d "$shard_input/index-pruned.sqlite.zst" \
+            -o "$RUNNER_TEMP/index-pruned.sqlite"
+          } 2>&1 | tee "$RUNNER_TEMP/capsule-evidence/restore.log"
+      - name: Mount the matching complete source snapshot
+        id: source_mount
+        run: |
+          set -euo pipefail
+          python3 scripts/cloud_layers.py --manifest config/cloud-source-manifest.json \
+            --source-run "$SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
+            --staging "$RUNNER_TEMP/source-layers" \
+            --evidence "$RUNNER_TEMP/capsule-evidence/source" \
+            2>&1 | tee "$RUNNER_TEMP/capsule-evidence/source-mount.log"
+      - name: Pack and verify one cold-input capsule
+        id: package
+        run: |
+          set -euo pipefail
+          capsule="$RUNNER_TEMP/capsules/$SHARD_ID"
+          mkdir -p "$capsule"
+          /usr/bin/time -v python3 scripts/cloud_pack.py \
+            --shards "$RUNNER_TEMP/shard-tree/shards" --shard "$SHARD_ID" \
+            --slice-inventory "$RUNNER_TEMP/shard-input/slice-inventory.json" \
+            --shard-receipt "$RUNNER_TEMP/shard-input/shard-receipt.json" \
+            --source-manifest config/cloud-source-manifest.json \
+            --graph-index "$RUNNER_TEMP/index-pruned.sqlite" --output "$capsule" \
+            2>&1 | tee "$capsule/pack.log"
+      - name: Bind capsule receipt to source and graph runs
+        if: always()
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          SOURCE_MOUNT_OUTCOME: ${{ steps.source_mount.outcome }}
+          EXPECTED_PLAN_SHA256: ${{ needs.pack-plan.outputs.plan_sha256 }}
+          EXPECTED_SOURCE_MANIFEST_SHA256: ${{ needs.pack-plan.outputs.source_manifest_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          capsule = Path(os.environ['RUNNER_TEMP']) / 'capsules' / os.environ['SHARD_ID']
+          capsule.mkdir(parents=True, exist_ok=True)
+          pack_path = capsule / 'pack-receipt.json'
+          if pack_path.is_file():
+              pack = json.loads(pack_path.read_text())
+          else:
+              pack = {'status': 'failed', 'error': 'cloud_pack did not write pack-receipt.json'}
+          receipt = {
+              'schema_version': 1,
+              'status': 'success' if os.environ['PACKAGE_OUTCOME'] == 'success' and pack.get('status') == 'success' else 'failed',
+              'shard_id': os.environ['SHARD_ID'],
+              'build_number': os.environ['BUILD_NUMBER'],
+              'graph_run': os.environ['GRAPH_RUN'],
+              'index_run': os.environ['INDEX_RUN'],
+              'shard_run': os.environ['SHARD_RUN'],
+              'source_run': os.environ['SOURCE_RUN'],
+              'source_manifest_sha256': os.environ['EXPECTED_SOURCE_MANIFEST_SHA256'],
+              'plan_sha256': os.environ['EXPECTED_PLAN_SHA256'],
+              'restore_step_outcome': os.environ['RESTORE_OUTCOME'],
+              'source_mount_step_outcome': os.environ['SOURCE_MOUNT_OUTCOME'],
+              'package_step_outcome': os.environ['PACKAGE_OUTCOME'],
+              'pack_receipt': pack,
+          }
+          (capsule / 'workflow-pack-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({'shard_id': receipt['shard_id'], 'status': receipt['status']}, sort_keys=True))
+          PY
+      - name: Retain cold-input capsule and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-capsule-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.tar.zst
+            ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.json
+            ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.log
+            ${{ runner.temp }}/capsule-evidence/*.txt
+            ${{ runner.temp }}/capsule-evidence/*.log
+            ${{ runner.temp }}/capsule-evidence/source/*.json
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Retain matrix pack receipt
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-pack-receipt-${{ matrix.shard }}
+          path: ${{ runner.temp }}/capsules/${{ matrix.shard }}/workflow-pack-receipt.json
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn
+
+  pack-summary:
+    needs: [pack-plan, pack]
+    if: always() && needs.pack-plan.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      GRAPH_RUN: ${{ needs.pack-plan.outputs.graph_run }}
+      INDEX_RUN: ${{ needs.pack-plan.outputs.index_run }}
+      SHARD_RUN: ${{ needs.pack-plan.outputs.shard_run }}
+      SOURCE_RUN: ${{ needs.pack-plan.outputs.source_run }}
+      EXPECTED_MATRIX: ${{ needs.pack-plan.outputs.matrix }}
+      EXPECTED_PLAN_SHA256: ${{ needs.pack-plan.outputs.plan_sha256 }}
+      EXPECTED_SOURCE_MANIFEST_SHA256: ${{ needs.pack-plan.outputs.source_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Download only tiny matrix pack receipts
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack-receipts"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'cloud-pack-receipt-*' --dir "$RUNNER_TEMP/pack-receipts"
+      - name: Validate every capsule and write aggregate registry
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          expected = json.loads(os.environ['EXPECTED_MATRIX'])['shard']
+          directory = Path(os.environ['RUNNER_TEMP']) / 'pack-receipts'
+          found = {}
+          for path in sorted(directory.glob('cloud-pack-receipt-*/workflow-pack-receipt.json')):
+              receipt = json.loads(path.read_text())
+              shard = receipt.get('shard_id')
+              if not isinstance(shard, str) or shard in found:
+                  raise SystemExit('Duplicate or invalid pack receipt shard ID: ' + str(shard))
+              found[shard] = receipt
+          if set(found) != set(expected):
+              raise SystemExit('Pack receipt IDs differ from matrix: expected %s got %s' %
+                               (sorted(expected), sorted(found)))
+          manifest_path = Path('config/cloud-source-manifest.json')
+          import hashlib
+          manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          if manifest_sha != os.environ['EXPECTED_SOURCE_MANIFEST_SHA256']:
+              raise SystemExit('Pack plan source manifest hash differs from the checked-out manifest')
+          archives = []
+          graph_index_identity = None
+          for shard in sorted(expected):
+              receipt = found[shard]
+              if receipt.get('status') != 'success' or receipt.get('package_step_outcome') != 'success':
+                  raise SystemExit('Cold capsule failed: ' + shard)
+              for field, expected_value in (
+                  ('build_number', os.environ['BUILD_NUMBER']),
+                  ('graph_run', os.environ['GRAPH_RUN']),
+                  ('index_run', os.environ['INDEX_RUN']),
+                  ('shard_run', os.environ['SHARD_RUN']),
+                  ('source_run', os.environ['SOURCE_RUN']),
+                  ('plan_sha256', os.environ['EXPECTED_PLAN_SHA256']),
+                  ('source_manifest_sha256', manifest_sha),
+              ):
+                  if receipt.get(field) != expected_value:
+                      raise SystemExit('Pack receipt %s differs for shard %s' % (field, shard))
+              packed = receipt.get('pack_receipt', {})
+              if packed.get('status') != 'success' or packed.get('shard_id') != shard:
+                  raise SystemExit('Embedded pack receipt is unsuccessful or misbound: ' + shard)
+              if packed.get('source_manifest_sha256') != manifest_sha:
+                  raise SystemExit('Embedded pack receipt has a different source manifest: ' + shard)
+              if packed.get('plan_sha256') != os.environ['EXPECTED_PLAN_SHA256']:
+                  raise SystemExit('Embedded pack receipt has a different slice plan: ' + shard)
+              index_identity = packed.get('graph_index')
+              if (not isinstance(index_identity, dict) or not isinstance(index_identity.get('bytes'), int)
+                      or not isinstance(index_identity.get('sha256'), str)
+                      or not re.fullmatch(r'[a-fA-F0-9]{64}', index_identity['sha256'])):
+                  raise SystemExit('Pack receipt has no valid pruned graph index identity: ' + shard)
+              if graph_index_identity is None:
+                  graph_index_identity = index_identity
+              elif graph_index_identity != index_identity:
+                  raise SystemExit('Pack jobs used different pruned graph indexes')
+              if not isinstance(packed.get('archive_sha256'), str) or not re.fullmatch(r'[a-fA-F0-9]{64}', packed['archive_sha256']):
+                  raise SystemExit('Pack receipt has no archive SHA-256: ' + shard)
+              archives.append({'shard_id': shard, 'archive': packed.get('archive'),
+                               'archive_bytes': packed.get('archive_bytes'),
+                               'archive_sha256': packed['archive_sha256'],
+                               'file_count': packed.get('file_count'),
+                               'input_bytes': packed.get('input_bytes')})
+          summary = {'schema_version': 1, 'status': 'success', 'build_number': os.environ['BUILD_NUMBER'],
+                     'graph_run': os.environ['GRAPH_RUN'], 'index_run': os.environ['INDEX_RUN'],
+                     'shard_run': os.environ['SHARD_RUN'], 'source_run': os.environ['SOURCE_RUN'],
+                     'source_manifest_sha256': manifest_sha,
+                     'plan_sha256': os.environ['EXPECTED_PLAN_SHA256'], 'shard_count': len(archives),
+                     'graph_index': graph_index_identity,
+                     'archive_bytes_total': sum(row['archive_bytes'] for row in archives),
+                     'input_bytes_total': sum(row['input_bytes'] for row in archives),
+                     'capsules': archives}
+          path = Path(os.environ['RUNNER_TEMP']) / 'pack-registry.json'
+          path.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(summary, sort_keys=True))
+          PY
+      - name: Retain aggregate capsule registry
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-pack-registry-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/pack-registry.json
           compression-level: 0
           retention-days: 14
           if-no-files-found: warn

@@ -22,7 +22,7 @@ import graph
 import cloud_frontends
 import cloud_index
 from cloud_host_runtime import derive_host_runtime, derive_rust_native
-from cloud_source_reads import derive_source_reads
+from cloud_source_reads import derive_source_reads, iter_invocations
 
 TARGETS = cloud_index.TARGETS
 
@@ -35,6 +35,16 @@ def replace_roots(value, out_root):
     if isinstance(value, dict):
         return {key: replace_roots(item, out_root) for key, item in value.items()}
     return value
+
+
+def is_scalar_touch(command, output, source_root):
+    invocations = list(iter_invocations({'command': command}, str(source_root)))
+    if len(invocations) != 1:
+        return False
+    argv, cwd = invocations[0]
+    return (len(argv) == 2 and posixpath.basename(argv[0]) == 'touch'
+            and posixpath.normpath(argv[1] if argv[1].startswith('/') else
+                                   posixpath.join(cwd, argv[1])) == output)
 
 
 def append_companion(database, source_root, companion, wrapper, epoch):
@@ -230,6 +240,8 @@ def scalar_probe(database, source_root, overrides, directory):
                                cwd=source_root, stdout=log, stderr=subprocess.STDOUT, check=True)
             if path.read_bytes() != base64.b64decode(desired['contents_base64']):
                 raise ValueError('Native scalar action did not rematerialize its exact frontend bytes')
+            if stat.S_IMODE(path.stat().st_mode) != desired['mode']:
+                raise ValueError('Native scalar action did not rematerialize its frontend mode')
             results.append({'output': str(path), 'status': 'success'})
         finally:
             path.write_bytes(contents)
@@ -277,23 +289,40 @@ def integrate(args):
             source_root, out_root, out_root, out_root / '.cloud-preparation/frontends', existing)
         wrapper = out_root / '.cloud-preparation/combined.ninja'
         append_companion(database, source_root, companion, wrapper, graph_receipt['build_datetime'])
+        profile['side_output_dirs'].append({
+            'producer': str(out_root / '.path_interposer_origpath'), 'dirs': [str(out_root / '.path')],
+            'rationale': 'The source metadata actor creates the admitted expr/tr alias directory.',
+            'evidence': ['build/soong/ui/build/path.go', 'source-built frontend metadata initializer']})
+        graph.augment_graph(database, profile, replace_profile=True)
         mutations = Mutations(database)
         current = graph.Graph(database)
         for desired in descriptor['native_scalar_overrides']:
             owner = current.producers([desired['output']], directory_fallback=False)[desired['output']]
             records, _ = current.edge_records([owner])
             metadata = current.native_metadata(records)
-            original = shlex.split(metadata[owner]['command'])
-            if (len(records[owner]['outputs']) != 1 or len(original) != 2
-                    or posixpath.basename(original[0]) != 'touch'
-                    or posixpath.normpath(original[1] if original[1].startswith('/') else
-                                          str(source_root / original[1])) != desired['output']):
+            if (len(records[owner]['outputs']) != 1
+                    or not is_scalar_touch(metadata[owner]['command'], desired['output'], source_root)):
                 raise ValueError('Unexpected native frontend scalar producer: ' + metadata[owner]['command'])
             mutations.scalar(owner, desired)
         current.db.close()
         mutations.publish()
         receipt['scalar_probe'] = scalar_probe(database, source_root, descriptor['native_scalar_overrides'],
                                                 output / 'scalar-probe')
+        runtime_profile = json.loads(Path(args.runtime_profile).read_text())
+        current = graph.Graph(database)
+        path_additions = {}
+        path_owners = []
+        for consumer in runtime_profile['path_consumers']:
+            producer = replace_roots(consumer['output'], out_root)
+            owner = current.producers([producer], directory_fallback=False).get(producer)
+            if owner is None:
+                raise ValueError('Reviewed platform PATH consumer has no fresh producer: ' + producer)
+            path_additions[owner] = descriptor['path_interposer']['outputs']
+            path_owners.append({'output': producer, 'edge': owner, 'kind': consumer['kind']})
+        current.db.close()
+        mutations.dependencies(path_additions, 'reviewed source-derived platform PATH execution context')
+        mutations.publish()
+        receipt['platform_path_consumers'] = path_owners
         iterations = []
         while True:
             current = graph.Graph(database)
@@ -345,7 +374,17 @@ def integrate(args):
             manifest['leaf_inputs'] = sorted(set(manifest['leaf_inputs']) | {str(path_directory)})
             manifest['build_environment'] = {
                 **manifest.get('build_environment', {}), 'OUT_DIR': str(out_root),
-                'ANDROID_BUILD_TOP': str(source_root), 'PATH': str(path_directory) + ':' + str(out_root / '.path')}
+                'ANDROID_BUILD_TOP': str(source_root), 'PATH': str(path_directory) + ':' + str(out_root / '.path'),
+                **runtime_profile.get('build_environment', {})}
+            if any(item['output'] in manifest['outputs'] for item in path_owners):
+                kernel_sources = [str(source_root / value) for value in runtime_profile['kernel_source_leaves']]
+                missing = [value for value in kernel_sources if not Path(value).exists()]
+                if missing:
+                    raise ValueError('Missing source-derived kernel platform input: ' + ', '.join(missing))
+                manifest['leaf_inputs'] = sorted(set(manifest['leaf_inputs']) | set(kernel_sources))
+                if str(out_root / '.path') not in manifest['outputs']:
+                    manifest['external_input_dirs'] = sorted(set(manifest.get('external_input_dirs', [])) |
+                                                              {str(out_root / '.path')})
             path.write_text(json.dumps(manifest, indent=2) + '\n')
         slice_inventory = {'schema_version': 1, 'plan_sha256': cloud_index.sha256(shards / 'plan.json'),
                            'shards': {path.parent.name: {
@@ -388,6 +427,8 @@ def main():
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--max-actions', type=int, default=4000)
     parser.add_argument('--max-parallel', type=int, default=20)
+    parser.add_argument('--runtime-profile', default=str(Path(__file__).resolve().parents[1] /
+                                                       'config/cloud-runtime-profile.json'))
     args = parser.parse_args()
     receipt = integrate(args)
     print(json.dumps(receipt, sort_keys=True), flush=True)
