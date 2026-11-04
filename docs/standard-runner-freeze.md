@@ -170,9 +170,11 @@ GitHub documents a normal `GITHUB_TOKEN` budget of 1,000 REST requests per hour
 per repository ([rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)).
 An API-budget wait is not a request for a larger runner.
 
-If a superseded run ignores an ordinary cancellation while an `always()` gate
-is active, use `gh run cancel RUN_ID --force --repo coachpo/crux-pe13-distributed`
-and confirm that its status becomes `completed/cancelled` before replacing it.
+Job gates use `!cancelled()` so intentionally skipped ancestors do not suppress
+resumed stages, and ordinary workflow cancellation can stop work. If an older
+revision's `always()` gate ignores cancellation, use
+`gh run cancel RUN_ID --force --repo coachpo/crux-pe13-distributed` and confirm
+`completed/cancelled` before replacing it.
 
 ## Acceptance evidence and artifact retention
 

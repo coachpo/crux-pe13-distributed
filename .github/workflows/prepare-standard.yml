@@ -127,7 +127,7 @@ jobs:
 
   shard:
     needs: index
-    if: always() && (inputs.stage == 'shard' || inputs.stage == 'full') && (needs.index.result == 'success' || needs.index.result == 'skipped')
+    if: ${{ !cancelled() && (inputs.stage == 'shard' || inputs.stage == 'full') && (needs.index.result == 'success' || needs.index.result == 'skipped') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     env:
@@ -226,7 +226,7 @@ jobs:
 
   pack-plan:
     needs: [index, shard]
-    if: always() && (inputs.stage == 'pack' || (inputs.stage == 'full' && needs.shard.result == 'success'))
+    if: ${{ !cancelled() && (inputs.stage == 'pack' || (inputs.stage == 'full' && needs.shard.result == 'success')) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
@@ -364,7 +364,7 @@ jobs:
 
   pack:
     needs: [pack-plan]
-    if: needs.pack-plan.result == 'success'
+    if: ${{ !cancelled() && needs.pack-plan.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     strategy:
@@ -499,7 +499,7 @@ jobs:
 
   pack-summary:
     needs: [pack-plan, pack]
-    if: always() && needs.pack-plan.result == 'success'
+    if: ${{ !cancelled() && needs.pack-plan.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:

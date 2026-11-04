@@ -157,6 +157,17 @@ return any remaining failure to root with evidence; never lower acceptance.
   compares the full source/pruned closure semantics. It neither widens the
   product target closure nor removes any selected adaptation. Actual slicing
   and packing still require a successful hosted run after this fix.
+- Shard acceptance passed in `41769467686`, commit `3802881`, job
+  `126375516290`: 136,591 retained edges / 136,566 actions, 39 shards / 8
+  waves; pruned index 1,534,316,544 bytes with digest
+  `52b19246e25a2ca94b74b9d0b70a7553eca3798d9aca91f4561733b91bdf94eb`.
+  Native preparation took 34:39.00 with maximum RSS 12,741,012 KiB. Artifact
+  `13296156332` is 610,880,810 bytes. Pack-plan also succeeded, but the pack
+  job inherited the implicit `success()` check from the skipped index ancestor
+  and was skipped; summary correctly failed on missing receipts. Job gates now
+  explicitly use `!cancelled()` with their required-result checks, preserving
+  skipped-stage resume and ordinary cancellation. The next `stage=pack` run
+  reuses this accepted shard artifact; no graph/index/slice rerun is needed.
 
 ## Executor protocol
 
