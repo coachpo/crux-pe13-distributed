@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 8 / active (2026-11-04).
+Plan: standard-runner-build / revision 9 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -94,6 +94,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
+| T2 | implemented, live fixture pending | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across standard source/graph/index/slice/capsule/compile/assembly workflows. Manual standard-runner fixture tests successful replacement after a forced initial conflict and proper failure propagation when both uploads fail. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -277,6 +278,27 @@ Do not insert historical source overlays or old compiled artifact bindings.
   3 retains worker `79c8c2f`, empty task roots and only this run's fresh parents.
   There are 32 successful native tasks, two transport retries and five later
   tasks still required. No native error has been suppressed.
+- Attempt 3 `w004-s002` job `126810964596` completed its native worker
+  successfully in 885 seconds, but the upload action failed finalization with
+  ECONNRESET after sending all 86,696,677 bytes. Its fresh receipt uploaded,
+  but that alone cannot advance the failed workflow gate. T2 adds a bounded
+  same-payload upload retry for future workflows and assembly. Current recovery
+  must still cold-retry this task under the original worker SHA after the active
+  attempt ends; no unfinalized archive or standalone success receipt is accepted
+  as a usable producer. The failed job log is preserved separately.
+- Attempt 3's other wave-4 retry, `w004-s004`, passed. Root verified that the
+  upload failure was the only remaining failure before starting attempt 4 in the
+  same execution/worker. It must rebuild the affected task cold and retain a
+  finalized archive; the prior standalone success receipt is insufficient.
+- T2 reuses the pinned upstream upload action and its existing defaults, without
+  changing artifact paths, names or native checks. Only the first upload may
+  continue to a delayed retry; the second fails normally. Retry overwrite is
+  scoped to the same current-run artifact name, whose prior finalization may
+  have succeeded despite a lost response. The first inner upload uses always()
+  so caller-requested failure diagnostics remain available. This uses supported
+  [composite step conditions and error handling](https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax).
+  Integrated 460 tests (16 skips), actionlint and whitespace checks pass. Real
+  standard-runner transport fixture execution remains required before T2 closes.
 
 ## Executor protocol
 

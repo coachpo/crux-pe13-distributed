@@ -74,7 +74,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/result/compile.log"
       - name: Retain new outputs and native receipt
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: shard-${{ matrix.id }}
           path: ${{ runner.temp }}/result/
@@ -83,7 +83,7 @@ jobs:
           compression-level: 0
       - name: Retain fresh producer receipt
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: fresh-receipt-${{ matrix.id }}
           path: ${{ runner.temp }}/result/receipt.json

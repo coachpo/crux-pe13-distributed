@@ -113,7 +113,7 @@ jobs:
           PY
       - name: Retain canonical index and evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-index-${{ inputs.build_number }}
           path: |
@@ -210,7 +210,7 @@ jobs:
           free -b > "$RUNNER_TEMP/shard-evidence/memory-after.txt"
       - name: Retain slice preparation evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-shards-${{ inputs.build_number }}
           path: |
@@ -474,7 +474,7 @@ jobs:
           PY
       - name: Retain cold-input capsule and diagnostics
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-capsule-${{ matrix.shard }}
           path: |
@@ -489,7 +489,7 @@ jobs:
           if-no-files-found: warn
       - name: Retain matrix pack receipt
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-pack-receipt-${{ matrix.shard }}
           path: ${{ runner.temp }}/capsules/${{ matrix.shard }}/workflow-pack-receipt.json
@@ -598,7 +598,7 @@ jobs:
           PY
       - name: Retain aggregate capsule registry
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-pack-registry-${{ inputs.build_number }}
           path: ${{ runner.temp }}/pack-registry.json

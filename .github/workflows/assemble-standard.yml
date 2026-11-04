@@ -69,7 +69,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/result/assembly.log"
       - name: Retain unpublished ROM images and validation evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-fresh-rom-${{ inputs.build_run }}
           path: ${{ runner.temp }}/result/

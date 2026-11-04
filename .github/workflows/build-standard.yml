@@ -41,7 +41,7 @@ jobs:
             --pack-run "${{ inputs.pack_run }}" --shard-run "${{ inputs.shard_run }}" \
             --build-number "${{ inputs.build_number }}" --output "$RUNNER_TEMP/context" \
             --staging "$RUNNER_TEMP/bootstrap"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: ./.github/actions/retain-artifact
         with:
           name: cloud-build-context
           path: ${{ runner.temp }}/context/context.json
@@ -111,7 +111,7 @@ jobs:
         run: |
           python3 scripts/cloud_build_plan.py summary --context "$RUNNER_TEMP/context/context.json" \
             --staging "$RUNNER_TEMP/summary" --output "$RUNNER_TEMP/result"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: ./.github/actions/retain-artifact
         if: always()
         with:
           name: cloud-fresh-build-summary

@@ -126,7 +126,7 @@ jobs:
           python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
             --layer "$LAYER" --output "$RUNNER_TEMP/layer"
       - name: Retain complete source layer
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-${{ matrix.layer }}
           path: ${{ runner.temp }}/layer
@@ -135,7 +135,7 @@ jobs:
           if-no-files-found: error
       - name: Retain source failure evidence
         if: failure()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: failure-${{ matrix.layer }}
           path: ${{ runner.temp }}/layer/*.json
@@ -207,7 +207,7 @@ jobs:
           fi
       - name: Retain graph and resource evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: ./.github/actions/retain-artifact
         with:
           name: cloud-graph-${{ inputs.build_number }}
           path: ${{ runner.temp }}/evidence
