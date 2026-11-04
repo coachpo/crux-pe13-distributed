@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 6 / active (2026-11-04).
+Plan: standard-runner-build / revision 7 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -92,6 +92,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | active | source_footprint + root | `scripts/capsule.py`, `tests/test_capsule.py`: repair implicit AIDL source-type closure. Add source-only same-package siblings and their transitive imports, preserving generated OUT exclusion and source/graph pins. Root verifies the old capsule inventory, reviews/tests, repacks all 39 on standard Actions, admits the new registry separately from the immutable original, then restarts all compilation empty. |
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
+| D2-perf | implemented, cloud check pending | source_footprint + root | Source-only AIDL closure caches pass fixtures for repeated lookup, distinct roots and genuine unvisited leaves. Recognizes real `aidl`/`aidl-cpp` invocations, preserves their exact root searches and gives only unvisited leaves the AIDL-specific fallback. No source bytes, generated-input policy or native action changes. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -206,6 +207,18 @@ Do not insert historical source overlays or old compiled artifact bindings.
   index, shards and public source snapshot. No native compiled inputs are seeded.
   A3 integrated validation passed 453 tests (16 environment skips), actionlint
   and whitespace checks; real image/cpio acceptance remains V2.
+- Repack `41835375815` reached 38/39 successful capsules without failure.
+  `w002-s002` remained in collection for over 100 minutes. Inspection identifies
+  redundant AIDL name/root/path resolution: the final leaf fallback searches
+  the shard-wide include-root union again, and sibling recursion repeats
+  qualified-name probes. D2-perf caches these searches without omitting the
+  fallback or reducing source closure. The existing task continues while that
+  optimization is reviewed; no successful preparation evidence is discarded.
+- D2-perf integration passed 456 tests (16 environment skips), actionlint and
+  whitespace checks. Root selected a parallel replacement full repack with the
+  optimized collector rather than relying on the slow outstanding task. Both
+  use the same 39 slice manifests, source pins and build identity; only a fully
+  successful, reviewed capsule registry can enter the new cold compilation.
 
 ## Executor protocol
 

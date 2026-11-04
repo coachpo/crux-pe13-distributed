@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 MODULE = Path(__file__).resolve().parents[1] / "scripts" / "capsule.py"
@@ -1108,6 +1109,62 @@ class CapsuleTests(unittest.TestCase):
             self.assertIn(str(self.source / relative).lstrip("/"), names)
         for excluded in (package / "WrongPackage.aidl", package / "nested/Subpackage.aidl", generated):
             self.assertNotIn(str(excluded).lstrip("/"), names)
+
+    def test_aidl_qualified_type_probe_is_cached_per_include_root_set(self):
+        roots = [self.source / "aidl-one", self.source / "aidl-two"]
+        for root in roots:
+            self.write(root / "android/example/Type.aidl", "package android.example;\nparcelable Type;\n")
+        collector = capsule.Collector(self.manifest, self.source, self.out)
+        with patch.object(capsule, "optional_probe", wraps=capsule.optional_probe) as probe:
+            first = collector.aidl_qualified_type("android.example.Type", roots)
+            probes = probe.call_count
+            repeated = collector.aidl_qualified_type("android.example.Type", roots)
+            self.assertEqual(repeated, first)
+            self.assertEqual(probe.call_count, probes)
+            distinct = collector.aidl_qualified_type("android.example.Type", [roots[1]])
+            self.assertEqual(distinct, roots[1] / "android/example/Type.aidl")
+            self.assertGreater(probe.call_count, probes)
+
+    def test_aidl_leaf_fallback_uses_aidl_roots_not_global_cpp_root_union(self):
+        package = self.source / "interfaces/aidl/android/media"
+        self.write(package / "IPlayer.aidl",
+                   "package android.media;\ninterface IPlayer { android.hardware.foo.Type value(); }\n")
+        target = self.source / "interfaces/aidl/android/hardware/foo/Type.aidl"
+        self.write(target, "package android.hardware.foo;\nparcelable Type;\n")
+        self.write(self.source / "lib/input.c", "int input(void) { return 0; }\n")
+        self.manifest["leaf_inputs"] = ["interfaces/aidl/android/media/IPlayer.aidl", "lib/input.c"]
+        self.manifest["commands"] = [
+            "aidl -Iinterfaces/aidl interfaces/aidl/android/media/IPlayer.aidl",
+            "clang -Icpp/large-header-root lib/input.c",
+        ]
+        collector, _, archive = self.collect()
+        self.assertIn(str(target).lstrip("/"), archive.getnames())
+        exact_aidl_roots = (self.source / "interfaces/aidl",)
+        self.assertEqual(tuple(collector.aidl_search_paths), exact_aidl_roots)
+        self.assertIn(("android.hardware.foo.Type", exact_aidl_roots), collector.aidl_type_source_cache)
+        self.assertNotIn(("android.hardware.foo.Type", tuple(collector.compiler_search_paths)),
+                         collector.aidl_type_source_cache)
+
+    def test_aidl_cpp_marks_real_frontend_and_unvisited_cp_leaf_uses_its_roots(self):
+        source_root = self.source / "interfaces/aidl"
+        uses = source_root / "android/media/Uses.aidl"
+        sibling = source_root / "android/media/Sibling.aidl"
+        trigger = source_root / "android/test/Trigger.aidl"
+        self.write(uses, "package android.media;\ninterface Uses { Sibling value(); }\n")
+        self.write(sibling, "package android.media;\nparcelable Sibling;\n")
+        self.write(trigger, "package android.test;\ninterface Trigger {}\n")
+        self.manifest["leaf_inputs"] = [str(uses)]
+        self.manifest["commands"] = [
+            "cp " + str(uses) + " " + str(self.out / "copied-uses.aidl"),
+            "aidl-cpp -Iinterfaces/aidl " + str(trigger),
+        ]
+        collector, _, archive = self.collect()
+        names = set(archive.getnames())
+        self.assertNotIn(uses.resolve(), collector.aidl_frontend_inputs)
+        self.assertIn(trigger.resolve(), collector.aidl_frontend_inputs)
+        self.assertIn(str(sibling).lstrip("/"), names)
+        self.assertIn(str(uses).lstrip("/"), names)
+        self.assertEqual(tuple(collector.aidl_search_paths), (source_root,))
 
     def test_tablegen_include_closure_follows_declared_search_paths(self):
         self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",

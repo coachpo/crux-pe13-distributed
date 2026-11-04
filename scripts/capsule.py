@@ -931,6 +931,12 @@ class Collector:
         self.tablegen_scan_cache = set()
         self.aidl_scan_cache = set()
         self.aidl_package_scan_cache = {}
+        self.aidl_package_dirs_cache = {}
+        self.aidl_source_roots_cache = {}
+        self.aidl_declared_package_cache = {}
+        self.aidl_type_source_cache = {}
+        self.aidl_frontend_inputs = set()
+        self.aidl_search_paths = []
         self.rust_scan_cache = set()
         self.compiler_search_paths = []
         self.command_temporaries = None
@@ -1549,7 +1555,71 @@ class Collector:
             if dependency.suffix in TABLEGEN_SUFFIXES:
                 self.tablegen_input(dependency, include_paths)
 
-    def aidl_input(self, value, include_paths):
+    def aidl_source_roots(self, include_paths):
+        """Memoize only declared SOURCE roots, excluding OUT and OUT symlinks."""
+        key = tuple(include_paths)
+        if key not in self.aidl_source_roots_cache:
+            roots = []
+            for value in include_paths:
+                root = self.path(value)
+                resolved = root.resolve()
+                if (beneath(root, self.out_root) or beneath(resolved, self.out_root)
+                        or not (beneath(root, self.source_root)
+                                or any(beneath(root, external) for external in self.external_roots))
+                        or not optional_probe(root, "is_dir")):
+                    continue
+                roots.append(root)
+            self.aidl_source_roots_cache[key] = tuple(dict.fromkeys(roots))
+        return self.aidl_source_roots_cache[key]
+
+    def aidl_declared_package(self, path, text=None):
+        resolved = Path(path).resolve()
+        if resolved not in self.aidl_declared_package_cache:
+            if text is None:
+                text = Path(path).read_text(errors="replace")
+            self.aidl_declared_package_cache[resolved] = aidl_package_name(text)
+        return self.aidl_declared_package_cache[resolved]
+
+    def aidl_package_directories(self, path, package, include_paths):
+        key = (Path(path).parent.resolve(), package, tuple(include_paths))
+        if key not in self.aidl_package_dirs_cache:
+            package_parts = Path(*package.split('.'))
+            directories = []
+            for root in self.aidl_source_roots(include_paths):
+                package_dir = root / package_parts
+                if (optional_probe(package_dir, "is_dir")
+                        and package_dir.resolve() == Path(path).parent.resolve()):
+                    directories.append(package_dir)
+            self.aidl_package_dirs_cache[key] = tuple(dict.fromkeys(directories))
+        return self.aidl_package_dirs_cache[key]
+
+    def aidl_qualified_type(self, name, include_paths):
+        """Resolve a qualified AIDL type once per declared source-root set."""
+        key = (name, tuple(include_paths))
+        if key in self.aidl_type_source_cache:
+            return self.aidl_type_source_cache[key]
+        components = name.split('.')
+        dependency = None
+        for length in range(len(components), 1, -1):
+            relative = Path(*components[:length]).with_suffix('.aidl')
+            for root in self.aidl_source_roots(include_paths):
+                candidate = root / relative
+                # Most FQN/root pairs are absent. Check cheaply before resolving
+                # every ancestor on large mounted source filesystems.
+                if not optional_probe(candidate):
+                    continue
+                if beneath(candidate.resolve(), self.out_root):
+                    continue
+                expected_package = '.'.join(components[:length - 1])
+                if self.aidl_declared_package(candidate) == expected_package:
+                    dependency = candidate
+                    break
+            if dependency is not None:
+                break
+        self.aidl_type_source_cache[key] = dependency
+        return dependency
+
+    def aidl_input(self, value, include_paths, actual_frontend=False):
         """Follow imported types and same-package siblings through source roots.
 
         Soong names only the interface being generated. AIDL also resolves
@@ -1559,6 +1629,11 @@ class Collector:
         path = self.path(value)
         if self.produced(path) or not self.selected(path) or not optional_probe(path):
             return
+        if actual_frontend:
+            self.aidl_frontend_inputs.add(path.resolve())
+            for directory in include_paths:
+                if directory not in self.aidl_search_paths:
+                    self.aidl_search_paths.append(directory)
         key = (path.resolve(), tuple(include_paths))
         if key in self.aidl_scan_cache:
             return
@@ -1568,22 +1643,9 @@ class Collector:
         # The compiler searches sibling declarations for same-package names.
         # Restrict this closure to one package directory under a declared SOURCE
         # -I root; never recursively scan an include root or an OUT directory.
-        package = aidl_package_name(text)
+        package = self.aidl_declared_package(path, text)
         if package and beneath(path, self.source_root) and not beneath(path, self.out_root):
-            package_parts = Path(*package.split('.'))
-            package_dirs = []
-            for directory in include_paths:
-                root = self.path(directory)
-                if (beneath(root, self.out_root) or beneath(root.resolve(), self.out_root)
-                        or not (beneath(root, self.source_root)
-                                or any(beneath(root, external) for external in self.external_roots))):
-                    continue
-                package_dir = root / package_parts
-                if (optional_probe(package_dir, "is_dir") and
-                        package_dir.resolve() == path.parent.resolve()):
-                    package_dirs.append(package_dir)
-            package_dirs = list(dict.fromkeys(package_dirs))
-            for package_dir in package_dirs:
+            for package_dir in self.aidl_package_directories(path, package, include_paths):
                 package_key = (package_dir.resolve(), package)
                 siblings = self.aidl_package_scan_cache.get(package_key)
                 if siblings is None:
@@ -1594,13 +1656,13 @@ class Collector:
                                 or not self.selected(sibling)):
                             continue
                         sibling_text = sibling.read_text(errors="replace")
-                        if aidl_package_name(sibling_text) == package:
+                        if self.aidl_declared_package(sibling, sibling_text) == package:
                             siblings.append(sibling)
                     self.aidl_package_scan_cache[package_key] = tuple(siblings)
                 for sibling in siblings:
                     self.add(sibling, "aidl-package-sibling:" + str(path))
                     if sibling != path:
-                        self.aidl_input(sibling, include_paths)
+                        self.aidl_input(sibling, include_paths, actual_frontend)
 
         # Fully-qualified references may also omit import statements. Try
         # progressively shorter source paths so nested AIDL types resolve to
@@ -1608,30 +1670,11 @@ class Collector:
         scan_text = re.sub(r'/\*.*?\*/', ' ', text, flags=re.DOTALL)
         scan_text = re.sub(r'//[^\n]*', ' ', scan_text)
         for name in sorted(set(re.findall(r'(?<![\w.])([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)(?![\w.])', scan_text))):
-            components = name.split('.')
-            dependency = None
-            for length in range(len(components), 1, -1):
-                relative = Path(*components[:length]).with_suffix('.aidl')
-                for directory in include_paths:
-                    root = self.path(directory)
-                    candidate = root / relative
-                    if beneath(candidate, self.out_root) or beneath(candidate.resolve(), self.out_root):
-                        # A generated AIDL file is admitted only through its
-                        # explicit Ninja producer/consumer contract, not scanned here.
-                        continue
-                    if (beneath(root, self.source_root)
-                            or any(beneath(root, external) for external in self.external_roots)):
-                        if optional_probe(candidate):
-                            candidate_package = aidl_package_name(candidate.read_text(errors="replace"))
-                            if candidate_package == ".".join(components[:length - 1]):
-                                dependency = candidate
-                                break
-                if dependency is not None:
-                    break
+            dependency = self.aidl_qualified_type(name, include_paths)
             if dependency is not None:
                 self.add(dependency, "aidl-qualified-type:" + str(path), required=False)
                 if dependency.suffix == ".aidl":
-                    self.aidl_input(dependency, include_paths)
+                    self.aidl_input(dependency, include_paths, actual_frontend)
 
         for name in re.findall(r'^[ \t]*import[ \t]+([A-Za-z_][\w.]*)[ \t]*;', text, re.MULTILINE):
             # A nested type (android.app.ActivityManager.RunningTaskInfo) lives
@@ -1648,7 +1691,7 @@ class Collector:
                 continue
             self.add(dependency, "aidl-import:" + str(path), required=False)
             if dependency.suffix in AIDL_SUFFIXES:
-                self.aidl_input(dependency, include_paths)
+                self.aidl_input(dependency, include_paths, actual_frontend)
 
     def rust_module_inputs(self, value):
         """Follow the Rust module tree a crate root declares.
@@ -2453,6 +2496,8 @@ class Collector:
         for directory in include_paths:
             if directory not in self.compiler_search_paths:
                 self.compiler_search_paths.append(directory)
+        aidl_invocations = [(program, end) for program, end in command_invocations(tokens)
+                            if Path(str(tokens[program])).name in {"aidl", "aidl-cpp"}]
         index = 0
         while index < len(tokens):
             temporary_outputs.position = index
@@ -2548,7 +2593,8 @@ class Collector:
                         if path.suffix in TABLEGEN_SUFFIXES:
                             self.tablegen_input(path, include_paths)
                         if path.suffix in AIDL_SUFFIXES:
-                            self.aidl_input(path, include_paths)
+                            actual_aidl = any(program < index < end for program, end in aidl_invocations)
+                            self.aidl_input(path, include_paths, actual_aidl)
                         if path.suffix == '.rs':
                             self.rust_module_inputs(path)
                         self.tool_package(path)
@@ -2599,7 +2645,11 @@ class Collector:
             elif path.suffix in TABLEGEN_SUFFIXES:
                 self.tablegen_input(path, self.compiler_search_paths)
             elif path.suffix in AIDL_SUFFIXES:
-                self.aidl_input(path, self.compiler_search_paths)
+                # Actual AIDL invocations already traversed their exact -I
+                # roots. The fallback is only for leaf files not seen there;
+                # never feed it the unrelated shard-wide C/C++ root union.
+                if path.resolve() not in self.aidl_frontend_inputs:
+                    self.aidl_input(path, self.aidl_search_paths)
         depfiles = list(self.manifest.get("depfiles", []))
         depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
         depfile_owners = {}
