@@ -1072,6 +1072,43 @@ class CapsuleTests(unittest.TestCase):
                          "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl"]:
             self.assertIn(str(self.source / relative).lstrip("/"), names)
 
+    def test_aidl_source_package_closure_collects_implicit_and_transitive_types_only(self):
+        package = self.source / "interfaces/aidl/android/media"
+        self.write(package / "IPlayer.aidl",
+                   "package android.media;\n"
+                   "interface IPlayer { VolumeShaperConfiguration local(); "
+                   "android.hardware.foo.Bar qualified(); "
+                   "android.hardware.foo.Outer.Inner nested(); "
+                   "android.media.Generated generated(); }\n")
+        self.write(package / "VolumeShaperConfiguration.aidl",
+                   "package android.media;\n"
+                   "import android.hardware.foo.Other;\n"
+                   "parcelable VolumeShaperConfiguration { Other transitive; }\n")
+        self.write(package / "WrongPackage.aidl", "package android.other;\nparcelable WrongPackage;\n")
+        self.write(package / "nested/Subpackage.aidl", "package android.media.nested;\nparcelable Subpackage;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Bar.aidl",
+                   "package android.hardware.foo;\nparcelable Bar;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Other.aidl",
+                   "package android.hardware.foo;\nparcelable Other;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Outer.aidl",
+                   "package android.hardware.foo;\nparcelable Outer;\n")
+        generated = self.out / "gen/android/media/Generated.aidl"
+        self.write(generated, "package android.media;\nparcelable Generated;\n")
+        self.manifest["commands"] = [
+            "aidl -Iinterfaces/aidl -I" + str(self.out / "gen")
+            + " interfaces/aidl/android/media/IPlayer.aidl"]
+        _, _, archive = self.collect()
+        names = set(archive.getnames())
+        for relative in (
+                "interfaces/aidl/android/media/IPlayer.aidl",
+                "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                "interfaces/aidl/android/hardware/foo/Bar.aidl",
+                "interfaces/aidl/android/hardware/foo/Other.aidl",
+                "interfaces/aidl/android/hardware/foo/Outer.aidl"):
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+        for excluded in (package / "WrongPackage.aidl", package / "nested/Subpackage.aidl", generated):
+            self.assertNotIn(str(excluded).lstrip("/"), names)
+
     def test_tablegen_include_closure_follows_declared_search_paths(self):
         self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",
                    'include "llvm/Option/Record.td"\n')

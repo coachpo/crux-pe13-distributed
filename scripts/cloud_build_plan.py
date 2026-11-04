@@ -16,6 +16,7 @@ from cloud_source_reads import iter_invocations
 
 
 EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110303'
+PACK_REGISTRIES = {'41779197896': EVIDENCE / 'pack-registry.json'}
 
 
 def read(path):
@@ -38,6 +39,14 @@ def sha(path):
 def fresh_binding(context):
     return {key: context[key] for key in ('execution_id', 'pack_run', 'shard_run',
                                           'plan_sha256', 'source_manifest_sha256')}
+
+
+def admit_pack_registry(registry, pack_run):
+    expected = PACK_REGISTRIES.get(pack_run)
+    if expected is None:
+        raise ValueError('Pack run has no reviewed cold-capsule registry: ' + pack_run)
+    if registry != read(expected):
+        raise ValueError('Pack registry differs from the accepted 39 cold capsules')
 
 
 def producer_binding(context, task_id):
@@ -147,8 +156,7 @@ def bootstrap(args):
     cloud_artifacts.download_artifacts(args.shard_run, repository, staging / 'shards',
                                       name='cloud-shards-' + args.build_number)
     registry = read(staging / 'pack/pack-registry.json')
-    if registry != read(EVIDENCE / 'pack-registry.json'):
-        raise ValueError('Pack registry differs from the accepted 39 cold capsules')
+    admit_pack_registry(registry, args.pack_run)
     shard_dir = staging / 'shards'
     receipt, inventory = read(shard_dir / 'shard-receipt.json'), read(shard_dir / 'slice-inventory.json')
     if registry['shard_run'] != args.shard_run or registry['build_number'] != args.build_number:

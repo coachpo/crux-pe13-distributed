@@ -39,6 +39,13 @@ TABLEGEN_SUFFIXES = {".td"}
 # AIDL interfaces import each other by package name; the tool resolves them
 # against its declared -I roots.
 AIDL_SUFFIXES = {".aidl"}
+AIDL_PACKAGE_RE = re.compile(r'^[ \t]*package[ \t]+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)[ \t]*;',
+                            re.MULTILINE)
+
+
+def aidl_package_name(text):
+    match = AIDL_PACKAGE_RE.search(text)
+    return match.group(1) if match else None
 
 
 class CapsuleError(Exception):
@@ -923,6 +930,7 @@ class Collector:
         self.linker_scan_cache = set()
         self.tablegen_scan_cache = set()
         self.aidl_scan_cache = set()
+        self.aidl_package_scan_cache = {}
         self.rust_scan_cache = set()
         self.compiler_search_paths = []
         self.command_temporaries = None
@@ -1542,11 +1550,11 @@ class Collector:
                 self.tablegen_input(dependency, include_paths)
 
     def aidl_input(self, value, include_paths):
-        """Follow AIDL package imports through the declared import roots.
+        """Follow imported types and same-package siblings through source roots.
 
-        Soong names only the interface being generated; ``import a.b.C;`` pulls
-        another .aidl file from an ``-I`` root, so a cold capsule has to resolve
-        the package path itself.
+        Soong names only the interface being generated. AIDL also resolves
+        unqualified types from the declared package, without an import, so the
+        cold capsule needs the direct SOURCE siblings of that package as well.
         """
         path = self.path(value)
         if self.produced(path) or not self.selected(path) or not optional_probe(path):
@@ -1556,6 +1564,75 @@ class Collector:
             return
         self.aidl_scan_cache.add(key)
         text = path.read_text(errors="replace")
+
+        # The compiler searches sibling declarations for same-package names.
+        # Restrict this closure to one package directory under a declared SOURCE
+        # -I root; never recursively scan an include root or an OUT directory.
+        package = aidl_package_name(text)
+        if package and beneath(path, self.source_root) and not beneath(path, self.out_root):
+            package_parts = Path(*package.split('.'))
+            package_dirs = []
+            for directory in include_paths:
+                root = self.path(directory)
+                if (beneath(root, self.out_root) or beneath(root.resolve(), self.out_root)
+                        or not (beneath(root, self.source_root)
+                                or any(beneath(root, external) for external in self.external_roots))):
+                    continue
+                package_dir = root / package_parts
+                if (optional_probe(package_dir, "is_dir") and
+                        package_dir.resolve() == path.parent.resolve()):
+                    package_dirs.append(package_dir)
+            package_dirs = list(dict.fromkeys(package_dirs))
+            for package_dir in package_dirs:
+                package_key = (package_dir.resolve(), package)
+                siblings = self.aidl_package_scan_cache.get(package_key)
+                if siblings is None:
+                    siblings = []
+                    for sibling in sorted(package_dir.iterdir()):
+                        if (sibling.suffix != ".aidl" or not optional_probe(sibling)
+                                or beneath(sibling.resolve(), self.out_root)
+                                or not self.selected(sibling)):
+                            continue
+                        sibling_text = sibling.read_text(errors="replace")
+                        if aidl_package_name(sibling_text) == package:
+                            siblings.append(sibling)
+                    self.aidl_package_scan_cache[package_key] = tuple(siblings)
+                for sibling in siblings:
+                    self.add(sibling, "aidl-package-sibling:" + str(path))
+                    if sibling != path:
+                        self.aidl_input(sibling, include_paths)
+
+        # Fully-qualified references may also omit import statements. Try
+        # progressively shorter source paths so nested AIDL types resolve to
+        # their outer declaration (for example Outer.Inner -> Outer.aidl).
+        scan_text = re.sub(r'/\*.*?\*/', ' ', text, flags=re.DOTALL)
+        scan_text = re.sub(r'//[^\n]*', ' ', scan_text)
+        for name in sorted(set(re.findall(r'(?<![\w.])([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)(?![\w.])', scan_text))):
+            components = name.split('.')
+            dependency = None
+            for length in range(len(components), 1, -1):
+                relative = Path(*components[:length]).with_suffix('.aidl')
+                for directory in include_paths:
+                    root = self.path(directory)
+                    candidate = root / relative
+                    if beneath(candidate, self.out_root) or beneath(candidate.resolve(), self.out_root):
+                        # A generated AIDL file is admitted only through its
+                        # explicit Ninja producer/consumer contract, not scanned here.
+                        continue
+                    if (beneath(root, self.source_root)
+                            or any(beneath(root, external) for external in self.external_roots)):
+                        if optional_probe(candidate):
+                            candidate_package = aidl_package_name(candidate.read_text(errors="replace"))
+                            if candidate_package == ".".join(components[:length - 1]):
+                                dependency = candidate
+                                break
+                if dependency is not None:
+                    break
+            if dependency is not None:
+                self.add(dependency, "aidl-qualified-type:" + str(path), required=False)
+                if dependency.suffix == ".aidl":
+                    self.aidl_input(dependency, include_paths)
+
         for name in re.findall(r'^[ \t]*import[ \t]+([A-Za-z_][\w.]*)[ \t]*;', text, re.MULTILINE):
             # A nested type (android.app.ActivityManager.RunningTaskInfo) lives
             # in its outer class file, so try progressively shorter prefixes.

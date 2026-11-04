@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 5 / active (2026-11-04).
+Plan: standard-runner-build / revision 6 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -86,10 +86,12 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Current production run `41819689572`, head `f4592fed75f20c7de8ee3cd16d55516611b03d19`; all 39 native tasks and final fresh producer summary are required. It restarts empty and uses no outputs from earlier runs. |
+| V1 | pending D2 | root + read-only observer | Production run `41819689572`, head `f4592fed75f20c7de8ee3cd16d55516611b03d19`, ended with 28 successful tasks and one AIDL failure; later waves skipped. After D2 repacking, all 39 tasks restart empty with the new admitted registry. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
-| D1 | active | source_footprint + root | `worker.py` and worker fixtures: optional extra exports must be a subset of the admitted manifest's declared outputs, verified fresh after Ninja, then archived with the original exports. No arbitrary OUT/source approval. Root C0/C1 derives typed launcher runtime bundles, admits their current-run owners/dependencies and requests only these extra exports. |
+| D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
+| D2 | active | source_footprint + root | `scripts/capsule.py`, `tests/test_capsule.py`: repair implicit AIDL source-type closure. Add source-only same-package siblings and their transitive imports, preserving generated OUT exclusion and source/graph pins. Root verifies the old capsule inventory, reviews/tests, repacks all 39 on standard Actions, admits the new registry separately from the immutable original, then restarts all compilation empty. |
+| A3 | active | acceptance_audit + root | `scripts/assemble_dev.py` and assembly fixtures: run the existing Recovery cpio gates on the fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuse the supported image extraction helper; do not omit or weaken the cpio checks. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -170,6 +172,35 @@ Do not insert historical source overlays or old compiled artifact bindings.
   Three producer tasks receive declared extra-export lists; xsdc has a local
   JAR prebuild target in `w002-s006`. The original 39 capsule byte identities
   remain unchanged. Integrated validation: 449 tests, 16 skips, actionlint pass.
+- Run `41819689572` passed all 23 tasks in waves 0–2, including the repaired
+  generated Java runtimes. Wave 3 `w003-s000` then failed resolving AIDL types
+  such as `android.hardware.graphics.composer3.Capability`. Its declared `-I`
+  root maps correctly to the pinned source package; the collector follows only
+  explicit imports while AIDL's resolver also opens referenced types without
+  import declarations. D2 verifies the capsule inventory before accepting that
+  diagnosis. Healthy sibling jobs continue so other concrete failures are not
+  hidden. A source closure repair changes capsule archive identities, not source
+  revisions, slice manifests, Ninja actions, build identity or the 39-task plan.
+  Any repaired registry is admitted as a new, separately evidenced capsule
+  revision; the accepted original preparation registry remains unchanged. The
+  subsequent production run starts all 39 tasks empty and cannot reuse outputs
+  from this failed run or diagnostic probes.
+- The old `w003-s000` capsule sidecar confirms the AIDL diagnosis: it contains
+  30 files in the frozen composer3 API-1 package, including IComposer and
+  IComposerClient, but omits Capability and other implicitly referenced sibling
+  types. Inspecting the cloud-generated metadata does not execute any local PE
+  preparation or build action.
+- Pre-assembly review found an independent input-shape gap: the fresh graph
+  produces `recovery.img`, not standalone `ramdisk-recovery.img`. FIT preparation
+  already supports extracting its ramdisk, but the earlier cpio gate requires
+  the missing standalone file. A3 moves/reuses fresh extraction before that gate
+  and must retain every existing Recovery cpio requirement.
+- D2 source closure fixtures and integration passed: 451 tests, 16 environment
+  skips, actionlint and whitespace checks. The source-only closure also resolves
+  unimported fully-qualified types across declared source import roots, including
+  nested types, without scanning generated OUT siblings. Capsule revision
+  admission now binds each reviewed pack run to its own checked-in registry;
+  unreviewed runs and changed registries are rejected. Cloud repacking is next.
 
 ## Executor protocol
 

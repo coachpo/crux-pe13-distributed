@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
@@ -11,6 +12,19 @@ spec.loader.exec_module(plan)
 
 
 class BuildPlanTests(unittest.TestCase):
+    def test_pack_revision_requires_its_reviewed_registry_contents(self):
+        original = {'capsules': [{'archive_sha256': 'original'}]}
+        repaired = {'capsules': [{'archive_sha256': 'repaired'}]}
+        with patch.dict(plan.PACK_REGISTRIES, {'1': 'original.json', '2': 'repaired.json'}, clear=True), \
+                patch.object(plan, 'read', side_effect=lambda path: {'original.json': original,
+                                                                    'repaired.json': repaired}[path]):
+            plan.admit_pack_registry(original, '1')
+            plan.admit_pack_registry(repaired, '2')
+            with self.assertRaisesRegex(ValueError, 'differs'):
+                plan.admit_pack_registry(original, '2')
+            with self.assertRaisesRegex(ValueError, 'no reviewed'):
+                plan.admit_pack_registry(repaired, '3')
+
     def inputs(self):
         waves, capsules, inventory = [], [], {}
         prior = []
