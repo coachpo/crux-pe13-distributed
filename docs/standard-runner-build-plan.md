@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 9 / active (2026-11-04).
+Plan: standard-runner-build / revision 10 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, has passed 32 tasks, including all six wave-3 tasks and the repaired AIDL closure. Attempt 3 is cold-retrying two wave-4 pre-Ninja HTTP-503 failures. All 39 tasks and final summary remain required. |
+| V1 | pending D3 restart | root + read-only observer | Production `41866735013` passed waves 0–5 after same-execution transport retries, but wave-6 keystore2 has a genuine missing native-link input. It is not accepted. After D3 admission repair all 39 tasks restart empty on the latest worker, including automatic download/upload retry fixes. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -95,6 +95,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
+| D3 | implemented, real build pending | rust_graph_review, rust_dependency_audit + root | Pure Rust native-file operand reader and C0 typed declared-owner admission pass 476 integrated tests (16 skips). Foreign native inputs use existing current-run export/import verification; same-task native ordering stays unchanged. Frozen source/graph/index/slice/Ninja/capsule identities remain unchanged. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -308,6 +309,36 @@ Do not insert historical source overlays or old compiled artifact bindings.
   whose explicit regression assertion passed. The expected error annotations
   belong only to this transport fixture, not native compilation. Root inspected
   the raw job `126828060381` log and successful workflow conclusion.
+- Attempts 4–6 recovered the wave-4 upload failure and wave-5 pre-Ninja HTTP
+  503 failures, all with empty retried task roots and unchanged worker/context.
+  All 36 native tasks through wave 5 ultimately passed. Wave-6 `w006-s001` job
+  `126865695045` then genuinely failed linking keystore2: its literal Rust
+  `-C link-args` requires the Soong stripped `libkeystore2_apc_compat.so`, owned
+  and freshly built by `w005-s000`, but that producer exported only the installed
+  copy. The full 19,921-character native command matches frozen edge 919 exactly.
+- Independent read-only audits of all 39 manifests found 318 Rust edges and
+  656 literal generated native-file occurrences: 513 earlier-wave and 143 local,
+  with no missing, same-wave foreign or later-wave owners. Every foreign owner
+  is already a direct plan dependency. Three unexported consumer/path pairs are
+  APC compat (`w006-s001` from `w005-s000`) and gRPC/grpc_wrap
+  (`w005-s001` from `w004-s002`); thirteen other underdescribed pairs happen to
+  be exported already. D3 admits these literal reads generically via the existing
+  fresh runtime transport contract, not a library-name special case. Local
+  native ordering remains unchanged: the failed task's local km_compat library
+  demonstrably built before Rust linking. The canonical parser/index and all
+  39 capsule byte identities remain unchanged, so no reindex/repack is needed.
+  The next production execution nevertheless recompiles all 39 tasks empty;
+  none of `41866735013`'s compiled outputs can seed it.
+- D3 implementation covers ordered split/joined codegen options, single
+  link-arg versus space-list link-args, wrappers/cwd, linker flag values and
+  declared self outputs. It does not evaluate shell payloads, infer basename
+  providers, read warm files or silently expand unknown response files. Literal
+  generated inputs must have an exact selected owner; foreign owners must be in
+  earlier waves. Existing current-run receipt/spec checks verify their bytes.
+  Repeated consumer/path relations are deduplicated. The
+  [Rust codegen option contract](https://doc.rust-lang.org/rustc/codegen-options/index.html#link-args)
+  and recorded native command provide the operand semantics. Integrated
+  validation: 476 tests, 16 environment skips, actionlint and whitespace checks.
 
 ## Executor protocol
 

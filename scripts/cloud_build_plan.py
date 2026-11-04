@@ -12,6 +12,7 @@ import re
 import subprocess
 
 import cloud_artifacts
+from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
 
 
@@ -113,6 +114,35 @@ def admit_host_jar_bundles(tasks, owners, commands, source_root, out_root):
     return bundles
 
 
+def admit_rust_native_inputs(tasks, owners, edges, source_root, out_root):
+    """Transport literal Rust linker inputs from their declared fresh owners."""
+    relations = {}
+    for task_id, rows in edges.items():
+        for edge_index, edge in enumerate(rows):
+            for path in rust_native_file_reads(edge, source_root, out_root):
+                producer = owners.get(path)
+                if producer is None:
+                    raise ValueError('Rust native link input has no admitted declared producer: ' + path)
+                if producer == task_id:
+                    # These remain outputs of this task's original sliced Ninja;
+                    # their native dependency ordering is not changed here.
+                    continue
+                if tasks[producer]['wave'] >= tasks[task_id]['wave']:
+                    raise ValueError('Rust native link producer is not in an earlier admitted wave: ' + path)
+                tasks[producer]['extra_exports'] = sorted(set(tasks[producer].get('extra_exports', [])) | {path})
+                tasks[task_id]['depends_on'] = sorted(set(tasks[task_id]['depends_on']) | {producer})
+                inputs = {item['path']: item['producer'] for item in tasks[task_id].get('runtime_inputs', [])}
+                if path in inputs and inputs[path] != producer:
+                    raise ValueError('Conflicting runtime input owner: ' + path)
+                inputs[path] = producer
+                tasks[task_id]['runtime_inputs'] = [
+                    {'path': value, 'producer': inputs[value]} for value in sorted(inputs)]
+                relation = relations.setdefault((task_id, path), {
+                    'consumer': task_id, 'path': path, 'producer': producer, 'edge_indices': []})
+                relation['edge_indices'].append(edge_index)
+    return [relations[key] for key in sorted(relations)]
+
+
 def admit_inputs(registry, receipt, inventory, plan, plan_sha):
     if registry.get('status') != 'success' or receipt.get('status') != 'success':
         raise ValueError('Preparation input did not succeed')
@@ -171,13 +201,14 @@ def bootstrap(args):
     plan = read(plan_path)
     waves, tasks = admit_inputs(registry, receipt, inventory, plan, sha(plan_path))
     commands, branding, product_recipe, buildinfo = [], {}, None, None
-    owners, task_commands = {}, {}
+    owners, task_commands, task_edges = {}, {}, {}
     for task in tasks.values():
         manifest_path = expanded / 'shards' / task['id'] / 'manifest.json'
         if sha(manifest_path) != task['manifest_sha256']:
             raise ValueError('Shard manifest integrity differs: ' + task['id'])
         manifest = read(manifest_path)
         task_commands[task['id']] = manifest['commands']
+        task_edges[task['id']] = manifest['edges']
         for path in manifest['outputs']:
             if path in owners and owners[path] != task['id']:
                 raise ValueError('Multiple declared output owners: ' + path)
@@ -195,6 +226,7 @@ def bootstrap(args):
                     raise ValueError('Conflicting branding literals in the admitted graph')
                 branding[key] = value
     host_bundles = admit_host_jar_bundles(tasks, owners, task_commands, receipt['source_root'], receipt['out_root'])
+    rust_inputs = admit_rust_native_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
     graph = read(EVIDENCE / 'graph-receipt-summary.json')['receipt_summary']
     if buildinfo is None or len(branding) != 2:
         raise ValueError('Missing independent graph-derived build identity')
@@ -239,6 +271,7 @@ def bootstrap(args):
                     'source_manifest_sha256', 'plan_sha256', 'graph_index')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
                'host_jar_runtime_bundles': host_bundles,
+               'rust_native_link_inputs': rust_inputs,
                'frontend': {**graph, **scalars, 'graph_receipt': graph,
                    'identity_commands': commands, 'buildinfo_environment': buildinfo,
                    'branding_keys': branding,

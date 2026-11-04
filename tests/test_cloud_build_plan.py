@@ -125,6 +125,38 @@ class BuildPlanTests(unittest.TestCase):
         self.assertNotIn('runtime_inputs', tasks['local'])
         self.assertEqual(bundles[0]['transport'], 'local-prebuild')
 
+    def test_rust_native_inputs_are_deduplicated_and_exported_from_declared_owner(self):
+        tasks = {'native': {'wave': 0, 'depends_on': []},
+                 'rust': {'wave': 1, 'depends_on': [],
+                          'runtime_inputs': [{'path': '/OUT/apc.so', 'producer': 'native'}]}}
+        owners = {'/OUT/apc.so': 'native', '/OUT/local.so': 'rust'}
+        edges = {'rust': [{'command': 'rustc -C link-args="/OUT/apc.so /OUT/local.so" input.rs'},
+                          {'command': 'rustc -Clink-arg=/OUT/apc.so input.rs'}]}
+        relations = plan.admit_rust_native_inputs(tasks, owners, edges, '/SOURCE', '/OUT')
+        self.assertEqual(relations, [{'consumer': 'rust', 'path': '/OUT/apc.so',
+                                     'producer': 'native', 'edge_indices': [0, 1]}])
+        self.assertEqual(tasks['native']['extra_exports'], ['/OUT/apc.so'])
+        self.assertEqual(tasks['rust']['depends_on'], ['native'])
+        self.assertEqual(tasks['rust']['runtime_inputs'], [{'path': '/OUT/apc.so', 'producer': 'native'}])
+        self.assertNotIn('local_runtime_targets', tasks['rust'])
+
+    def test_rust_native_inputs_reject_missing_or_not_ready_foreign_owners(self):
+        edges = {'rust': [{'command': 'rustc -C link-args=/OUT/missing.so input.rs'}]}
+        for owner_wave in (None, 1, 2):
+            tasks = {'native': {'wave': owner_wave, 'depends_on': []},
+                     'rust': {'wave': 1, 'depends_on': []}}
+            owners = {} if owner_wave is None else {'/OUT/missing.so': 'native'}
+            with self.subTest(owner_wave=owner_wave), self.assertRaises(ValueError):
+                plan.admit_rust_native_inputs(tasks, owners, edges, '/SOURCE', '/OUT')
+
+    def test_rust_native_inputs_reject_conflicting_existing_runtime_owner(self):
+        tasks = {'native': {'wave': 0, 'depends_on': []},
+                 'rust': {'wave': 1, 'depends_on': [],
+                          'runtime_inputs': [{'path': '/OUT/apc.so', 'producer': 'wrong'}]}}
+        with self.assertRaisesRegex(ValueError, 'Conflicting runtime input owner'):
+            plan.admit_rust_native_inputs(tasks, {'/OUT/apc.so': 'native'},
+                {'rust': [{'command': 'rustc -Clink-arg=/OUT/apc.so input.rs'}]}, '/SOURCE', '/OUT')
+
 
 if __name__ == '__main__':
     unittest.main()
