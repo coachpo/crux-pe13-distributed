@@ -1,0 +1,77 @@
+name: Assemble and verify a fresh PE13 build without publication
+run-name: Verify fresh PE13 compilation ${{ inputs.build_run }}
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Successful fresh standard compilation execution
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fresh-assembly-${{ inputs.build_run }}
+  cancel-in-progress: false
+jobs:
+  assemble:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Free disk space
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+      - name: Install image validation tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result"
+          sudo apt-get update
+          sudo apt-get install -y zstd u-boot-tools device-tree-compiler e2fsprogs \
+            android-sdk-libsparse-utils cpio python-is-python3
+          sudo mkdir -p /home/qingli
+          sudo chown "$(id -u):$(id -g)" /home/qingli
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          nproc >> "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+      - name: Restore the new compilation context
+        run: |
+          set -euo pipefail
+          python3 scripts/cloud_artifacts.py --run "${{ inputs.build_run }}" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/context"
+          python3 scripts/cloud_artifacts.py --run "${{ inputs.build_run }}" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-fresh-build-summary --destination "$RUNNER_TEMP/compile-summary"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          context = json.loads((root / 'context/context.json').read_text())
+          summary = json.loads((root / 'compile-summary/build-summary.json').read_text())
+          if (summary.get('status') != 'success' or summary.get('task_count') != 39
+                  or summary.get('execution_id') != '${{ inputs.build_run }}'
+                  or summary.get('worker_commit') != context.get('worker_commit')):
+              raise SystemExit('All 39 fresh compilation tasks must succeed before assembly')
+          PY
+      - name: Admit new producers, assemble and verify images
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python3 scripts/cloud_assemble.py --context "$RUNNER_TEMP/context/context.json" \
+            --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/assembly" \
+            2>&1 | tee "$RUNNER_TEMP/result/assembly.log"
+      - name: Retain unpublished ROM images and validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-fresh-rom-${{ inputs.build_run }}
+          path: ${{ runner.temp }}/result/
+          retention-days: 30
+          compression-level: 0

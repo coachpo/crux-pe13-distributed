@@ -1,6 +1,7 @@
 import gzip
 import io
 import json
+import copy
 from pathlib import Path
 import shutil
 import struct
@@ -102,6 +103,66 @@ class PackagingTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_source_contract_matches_legacy_reference_oracle_properties(self):
+        contract_path = (Path(__file__).resolve().parents[1]
+                         / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
+        contract = recipe.load_source_contract(contract_path)
+        for mode in ("rom", "recovery"):
+            oracle = recipe.read_tree(package_fits.REFERENCES / (mode + "-pstore.dtb"))
+            projected = recipe.source_contract_reference(contract, mode)
+            self.assertEqual(projected.root["props"]["qcom,msm-id"], oracle.root["props"]["qcom,msm-id"])
+            self.assertEqual(recipe.find(projected.root, "/chosen")["props"],
+                             recipe.find(oracle.root, "/chosen")["props"])
+            self.assertEqual(recipe.find(projected.root, "/memory")["props"],
+                             recipe.find(oracle.root, "/memory")["props"])
+            expected_regions = recipe.reserved_by_name(oracle.root)
+            actual_regions = recipe.reserved_by_name(projected.root)
+            self.assertEqual(set(actual_regions), set(expected_regions))
+            for name, expected in expected_regions.items():
+                actual = actual_regions[name]
+                keys = set(contract["reserved_regions_common"].get(name, {}).get("properties", {}))
+                keys |= set(contract["reserved_regions_by_mode"][mode].get(name, {}).get("properties", {}))
+                self.assertEqual({key: actual["props"][key].hex() for key in keys if key in actual["props"]},
+                                 {key: expected["props"][key].hex() for key in keys if key in expected["props"]})
+                if name in contract["reserved_regions_by_mode"][mode]:
+                    self.assertEqual(actual["name"], contract["reserved_regions_by_mode"][mode][name]["node_name"])
+                    self.assertFalse(expected["children"])
+            fresh_source = copy.deepcopy(oracle)
+            recipe.find(fresh_source.root, "/memory")["props"] = {
+                "device_type": b"memory\0", "reg": b"\0" * 16}
+            legacy_result, _, _, _ = recipe.boot_tree(fresh_source, oracle, mode)
+            contract_result, _, _, _ = recipe.boot_tree(fresh_source, projected, mode)
+            self.assertEqual(contract_result.encode(), legacy_result.encode())
+            native_kwargs = ({"native": True} if mode == "rom" else {"dualboot": True})
+            legacy_native, _, _, _ = recipe.boot_tree(fresh_source, oracle, mode, **native_kwargs)
+            contract_native, _, _, _ = recipe.boot_tree(fresh_source, projected, mode, **native_kwargs)
+            self.assertEqual(contract_native.encode(), legacy_native.encode())
+            native_args = recipe.strings(recipe.find(contract_native.root, "/chosen")["props"]["bootargs"])[0]
+            self.assertNotIn("root=PARTUUID=", native_args)
+            self.assertNotIn("rootwait", native_args.split())
+            self.assertIn("androidboot.serialno=8bd37df4", native_args.split())
+
+    def test_source_contract_route_does_not_open_legacy_reference_dtbs(self):
+        contract_path = (Path(__file__).resolve().parents[1]
+                         / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
+        missing_reference_dir = self.root / "no-binary-reference-files"
+        with patch.object(recipe, "read_tree", side_effect=AssertionError("source route opened an FDT file")):
+            references, device_id, pstore, identity = recipe.boot_contract_inputs(
+                missing_reference_dir, contract_path)
+        self.assertEqual(set(references), {"rom", "recovery"})
+        self.assertEqual(device_id, (0x153, 0x20000))
+        self.assertEqual(pstore, recipe.PSTORE)
+        self.assertEqual(identity["mode"], "source-declarative")
+        self.assertFalse(missing_reference_dir.exists())
+
+    def test_package_command_selects_source_contract_without_legacy_reference_argument(self):
+        contract = (Path(__file__).resolve().parents[1]
+                    / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
+        args = package_fits.boot_contract_args(self.root / "missing-reference-dir", contract)
+        self.assertEqual(args, ["--source-contract", str(contract.resolve())])
+        self.assertNotIn("--reference-dir", args)
+        self.assertEqual(package_fits.boot_contract_args(self.root / "legacy")[0], "--reference-dir")
 
     def prepare(self, **kwargs):
         return package_fits.prepare(self.accepted, self.receipts, self.output, self.product,
@@ -308,6 +369,35 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("--boot-ramdisk", calls[0]); self.assertIn("--recovery-ramdisk", calls[0])
         self.assertFalse(result["physical_recovery_container_generated"])
         self.assertIn('../fit-inputs/Image', (self.output / "fits/rom-cepheus.its").read_text())
+
+    def test_fresh_source_contract_is_threaded_to_recipe_without_reference_directory(self):
+        contract = (Path(__file__).resolve().parents[1]
+                    / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
+        commands = []
+        original_run = subprocess.run
+        def run(command, **kwargs):
+            if command in (["mkimage", "-V"], ["fdtoverlay", "--version"]):
+                return subprocess.CompletedProcess(command, 0, stdout="fixture host tool\n")
+            if len(command) > 1 and command[1] == str(package_fits.RECIPE):
+                commands.append(command)
+                directory = Path(command[command.index("--output-dir") + 1])
+                directory.mkdir()
+                for mode in ("rom", "recovery"):
+                    (directory / (mode + "-cepheus.itb")).write_bytes(b"mock validated FIT")
+                (directory / "fit-validation.json").write_text(json.dumps({"fits": {
+                    mode: {"file_size": len(b"mock validated FIT"),
+                           "loads": {"fdt": 0x84800000, "ramdisk": 0x83000000}}
+                    for mode in ("rom", "recovery")}}))
+                return subprocess.CompletedProcess(command, 0)
+            return original_run(command, **kwargs)
+        with patch("package_fits.subprocess.run", run):
+            result = self.prepare(source_contract=contract, reference_dir=self.root / "no-legacy-dtbs")
+        self.assertEqual(result["status"], "success", result.get("error"))
+        self.assertEqual(package_fits.boot_contract_args(self.root / "no-legacy-dtbs", contract),
+                         ["--source-contract", str(contract.resolve())])
+        self.assertIn("--source-contract", commands[0])
+        self.assertNotIn("--reference-dir", commands[0])
+        self.assertEqual(result["source_contract"]["sha256"], worker.digest(contract))
 
     def test_missing_fit_output_cannot_claim_success_from_report_alone(self):
         original_run = subprocess.run

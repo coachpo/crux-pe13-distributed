@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "purpose": "Source-declarative Crux boot/FIT contract. Fresh assembly reads this property data and fresh source-built DTBs, never the legacy reference FDT binaries.",
+  "provenance": {
+    "legacy_rom_oracle_sha256": "0786c26214617bcd3b5002062003426be847820e89fe614207dea6d01b2e3790",
+    "legacy_recovery_oracle_sha256": "e70ab2f59216877b14c04c0b64ffc8e3174425377ece8230bb2b27a0144461c3",
+    "oracle_use": "Test-only equivalence fixture; production source-contract route must not open either oracle file."
+  },
+  "qcom_msm_id": "0000015300020000",
+  "pstore_properties": {
+    "compatible": "72616d6f6f707300",
+    "reg": "00000000b00000000000000000400000",
+    "record-size": "00100000",
+    "console-size": "00200000",
+    "pmsg-size": "00100000",
+    "ftrace-size": "00000000",
+    "ecc-size": "00000000"
+  },
+  "modes": {
+    "rom": {
+      "bootargs": "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 cgroup.memory=nokmem,nosocket console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xa90000 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 androidboot.selinux=permissive buildvariant=userdebug androidboot.verifiedbootstate=orange androidboot.keymaster=1 androidboot.vbmeta.device_state=unlocked androidboot.veritymode=enforcing androidboot.bootdevice=1d84000.ufshc androidboot.boot_devices=soc/1d84000.ufshc androidboot.init_fatal_panic=true androidboot.fstab_suffix=default androidboot.serialno=8bd37df4 androidboot.ramdump=disable androidboot.secureboot=1 androidboot.hwversion=7.9.2 androidboot.cpuid=0x5958f3e7 androidboot.hwc=CN androidboot.hwlevel=MP androidboot.baseband=mdm nokaslr msm_drm.dsi_display0=dsi_samsung_fhd_ea8076_f1s_cmd_display: androidboot.oled_wp=01b90bb50c5a androidboot.ufsid=0x145 androidboot.dp=0x0 root=PARTUUID=27679ef5-b243-4fc8-b0ac-f9db944f5f81 rootwait ro skip_initramfs init=/init hung_task_panic=1 softlockup_panic=1 panic_on_oops=1 hung_task_timeout_secs=30 androidboot.crux_debug=1 androidboot.crux_minimal_art=1 printk.devkmsg=on androidboot.init_log_level=debug panic=10",
+      "memory_properties": {
+        "device_type": "6d656d6f727900",
+        "reg": "00000000000000000000000000000000"
+      }
+    },
+    "recovery": {
+      "bootargs": "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 cgroup.memory=nokmem,nosocket console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xa90000 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 androidboot.selinux=permissive buildvariant=userdebug androidboot.verifiedbootstate=orange androidboot.keymaster=1 androidboot.vbmeta.device_state=unlocked androidboot.veritymode=enforcing androidboot.bootdevice=1d84000.ufshc androidboot.fstab_suffix=default androidboot.serialno=8bd37df4 androidboot.ramdump=disable androidboot.secureboot=1 androidboot.hwversion=7.9.2 androidboot.cpuid=0x5958f3e7 androidboot.hwc=CN androidboot.hwlevel=MP androidboot.baseband=mdm nokaslr msm_drm.dsi_display0=dsi_samsung_fhd_ea8076_f1s_cmd_display: androidboot.oled_wp=01b90bb50c5a androidboot.ufsid=0x145 androidboot.dp=0x0",
+      "memory_properties": {
+        "ddr_device_type": "00000007",
+        "device_type": "6d656d6f727900",
+        "reg": "0000000080000000000000003bb000000000000180000000000000010000000000000000c000000000000000c0000000"
+      }
+    }
+  },
+  "reserved_regions_common": {
+    "ramoops": {"properties": {"compatible": "72616d6f6f707300", "reg": "00000000b00000000000000000400000", "record-size": "00100000", "console-size": "00200000", "pmsg-size": "00100000", "ftrace-size": "00000000", "ecc-size": "00000000"}},
+    "adsp_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000001000000"}},
+    "camera_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "000000008b7000000000000000500000"}},
+    "cdsp_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000000400000"}},
+    "cdsp_regions": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000991000000000000001400000"}},
+    "cdsp_sec_regions": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000a4c000000000000003c00000"}},
+    "cont_splash_region": {"properties": {"reg": "000000009c0000000000000002400000"}},
+    "hyp_mem": {"properties": {"no-map": "", "reg": "00000000857000000000000000600000"}},
+    "linux,cma": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000002800000"}},
+    "mem_dump_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000002400000"}},
+    "mhi_region": {"properties": {"alloc-ranges": "00000000a3c000000000000001000000", "compatible": "7368617265642d646d612d706f6f6c00", "no-map": "", "size": "0000000001000000"}},
+    "modem_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "000000008e0000000000000009600000"}},
+    "pil_adsp_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "000000008be000000000000002200000"}},
+    "pil_buffer_p1_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000a10000000000000002c00000"}},
+    "pil_buffer_p2_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000a00000000000000001000000"}},
+    "pil_gpu_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "0000000098f150000000000000002000"}},
+    "pil_ipa_fw_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "0000000098f000000000000000010000"}},
+    "pil_ipa_gsi_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "0000000098f100000000000000005000"}},
+    "pil_npu_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "000000008bd800000000000000080000"}},
+    "pil_slpi_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "0000000097b000000000000001400000"}},
+    "pil_spss_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000990000000000000000100000"}},
+    "pil_video_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000976000000000000000500000"}},
+    "pil_wlan_fw_region": {"properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "000000008bc000000000000000180000"}},
+    "qseecom_region": {"properties": {"compatible": "7368617265642d646d612d706f6f6c00", "no-map": "", "reg": "000000009e4000000000000001400000"}},
+    "qseecom_ta_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000001000000"}},
+    "removed_regions": {"properties": {"no-map": "", "reg": "00000000862000000000000005500000"}},
+    "secure_display_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "000000000a000000"}},
+    "smem": {"properties": {"no-map": "", "reg": "00000000860000000000000000200000"}},
+    "sp_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000000800000"}},
+    "user_contig_region": {"properties": {"alloc-ranges": "000000000000000000000000ffffffff", "compatible": "7368617265642d646d612d706f6f6c00", "reusable": "", "size": "0000000001000000"}},
+    "xbl_aop_mem": {"properties": {"no-map": "", "reg": "0000000085e000000000000000140000"}}
+  },
+  "reserved_regions_by_mode": {
+    "rom": {
+      "ramdump_fb_region": {"node_name": "ramdump_fb_region@af000000", "properties": {"compatible": "72656d6f7665642d646d612d706f6f6c00", "no-map": "", "reg": "00000000af0000000000000001000000"}},
+      "xbl_dump_mem": {"node_name": "xbl_dump_mem@85d00000", "properties": {"no-map": "", "reg": "0000000085d000000000000000100000"}}
+    },
+    "recovery": {}
+  }
+}

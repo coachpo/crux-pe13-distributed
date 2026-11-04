@@ -14,7 +14,9 @@ and phandles always come from the new kernel's base and overlay. Existing PE
 boot contracts remain available as development profiles. --boot-ramdisk selects
 native Android first-stage init and removes the legacy ROM/debug arguments;
 --dualboot selects the source crux_uboot fstab for Recovery too. Packaging does
-not establish source provenance or hardware/release validation. Diagnostic
+not establish source provenance or hardware/release validation. Fresh artifact
+assembly passes --source-contract, a property-level policy that does not open
+the retained reference DTBs; omission preserves the legacy default. Diagnostic
 ramdisks must be selected explicitly with --diagnostic-recovery-ramdisk.
 --development-adb permits source-built ROM/Recovery ADB authentication
 overrides for development while retaining native boot/storage validation.
@@ -32,6 +34,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 
 BASE_IDS = {
@@ -198,6 +201,124 @@ class Fdt:
 
 def read_tree(path):
     return Fdt(path.read_bytes())
+
+
+CONTRACT_RESERVED_PROPERTIES = {"compatible", "reg", "size", "alloc-ranges", "no-map", "reusable",
+                                "record-size", "console-size", "pmsg-size", "ftrace-size", "ecc-size"}
+CONTRACT_MEMORY_PROPERTIES = {"device_type", "reg", "ddr_device_type"}
+
+
+def _contract_bytes(properties, label, allowed):
+    require(isinstance(properties, dict) and set(properties) <= allowed,
+            "Invalid source-declarative property set: " + label)
+    decoded = {}
+    for name, value in properties.items():
+        require(isinstance(value, str) and len(value) % 2 == 0 and
+                re.fullmatch(r"[0-9a-f]*", value), "Invalid hex property: " + label + "/" + name)
+        decoded[name] = bytes.fromhex(value)
+    return decoded
+
+
+def load_source_contract(path):
+    """Load property-level boot policy; this route does not consult legacy FDT files."""
+    path = Path(path)
+    contract = json.loads(path.read_text())
+    require(isinstance(contract, dict) and contract.get("schema_version") == 1,
+            "Unsupported source-declarative boot contract")
+    require(contract.get("provenance") == {
+        "legacy_rom_oracle_sha256": REFERENCE_SHA256["rom-pstore.dtb"],
+        "legacy_recovery_oracle_sha256": REFERENCE_SHA256["recovery-pstore.dtb"],
+        "oracle_use": "Test-only equivalence fixture; production source-contract route must not open either oracle file.",
+    }, "Source contract provenance differs from the reviewed contract oracle")
+    qcom_msm_id = contract.get("qcom_msm_id")
+    require(isinstance(qcom_msm_id, str) and re.fullmatch(r"[0-9a-f]+", qcom_msm_id)
+            and len(qcom_msm_id) % 2 == 0, "Invalid source-contract SoC identity")
+    pstore = _contract_bytes(contract.get("pstore_properties"), "pstore", CONTRACT_RESERVED_PROPERTIES)
+    require(pstore == PSTORE, "Source-declarative pstore contract differs from the PE13 source contract")
+    modes = contract.get("modes")
+    require(isinstance(modes, dict) and set(modes) == set(READ_BLOCKS),
+            "Source contract must describe ROM and Recovery")
+    for mode, values in modes.items():
+        require(isinstance(values, dict) and isinstance(values.get("bootargs"), str)
+                and values["bootargs"] and "\x00" not in values["bootargs"],
+                "Invalid source-contract bootargs: " + mode)
+        memory = _contract_bytes(values.get("memory_properties"), mode + " memory", CONTRACT_MEMORY_PROPERTIES)
+        require(memory.get("device_type") == b"memory\0" and "reg" in memory,
+                "Incomplete source-contract memory node: " + mode)
+        expected_memory = [(0, 0)] if mode == "rom" else EXPECTED_BANKS
+        require(sorted(ranges(memory["reg"])) == expected_memory,
+                "Source-contract RAM map differs from the admitted PE13 layout: " + mode)
+        require(values.get("qcom_msm_id", qcom_msm_id) == qcom_msm_id,
+                "Mode-specific source-contract SoC identity differs")
+    common = contract.get("reserved_regions_common")
+    per_mode = contract.get("reserved_regions_by_mode")
+    require(isinstance(common, dict) and isinstance(per_mode, dict)
+            and set(per_mode) == set(READ_BLOCKS), "Invalid source-contract reserved-memory declarations")
+    for mode in READ_BLOCKS:
+        specific = per_mode[mode]
+        require(isinstance(specific, dict) and not (set(specific) & set(common)),
+                "Duplicate common/mode-specific reserved-memory key: " + mode)
+        regions = {**common, **specific}
+        require("ramoops" in regions and regions["ramoops"].get("properties") == contract["pstore_properties"],
+                "Reserved-memory declaration must contain the exact pstore contract")
+        for key, region in regions.items():
+            require(isinstance(key, str) and isinstance(region, dict), "Invalid reserved-memory declaration")
+            props = _contract_bytes(region.get("properties"), mode + " reserved-memory " + key,
+                                    CONTRACT_RESERVED_PROPERTIES)
+            require(props, "Empty reserved-memory contract: " + key)
+            node_name = region.get("node_name")
+            if node_name is not None:
+                require(isinstance(node_name, str) and node_name.split("@", 1)[0] == key,
+                        "Invalid fixed reservation node name: " + key)
+        require(set(per_mode["rom"]) == {"ramdump_fb_region", "xbl_dump_mem"}
+                and not per_mode["recovery"], "Unexpected fixed ROM-only reservation contract")
+    return contract
+
+
+def source_contract_reference(contract, mode):
+    """Make the small tree view consumed by boot_tree without loading any FDT file."""
+    require(mode in contract["modes"], "Unknown source-contract mode: " + str(mode))
+    root = node("")
+    root["props"]["qcom,msm-id"] = bytes.fromhex(contract["qcom_msm_id"])
+    chosen = node("chosen")
+    chosen["props"]["bootargs"] = contract["modes"][mode]["bootargs"].encode() + b"\0"
+    memory = node("memory")
+    memory["props"] = _contract_bytes(contract["modes"][mode]["memory_properties"],
+                                      mode + " memory", CONTRACT_MEMORY_PROPERTIES)
+    reserved = node("reserved-memory")
+    for key, declaration in {**contract["reserved_regions_common"],
+                             **contract["reserved_regions_by_mode"][mode]}.items():
+        region = node(declaration.get("node_name") or key)
+        region["props"] = _contract_bytes(declaration["properties"], mode + " reserved-memory " + key,
+                                          CONTRACT_RESERVED_PROPERTIES)
+        reserved["children"].append(region)
+    root["children"].extend((chosen, memory, reserved))
+    return SimpleNamespace(root=root)
+
+
+def boot_contract_inputs(reference_dir, source_contract=None):
+    if source_contract is not None:
+        path = Path(source_contract).resolve()
+        contract = load_source_contract(path)
+        references = {mode: source_contract_reference(contract, mode) for mode in READ_BLOCKS}
+        return references, cells(bytes.fromhex(contract["qcom_msm_id"])), PSTORE, {
+            "mode": "source-declarative", "path": str(path), "sha256": sha256(path.read_bytes()),
+            "schema_version": contract["schema_version"],
+            "legacy_oracle_sha256": dict(REFERENCE_SHA256),
+        }
+    references = {}
+    for mode in READ_BLOCKS:
+        path = Path(reference_dir) / f"{mode}-pstore.dtb"
+        require(sha256(path.read_bytes()) == REFERENCE_SHA256[path.name],
+                f"Recorded {mode} device tree changed")
+        references[mode] = read_tree(path)
+    require(cells(references["rom"].root["props"]["qcom,msm-id"]) ==
+            cells(references["recovery"].root["props"]["qcom,msm-id"]),
+            "Recorded device trees disagree on SoC revision")
+    return references, cells(references["rom"].root["props"]["qcom,msm-id"]), PSTORE, {
+        "mode": "legacy-binary-reference", "path": str(Path(reference_dir).resolve()),
+        "sha256": dict(REFERENCE_SHA256),
+    }
 
 
 def reserved_by_name(root):
@@ -481,13 +602,13 @@ def native_bootargs(bootargs, dualboot):
     return " ".join(tokens)
 
 
-def validate_source_pstore(root):
+def validate_source_pstore(root, pstore=PSTORE):
     nodes = [current for _, current in walk(root)
              if current["props"].get("compatible") == b"ramoops\0"]
     require(len(nodes) == 1, "Matching source DT must contain exactly one ramoops node")
     properties = {k: v for k, v in nodes[0]["props"].items()
                   if k not in {"phandle", "linux,phandle"}}
-    require(properties == PSTORE,
+    require(properties == pstore,
             "Crux source overlay must already provide B0000000/4MiB pstore with 1+2+1MiB layout")
 
 
@@ -514,7 +635,7 @@ def overlap(a, b):
     return a[0] < b[0] + b[1] and b[0] < a[0] + a[1]
 
 
-def boot_tree(merged, reference, mode, native=False, dualboot=False):
+def boot_tree(merged, reference, mode, native=False, dualboot=False, pstore=PSTORE):
     tree = copy.deepcopy(merged)
     ref_chosen = find(reference.root, "/chosen")["props"]
     require(set(ref_chosen) == {"bootargs"}, "Unexpected reference /chosen properties")
@@ -539,7 +660,7 @@ def boot_tree(merged, reference, mode, native=False, dualboot=False):
     old_regions, new_regions = reserved_by_name(reference.root), reserved_by_name(tree.root)
     # Crux's source overlay already fixes the layout for AOSP packaging too.
     # Retain its phandle; canonicalize the node name for the FIT boot contract.
-    validate_source_pstore(tree.root)
+    validate_source_pstore(tree.root, pstore)
     ramoops = [n for n in new_regions.values()
                if n["props"].get("compatible") == b"ramoops\0"]
     require(len(ramoops) == 1, "New source must contain exactly one ramoops node")
@@ -548,11 +669,11 @@ def boot_tree(merged, reference, mode, native=False, dualboot=False):
     current["name"] = "ramoops@b0000000"
     old_pstore = [n for n in old_regions.values()
                   if n["props"].get("compatible") == b"ramoops\0"]
-    require(len(old_pstore) == 1 and old_pstore[0]["props"] == PSTORE,
+    require(len(old_pstore) == 1 and old_pstore[0]["props"] == pstore,
             "Recorded pstore contract has changed")
     handles = {k: v for k, v in current["props"].items()
                if k in {"phandle", "linux,phandle"}}
-    current["props"] = dict(PSTORE, **handles)
+    current["props"] = dict(pstore, **handles)
     # Normal PE reboots must preserve the DDR-backed pmsg/console rings.
     # msm-poweroff otherwise selects a PMIC hard reset for an empty command.
     restart = find(tree.root, "/soc/restart@c264000")
@@ -704,6 +825,8 @@ def main():
     parser.add_argument("--overlay", type=Path, required=True)
     parser.add_argument("--reference-dir", type=Path,
                         default=workspace / "u-boot-port/references/pe13-boot-contracts")
+    parser.add_argument("--source-contract", type=Path,
+                        help="Use source-declarative boot policy; does not read legacy reference DTBs")
     ramdisk_group = parser.add_mutually_exclusive_group(required=True)
     ramdisk_group.add_argument("--recovery-ramdisk", type=Path,
                                help="PE recovery ramdisk, authenticated unless --development-adb is selected")
@@ -741,16 +864,8 @@ def main():
     native = boot_ramdisk is not None
     modes = ["recovery"] if args.recovery_only else list(READ_BLOCKS)
     header = validate_image(image_data)
-    references = {}
-    for mode in READ_BLOCKS:
-        path = args.reference_dir / f"{mode}-pstore.dtb"
-        require(sha256(path.read_bytes()) == REFERENCE_SHA256[path.name],
-                f"Recorded {mode} device tree changed")
-        references[mode] = read_tree(path)
-    require(cells(references["rom"].root["props"]["qcom,msm-id"]) ==
-            cells(references["recovery"].root["props"]["qcom,msm-id"]),
-            "Recorded device trees disagree on SoC revision")
-    device_id = cells(references["rom"].root["props"]["qcom,msm-id"])
+    references, device_id, pstore_contract, boot_contract_info = boot_contract_inputs(
+        args.reference_dir, args.source_contract)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     outputs = [f"{name}-crux-merged.dtb" for name in BASE_IDS]
     outputs += [f"{mode}-cepheus.{ext}" for mode in modes for ext in ("dtb", "its", "itb")]
@@ -774,7 +889,10 @@ def main():
                          "overlay": str(args.overlay.resolve()), "ramdisk": str(ramdisk),
                          "boot_ramdisk": str(boot_ramdisk) if boot_ramdisk else None,
                          "packager_sha256": sha256(Path(__file__).read_bytes())},
-              "reference_sha256": REFERENCE_SHA256, "overlay_sha256": sha256(args.overlay.read_bytes()),
+              "reference_sha256": (dict(REFERENCE_SHA256)
+                                   if boot_contract_info["mode"] == "legacy-binary-reference" else None),
+              "source_contract": boot_contract_info,
+              "overlay_sha256": sha256(args.overlay.read_bytes()),
               "bases": {}, "selected_base": None, "fits": {}}
     # Qualcomm DTBO root identity is entry metadata, outside the fragments.
     # fdtoverlay preserves the base identity, so install the board metadata.
@@ -801,7 +919,7 @@ def main():
             validate_graph(merged)
             validate_ufs(merged.root)
             validate_usb1(merged.root)
-            validate_source_pstore(merged.root)
+            validate_source_pstore(merged.root, pstore_contract)
             if native or args.dualboot:
                 validate_no_dt_fstab_routes(merged.root)
             require(cells(merged.root["props"]["qcom,msm-id"]) == expected_id and
@@ -823,7 +941,8 @@ def main():
                  (mode == "recovery" and args.dualboot) else "development"))
             tree, reservations, extras, omitted = boot_tree(selected, reference, mode,
                                                           native=native and mode == "rom",
-                                                          dualboot=args.dualboot and mode == "recovery")
+                                                          dualboot=args.dualboot and mode == "recovery",
+                                                          pstore=pstore_contract)
             mode_ramdisk = ramdisk if mode == "recovery" else boot_ramdisk
             mode_ramdisk_data = ramdisk_data if mode == "recovery" else boot_ramdisk_data
             kernel_range = (KERNEL_ADDRESS, header["image_size"])

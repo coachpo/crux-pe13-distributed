@@ -73,11 +73,11 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 
 | ID | State | Owner | Allowed paths / deliverable / validation |
 | --- | --- | --- | --- |
-| C0 | active | root | This plan, `scripts/cloud_build_plan.py`, fixture tests, workflows. Validate accepted input identities on Actions; emit compact context, matrices and final all-task summary. |
-| C1 | ready | frontend_decomposition | `scripts/cloud_compile.py`, `tests/test_cloud_compile.py` only. CLI `--context --id --output --staging`; artifact transport + admitted cold extraction + fresh-only dependencies + existing worker.run_shard; receipt lineage, no old outputs. Tiny fixture/mocks only locally. |
+| C0 | done | root | `cloud_build_plan.py` and artifact-only workflows passed fixture/static checks and real bootstrap in run `41789247344`. Final all-task summary remains part of V1. |
+| C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
-| A2 | ready | source_footprint | `references/pe13-boot-contracts/package-pe13.py`, new source-declarative boot contract JSON, `scripts/package_fits.py`, `scripts/assemble_dev.py`, `scripts/cloud_assemble.py` and their relevant tests. Add an opt-in source-contract recipe route that reads no old reference DTB at runtime; retain legacy default behavior for accepted v3. Fresh assembly must select this new route and all actual kernel/base/overlay/symbol/ramdisk inputs remain fresh receipts. |
-| V1 | draft | root + read-only observer | Real Actions compile waves, fixes and all output checks. Ready only after C0/C1 usable. |
+| A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
+| V1 | active | root + read-only observer | Run `41789247344`, head `17f59f6fe99f5e292a9da8663e7ef8a733fc1e21`; all 39 native tasks and final fresh producer summary are required. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
@@ -94,7 +94,9 @@ Do not insert historical source overlays or old compiled artifact bindings.
 - Existing assembler supports unpublished output but its checked-in producer/
   identity inputs are old; derive new bindings and identity for this graph.
 - Local validation baseline: 403 tests, 16 environment skips from the accepted
-  prep delivery. Actual fresh compilation has not started yet.
+  prep delivery. Integrated compile/assembly helpers and contract route now pass
+  424 tests (16 environment skips), actionlint and whitespace checks. These are
+  separate from required real compilation/assembly acceptance.
 - Preflight found the old FIT recipe reads retained compiled reference DTBs and
   copies boot-contract properties. Root selected a source-declarative contract
   route, preserving the existing hardware policy and validation but removing old
@@ -102,6 +104,11 @@ Do not insert historical source overlays or old compiled artifact bindings.
   representation change, not a boot ABI change; no device validation is claimed.
   Legacy defaults remain unchanged. A2 must prove policy equivalence in fixtures
   and select source-contract mode in fresh assembly; no runtime old-DTB fallback.
+- Real compile bootstrap succeeded in `41789247344`, publishing a new context
+  with this execution ID and worker revision `17f59f6`. Wave 0 dispatched all 13
+  tasks; 12 have succeeded at the current checkpoint, with no compile failure.
+  No earlier compiled producer or reuse-state was admitted. Later waves and the
+  separate unpublished assembly/validation workflow remain pending.
 
 ## Executor protocol
 

@@ -255,7 +255,7 @@ def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage
 
 def assemble(producers, dependency_root, output_dir, identity_path, build_number,
              source_selection, mkimage="mkimage", fdtoverlay="fdtoverlay",
-             debugfs="debugfs", simg2img="simg2img", dumpimage="dumpimage"):
+             debugfs="debugfs", simg2img="simg2img", dumpimage="dumpimage", source_contract=None):
     started = time.monotonic()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -312,7 +312,7 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
             shutil.rmtree(fit_stage)
         packaged = package_fits.prepare(accepted, native_receipts, fit_stage, product,
                                         product / "obj/KERNEL_OBJ", source_selection, True,
-                                        mkimage, fdtoverlay)
+                                        mkimage, fdtoverlay, source_contract=source_contract)
         if packaged["status"] != "success" or not packaged["fits_generated"]:
             raise ValueError("FIT packaging failed: " + packaged.get("error", "unknown"))
         fits_dir = fit_stage / "fits"
