@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Admit prepared cold capsules and coordinate a new artifact-only compilation."""
+from __future__ import annotations
+
+import argparse
+import shlex
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+
+import cloud_artifacts
+
+
+EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110303'
+
+
+def read(path):
+    return json.loads(Path(path).read_text())
+
+
+def write(path, value):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+
+
+def sha(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for data in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def fresh_binding(context):
+    return {key: context[key] for key in ('execution_id', 'pack_run', 'shard_run',
+                                          'plan_sha256', 'source_manifest_sha256')}
+
+
+def producer_binding(context, task_id):
+    return {'id': task_id, 'run_id': context['execution_id'], 'artifact': 'shard-' + task_id,
+            'expected_worker_commit': context['worker_commit'],
+            'expected_manifest_sha256': context['tasks'][task_id]['manifest_sha256']}
+
+
+def buildinfo_environment(command):
+    argv = shlex.split(command)
+    while argv and Path(argv[0]).name in ('bash', 'sh') and '-c' in argv:
+        argv = shlex.split(argv[argv.index('-c') + 1])
+    result = {}
+    for token in argv:
+        if not re.match(r'^[A-Z_][A-Z_0-9]*=', token):
+            break
+        key, value = token.split('=', 1)
+        result[key] = value
+    if not {'BUILD_ID', 'BUILD_VERSION_TAGS', 'PRIVATE_BUILD_DESC'} <= result.keys():
+        raise ValueError('Admitted buildinfo command has no literal build environment')
+    return result
+
+
+def admit_inputs(registry, receipt, inventory, plan, plan_sha):
+    if registry.get('status') != 'success' or receipt.get('status') != 'success':
+        raise ValueError('Preparation input did not succeed')
+    for key in ('build_number', 'graph_run', 'index_run', 'source_run'):
+        if registry[key] != receipt[key]:
+            raise ValueError('Preparation binding differs: ' + key)
+    if registry['source_manifest_sha256'] != receipt['manifest_sha256']:
+        raise ValueError('Source manifests differ')
+    if registry['graph_index'] != {key: receipt['pruned_database'][key] for key in ('bytes', 'sha256')}:
+        raise ValueError('Pruned graph identities differ')
+    if registry['plan_sha256'] != plan_sha or inventory['plan_sha256'] != plan_sha:
+        raise ValueError('Plan byte identity differs')
+    waves = [[task['id'] for task in wave] for wave in plan['waves']]
+    ids = [task for wave in waves for task in wave]
+    capsules = {row['shard_id']: row for row in registry['capsules']}
+    if (len(ids) != 39 or len(waves) != 8 or len(set(ids)) != len(ids)
+            or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
+            or set(ids) != set(inventory['shards'])):
+        raise ValueError('Expected complete 39-task/eight-wave preparation inventory')
+    tasks, seen = {}, set()
+    for number, wave in enumerate(plan['waves']):
+        for task in wave:
+            if not set(task['depends_on']) <= seen:
+                raise ValueError('Task depends on an uncompleted/same wave: ' + task['id'])
+            row = capsules[task['id']]
+            tasks[task['id']] = {'id': task['id'], 'wave': number,
+                'depends_on': task['depends_on'],
+                'manifest_sha256': inventory['shards'][task['id']]['manifest_sha256'],
+                **{key: row[key] for key in ('archive', 'archive_bytes', 'archive_sha256')}}
+        seen.update(task['id'] for task in wave)
+    return waves, tasks
+
+
+def bootstrap(args):
+    output, staging = Path(args.output), Path(args.staging)
+    output.mkdir(parents=True, exist_ok=True)
+    execution = os.environ['GITHUB_RUN_ID']
+    commit = os.environ['GITHUB_SHA']
+    repository = os.environ['GITHUB_REPOSITORY']
+    if not execution.isdecimal() or not re.fullmatch('[a-f0-9]{40}', commit):
+        raise ValueError('Compilation requires a new Actions execution identity')
+    cloud_artifacts.download_artifacts(args.pack_run, repository, staging / 'pack',
+                                      name='cloud-pack-registry-' + args.build_number)
+    cloud_artifacts.download_artifacts(args.shard_run, repository, staging / 'shards',
+                                      name='cloud-shards-' + args.build_number)
+    registry = read(staging / 'pack/pack-registry.json')
+    if registry != read(EVIDENCE / 'pack-registry.json'):
+        raise ValueError('Pack registry differs from the accepted 39 cold capsules')
+    shard_dir = staging / 'shards'
+    receipt, inventory = read(shard_dir / 'shard-receipt.json'), read(shard_dir / 'slice-inventory.json')
+    if registry['shard_run'] != args.shard_run or registry['build_number'] != args.build_number:
+        raise ValueError('Requested preparation run/build differs')
+    expanded = staging / 'expanded'
+    expanded.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['tar', '--zstd', '-xf', str(shard_dir / 'shards.tar.zst'), '-C', str(expanded)], check=True)
+    plan_path = expanded / 'shards/plan.json'
+    plan = read(plan_path)
+    waves, tasks = admit_inputs(registry, receipt, inventory, plan, sha(plan_path))
+    commands, branding, product_recipe, buildinfo = [], {}, None, None
+    for task in tasks.values():
+        manifest_path = expanded / 'shards' / task['id'] / 'manifest.json'
+        if sha(manifest_path) != task['manifest_sha256']:
+            raise ValueError('Shard manifest integrity differs: ' + task['id'])
+        manifest = read(manifest_path)
+        for edge in manifest['edges']:
+            if any(path.endswith('/buildinfo.prop') for path in edge.get('outputs', [])):
+                commands.append({'outputs': edge['outputs'], 'command': edge['command']})
+                buildinfo = buildinfo_environment(edge['command'])
+            elif 'org.pixelexperience.build_date' in edge.get('command', ''):
+                commands.append({'outputs': edge['outputs'], 'command': edge['command']})
+            if any(path.endswith('/system/product/etc/build.prop') for path in edge.get('outputs', [])):
+                product_recipe = edge['command']
+            for key, value in re.findall(r'(org\.pixelexperience\.build_date(?:_utc)?)=(\d[\d-]*)', edge.get('command', '')):
+                if key in branding and branding[key] != value:
+                    raise ValueError('Conflicting branding literals in the admitted graph')
+                branding[key] = value
+    graph = read(EVIDENCE / 'graph-receipt-summary.json')['receipt_summary']
+    if buildinfo is None or len(branding) != 2:
+        raise ValueError('Missing independent graph-derived build identity')
+    cloud_artifacts.download_artifacts(registry['graph_run'], repository, staging / 'graph',
+                                      name='cloud-graph-' + args.build_number)
+    graph_directory = staging / 'graph'
+    if sha(graph_directory / 'graph/graph-receipt.json') != read(EVIDENCE / 'index-receipt.json')['graph_receipt_sha256']:
+        raise ValueError('Fresh graph metadata differs from the accepted canonical index')
+    scalars = {}
+    for key, relative in {'build_number': 'soong/build_number.txt', 'build_date': 'build_date.txt',
+                          'build_fingerprint': 'target/product/crux/build_fingerprint.txt',
+                          'build_thumbprint': 'target/product/crux/build_thumbprint.txt'}.items():
+        value = subprocess.run(['tar', '--zstd', '-xOf', str(graph_directory / 'graph-out.tar.zst'),
+                                'android-out/' + relative], check=True, capture_output=True).stdout.decode()
+        scalars[key] = value
+    if scalars['build_number'].strip() != args.build_number or scalars['build_fingerprint'].strip() != graph['build_fingerprint']:
+        raise ValueError('Admitted frontend scalar identity differs')
+    if (product_recipe is None or 'ro.product.build.' in product_recipe
+            or any(path.endswith('/product.img') for path in plan['export_producers'])):
+        raise ValueError('Product namespace absence requires a reviewed current graph policy')
+    source_manifest_path = Path(__file__).resolve().parents[1] / 'config/cloud-source-manifest.json'
+    if sha(source_manifest_path) != registry['source_manifest_sha256']:
+        raise ValueError('Source revision declaration differs from the admitted capsules')
+    manifest = read(source_manifest_path)
+    suffixes = ('/boot.img', '/recovery.img', '/system.img', '/vendor.img', '/ramdisk.img',
+                '/ramdisk-recovery.img', '/soong/build_number.txt', '/build_fingerprint.txt',
+                '/buildinfo.prop', '/obj/KERNEL_OBJ')
+    exports = {path: owner for path, owner in plan['export_producers'].items() if path.endswith(suffixes)}
+    kernel = receipt['out_root'] + '/target/product/crux/obj/KERNEL_OBJ'
+    if kernel not in exports:
+        raise ValueError('Admitted plan does not export its paired kernel tree')
+    for member in ('arch/arm64/boot/Image', 'vmlinux', 'System.map', '.config',
+                   'arch/arm64/boot/dts/qcom/sm8150.dtb', 'arch/arm64/boot/dts/qcom/sm8150-v2.dtb',
+                   'arch/arm64/boot/dts/qcom/sm8150p.dtb', 'arch/arm64/boot/dts/qcom/sm8150p-v2.dtb',
+                   'arch/arm64/boot/dts/qcom/crux-sm8150-overlay.dtbo', 'include/config/kernel.release'):
+        exports[kernel + '/' + member] = exports[kernel]
+    buildinfo = {key: value.replace(receipt['out_root'], 'OUT') for key, value in buildinfo.items()}
+    context = {'schema_version': 1, 'execution_id': execution, 'worker_commit': commit,
+               'repository': repository, 'pack_run': args.pack_run, 'shard_run': args.shard_run,
+               'source_root': receipt['source_root'], 'out_root': receipt['out_root'],
+               **{key: registry[key] for key in ('build_number', 'graph_run', 'index_run', 'source_run',
+                    'source_manifest_sha256', 'plan_sha256', 'graph_index')},
+               'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
+               'frontend': {**graph, **scalars, 'graph_receipt': graph,
+                   'identity_commands': commands, 'buildinfo_environment': buildinfo,
+                   'branding_keys': branding,
+                   'source_revisions': [{'path': p['path'], 'revision': p['revision']} for p in manifest['projects']],
+                   'absent_partition_namespaces': {'product': {
+                       'reason': 'The admitted current plan has no product image and its folded product property recipe omits the common ro.product.build namespace.',
+                       'evidence': ['current plan export_producers', 'admitted system/product/etc/build.prop producer command',
+                                    'build/make/core/sysprop.mk _skip_common_properties']}}},
+               'source_selection': {'schema_version': 1, 'build_number': args.build_number,
+                   'source_manifest_sha256': registry['source_manifest_sha256'],
+                   'projects': [{'path': p['path'], 'revision': p['revision']} for p in manifest['projects']]}}
+    write(output / 'context.json', context)
+    print(json.dumps({'execution_id': execution, 'tasks': len(tasks), 'waves': list(map(len, waves))}))
+
+
+def validate_receipt(context, receipt, task_id):
+    expected = producer_binding(context, task_id)
+    if receipt.get('status') != 'success' or receipt.get('fresh_build') != fresh_binding(context):
+        raise ValueError('Not a successful producer of this new execution: ' + task_id)
+    for key, value in [('id', task_id), ('run_id', expected['run_id']),
+                       ('worker_commit', expected['expected_worker_commit']),
+                       ('manifest_sha256', expected['expected_manifest_sha256'])]:
+        if str(receipt.get(key)) != str(value):
+            raise ValueError('Producer binding mismatch: ' + key + ':' + task_id)
+    declared = receipt.get('declared_dependencies')
+    if declared != [producer_binding(context, dep) for dep in context['tasks'][task_id]['depends_on']]:
+        raise ValueError('Producer imported an undeclared dependency: ' + task_id)
+    if receipt.get('build_environment', {}).get('CCACHE_DISABLE') != '1':
+        raise ValueError('Fresh compilation did not disable ccache')
+
+
+def summarize(args):
+    context = read(args.context)
+    root = Path(args.staging) / 'receipts'
+    cloud_artifacts.download_artifacts(context['execution_id'], context['repository'], root,
+                                      pattern='fresh-receipt-*')
+    receipts = {p.parent.name.removeprefix('fresh-receipt-'): read(p)
+                for p in root.glob('fresh-receipt-*/receipt.json')}
+    if set(receipts) != set(context['tasks']):
+        raise ValueError('Compilation receipts do not cover all 39 admitted tasks')
+    for task_id, receipt in receipts.items():
+        validate_receipt(context, receipt, task_id)
+    output = Path(args.output)
+    producers = [producer_binding(context, task_id) for task_id in sorted(receipts)]
+    write(output / 'producers.json', producers)
+    write(output / 'build-summary.json', {'schema_version': 1, 'status': 'success',
+          'execution_id': context['execution_id'], 'worker_commit': context['worker_commit'],
+          'task_count': len(receipts), 'fresh_build': fresh_binding(context), 'producers': producers})
+    print(json.dumps({'status': 'success', 'compiled_tasks': len(receipts)}))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest='mode', required=True)
+    plan = sub.add_parser('bootstrap')
+    for key in ('pack-run', 'shard-run', 'build-number', 'output', 'staging'):
+        plan.add_argument('--' + key, required=True)
+    matrix = sub.add_parser('matrix')
+    matrix.add_argument('--context', required=True)
+    matrix.add_argument('--wave', type=int, required=True)
+    matrix.add_argument('--github-output', required=True)
+    summary = sub.add_parser('summary')
+    for key in ('context', 'output', 'staging'):
+        summary.add_argument('--' + key, required=True)
+    args = parser.parse_args()
+    if args.mode == 'bootstrap':
+        bootstrap(args)
+    elif args.mode == 'summary':
+        summarize(args)
+    else:
+        context = read(args.context)
+        with open(args.github_output, 'a') as output:
+            print('matrix=' + json.dumps({'id': context['waves'][args.wave]}, separators=(',', ':')), file=output)
+
+
+if __name__ == '__main__':
+    main()

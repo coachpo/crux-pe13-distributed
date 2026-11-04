@@ -1,0 +1,119 @@
+name: Compile fresh PE13 on standard runners
+run-name: Fresh PE13 compile ${{ inputs.build_number }}
+on:
+  workflow_dispatch:
+    inputs:
+      pack_run:
+        description: Accepted 39-capsule preparation run
+        required: true
+        default: '41779197896'
+        type: string
+      shard_run:
+        description: Accepted slice plan run
+        required: true
+        default: '41769467686'
+        type: string
+      build_number:
+        description: Identity embedded in the admitted capsules
+        required: true
+        default: '2026110303'
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fresh-build-${{ inputs.build_number }}
+  cancel-in-progress: false
+jobs:
+  bootstrap:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install metadata transport
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Admit cold inputs and create empty execution
+        run: |
+          set -euo pipefail
+          python3 scripts/cloud_build_plan.py bootstrap \
+            --pack-run "${{ inputs.pack_run }}" --shard-run "${{ inputs.shard_run }}" \
+            --build-number "${{ inputs.build_number }}" --output "$RUNNER_TEMP/context" \
+            --staging "$RUNNER_TEMP/bootstrap"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cloud-build-context
+          path: ${{ runner.temp }}/context/context.json
+          retention-days: 30
+
+  wave0:
+    needs: bootstrap
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 0
+
+  wave1:
+    needs: wave0
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 1
+
+  wave2:
+    needs: wave1
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 2
+
+  wave3:
+    needs: wave2
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 3
+
+  wave4:
+    needs: wave3
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 4
+
+  wave5:
+    needs: wave4
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 5
+
+  wave6:
+    needs: wave5
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 6
+
+  wave7:
+    needs: wave6
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 7
+
+  summary:
+    needs: wave7
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore admitted execution
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/context"
+      - name: Verify all new compilation receipts
+        run: |
+          python3 scripts/cloud_build_plan.py summary --context "$RUNNER_TEMP/context/context.json" \
+            --staging "$RUNNER_TEMP/summary" --output "$RUNNER_TEMP/result"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: cloud-fresh-build-summary
+          path: ${{ runner.temp }}/result/
+          retention-days: 30

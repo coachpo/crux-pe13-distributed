@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""Run one admitted fresh Ninja shard from its accepted cold-input capsule."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+import cloud_artifacts
+
+worker_spec = importlib.util.spec_from_file_location("crux_worker", SCRIPT_DIR / "worker.py")
+worker = importlib.util.module_from_spec(worker_spec)
+worker_spec.loader.exec_module(worker)
+
+CONTEXT_IDENTITY_FIELDS = (
+    "execution_id", "worker_commit", "repository", "build_number", "source_root", "out_root",
+    "pack_run", "shard_run", "graph_run", "index_run", "source_run",
+    "source_manifest_sha256", "plan_sha256", "graph_index",
+)
+FRESH_BUILD_FIELDS = ("execution_id", "pack_run", "shard_run", "plan_sha256",
+                      "source_manifest_sha256")
+RUN_ID_FIELDS = ("execution_id", "pack_run", "shard_run", "graph_run", "index_run", "source_run")
+
+
+class CompileError(ValueError):
+    pass
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _absolute(value, name):
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise CompileError(name + " must be an absolute path")
+    return Path(os.path.abspath(value))
+
+
+def validate_context(context: dict, shard_id: str, environment=None) -> tuple[dict, dict]:
+    if not isinstance(context, dict) or context.get("schema_version") != 1:
+        raise CompileError("Unsupported fresh-build context schema")
+    required = set(CONTEXT_IDENTITY_FIELDS) | {"waves", "tasks"}
+    missing = sorted(required - set(context))
+    if missing:
+        raise CompileError("Fresh-build context is missing: " + ", ".join(missing))
+    for key in RUN_ID_FIELDS:
+        if not str(context[key]).isdecimal():
+            raise CompileError("Fresh-build context has an invalid " + key)
+    if not re.fullmatch(r"[a-f0-9]{40}", str(context["worker_commit"])):
+        raise CompileError("Fresh-build context has an invalid worker_commit")
+    if not isinstance(context["repository"], str) or not re.fullmatch(
+            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", context["repository"]):
+        raise CompileError("Fresh-build context has an invalid repository")
+    if not isinstance(context["build_number"], str) or not context["build_number"].strip():
+        raise CompileError("Fresh-build context has no build_number")
+    for key in ("source_manifest_sha256", "plan_sha256"):
+        if not isinstance(context[key], str) or not re.fullmatch(r"[a-fA-F0-9]{64}", context[key]):
+            raise CompileError("Fresh-build context has an invalid " + key)
+    source_root = _absolute(context["source_root"], "source_root")
+    out_root = _absolute(context["out_root"], "out_root")
+    if source_root == out_root or source_root in out_root.parents or out_root in source_root.parents:
+        raise CompileError("source_root and out_root must be separate")
+    graph_index = context["graph_index"]
+    if (not isinstance(graph_index, dict) or type(graph_index.get("bytes")) is not int
+            or graph_index["bytes"] <= 0 or not isinstance(graph_index.get("sha256"), str)
+            or not re.fullmatch(r"[a-fA-F0-9]{64}", graph_index["sha256"])):
+        raise CompileError("Fresh-build context has an invalid graph_index identity")
+
+    tasks, waves = context["tasks"], context["waves"]
+    if not isinstance(tasks, dict) or not isinstance(waves, list) or not waves:
+        raise CompileError("Fresh-build context tasks/waves are invalid")
+    wave_by_id = {}
+    for wave_number, identifiers in enumerate(waves):
+        if not isinstance(identifiers, list):
+            raise CompileError("Fresh-build waves must be arrays of shard IDs")
+        for identity in identifiers:
+            if not isinstance(identity, str) or identity in wave_by_id:
+                raise CompileError("Fresh-build waves have invalid or duplicate shard IDs")
+            wave_by_id[identity] = wave_number
+    if set(tasks) != set(wave_by_id):
+        raise CompileError("Fresh-build task IDs differ from its wave inventory")
+    for identity, task in tasks.items():
+        if not isinstance(task, dict) or task.get("id") != identity or task.get("wave") != wave_by_id[identity]:
+            raise CompileError("Fresh-build task record differs from its wave: " + identity)
+        if (not isinstance(task.get("depends_on"), list)
+                or any(dependency not in tasks for dependency in task["depends_on"])):
+            raise CompileError("Fresh-build task has an invalid dependency list: " + identity)
+        if any(wave_by_id[dependency] >= wave_by_id[identity] for dependency in task["depends_on"]):
+            raise CompileError("Fresh-build dependency is not from an earlier wave: " + identity)
+        if not isinstance(task.get("manifest_sha256"), str) or not re.fullmatch(
+                r"[a-fA-F0-9]{64}", task["manifest_sha256"]):
+            raise CompileError("Fresh-build task has an invalid manifest SHA: " + identity)
+        if (not isinstance(task.get("archive"), str) or Path(task["archive"]).name != task["archive"]
+                or not task["archive"].endswith(".tar.zst")):
+            raise CompileError("Fresh-build task has an invalid archive name: " + identity)
+        if type(task.get("archive_bytes")) is not int or task["archive_bytes"] <= 0:
+            raise CompileError("Fresh-build task has an invalid archive size: " + identity)
+        if not isinstance(task.get("archive_sha256"), str) or not re.fullmatch(
+                r"[a-fA-F0-9]{64}", task["archive_sha256"]):
+            raise CompileError("Fresh-build task has an invalid archive SHA: " + identity)
+    if shard_id not in tasks:
+        raise CompileError("Selected shard is absent from fresh-build context: " + shard_id)
+
+    environment = os.environ if environment is None else environment
+    expected_runner = {"execution_id": "GITHUB_RUN_ID", "worker_commit": "GITHUB_SHA",
+                       "repository": "GITHUB_REPOSITORY"}
+    for field, variable in expected_runner.items():
+        if environment.get(variable) != str(context[field]):
+            raise CompileError(f"Fresh-build context {field} differs from this Actions run")
+    identity = {field: context[field] for field in FRESH_BUILD_FIELDS}
+    return context, identity
+
+
+def _locate_capsule(directory: Path, archive_name: str) -> Path:
+    matches = [path for path in directory.rglob(archive_name) if path.is_file() and not path.is_symlink()]
+    if len(matches) != 1:
+        raise CompileError(f"Expected one capsule archive {archive_name}, found {len(matches)}")
+    return matches[0]
+
+
+def _validate_restored_capsule(source_root: Path, out_root: Path, task: dict) -> tuple[Path, Path]:
+    slice_dir = source_root / ".crux-task/graph"
+    manifest_path = slice_dir / "manifest.json"
+    bundle_path = slice_dir / "bundle.json"
+    if manifest_path.is_symlink() or bundle_path.is_symlink() or not manifest_path.is_file() or not bundle_path.is_file():
+        raise CompileError("Restored capsule does not contain its graph manifest and bundle")
+    if sha256(manifest_path) != task["manifest_sha256"]:
+        raise CompileError("Restored capsule manifest differs from the accepted slice identity")
+    manifest = worker.read_json(manifest_path)
+    if manifest.get("source_root") != str(source_root):
+        raise CompileError("Restored shard manifest has a different source_root")
+    bundle = worker.read_json(bundle_path)
+    if (bundle.get("source_root") != str(source_root) or bundle.get("out_root") != str(out_root)
+            or bundle.get("manifest_sha256") != task["manifest_sha256"]):
+        raise CompileError("Restored capsule bundle differs from the fresh-build context")
+    if bundle.get("allowed_generated_inputs") != []:
+        raise CompileError("Cold capsule contains allowed_generated_inputs")
+    for item in bundle.get("files", []):
+        path = Path(item["path"])
+        if not path.is_absolute():
+            raise CompileError("Capsule bundle contains a non-absolute file path")
+        absolute = Path(os.path.abspath(path))
+        if absolute == out_root or out_root in absolute.parents:
+            raise CompileError("Cold capsule contains an OUT_DIR file: " + str(absolute))
+    return manifest_path, bundle_path
+
+
+def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
+                           context: dict, fresh_identity: dict) -> dict:
+    receipt_path = dependency_dir / "receipt.json"
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise CompileError("Fresh dependency has no worker receipt: " + dependency_id)
+    receipt = worker.read_json(receipt_path)
+    task = context["tasks"][dependency_id]
+    expected = {"id": dependency_id, "run_id": str(context["execution_id"]),
+                "worker_commit": context["worker_commit"],
+                "manifest_sha256": task["manifest_sha256"],
+                "source_root": context["source_root"], "out_root": context["out_root"],
+                "status": "success", "fresh_build": fresh_identity}
+    for key, value in expected.items():
+        if receipt.get(key) != value:
+            raise CompileError(f"Dependency {dependency_id} receipt {key} differs from this fresh build")
+    return receipt
+
+
+def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
+                  staging: Path, environment=None) -> tuple[int, dict]:
+    environment = dict(os.environ if environment is None else environment)
+    context = worker.read_json(context_path)
+    context, fresh_identity = validate_context(context, shard_id, environment)
+    task = context["tasks"][shard_id]
+    source_root = Path(context["source_root"])
+    out_root = Path(context["out_root"])
+    output_dir = Path(output_dir).resolve()
+    staging = Path(staging).resolve()
+    if (output_dir == staging or output_dir in staging.parents or staging in output_dir.parents):
+        raise CompileError("Worker output and staging directories must be separate")
+    if output_dir == source_root or source_root in output_dir.parents or output_dir == out_root or out_root in output_dir.parents:
+        raise CompileError("Worker output directory must be outside source_root and out_root")
+    if staging == source_root or source_root in staging.parents or staging == out_root or out_root in staging.parents:
+        raise CompileError("Worker staging directory must be outside source_root and out_root")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    receipt_path = output_dir / "receipt.json"
+    if receipt_path.exists():
+        raise CompileError("Worker receipt already exists; refusing to overwrite")
+    receipt = {"schema_version": 1, "id": shard_id, "status": "failed",
+               "fresh_build": fresh_identity}
+    started = time.monotonic()
+    try:
+        if os.path.lexists(source_root):
+            raise CompileError("source_root must be cold and nonexistent before capsule restore: " + str(source_root))
+        if os.path.lexists(out_root):
+            raise CompileError("out_root must be cold and nonexistent before capsule restore: " + str(out_root))
+        if any(staging.iterdir()):
+            raise CompileError("staging directory is not empty: " + str(staging))
+        token = environment.get("GH_TOKEN") or environment.get("GITHUB_TOKEN")
+        if not token:
+            raise CompileError("GH_TOKEN or GITHUB_TOKEN is required for artifact restore")
+
+        capsule_dir = staging / "capsule"
+        capsule_dir.mkdir()
+        artifact_name = "cloud-capsule-" + shard_id
+        downloaded = cloud_artifacts.download_artifacts(
+            str(context["pack_run"]), context["repository"], capsule_dir,
+            token=token, name=artifact_name)
+        if len(downloaded) != 1 or downloaded[0]["name"] != artifact_name:
+            raise CompileError("Pack run did not return the exact admitted capsule artifact")
+        archive = _locate_capsule(Path(downloaded[0]["destination"]), task["archive"])
+        if archive.stat().st_size != task["archive_bytes"] or sha256(archive) != task["archive_sha256"]:
+            raise CompileError("Capsule archive bytes/SHA differ from the accepted pack registry")
+        subprocess.run(["sudo", "tar", "--zstd", "--no-same-owner", "-xpf", str(archive), "-C", "/"],
+                       check=True)
+        subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", str(source_root)],
+                       check=True)
+        archive.unlink()
+        shutil.rmtree(capsule_dir)
+        manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
+
+        dependency_dirs, bindings = [], []
+        for dependency_id in task["depends_on"]:
+            dependency_dir = staging / "dependencies" / dependency_id
+            dependency_dir.mkdir(parents=True, exist_ok=False)
+            dependency_artifact = "shard-" + dependency_id
+            downloaded = cloud_artifacts.download_artifacts(
+                str(context["execution_id"]), context["repository"], dependency_dir,
+                token=token, name=dependency_artifact)
+            if len(downloaded) != 1 or downloaded[0]["name"] != dependency_artifact:
+                raise CompileError("Current build run did not return dependency artifact: " + dependency_id)
+            _read_fresh_dependency(dependency_id, Path(downloaded[0]["destination"]), context, fresh_identity)
+            dependency_dirs.append(Path(downloaded[0]["destination"]))
+            bindings.append({"id": dependency_id, "run_id": str(context["execution_id"]),
+                             "artifact": dependency_artifact,
+                             "expected_worker_commit": context["worker_commit"],
+                             "expected_manifest_sha256": context["tasks"][dependency_id]["manifest_sha256"]})
+
+        # Keep artifact credentials in this wrapper only; worker.run_shard passes
+        # its process environment to Ninja and native build tools.
+        auth_names = ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
+                      "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+        saved_auth = {name: os.environ[name] for name in auth_names if name in os.environ}
+        for name in auth_names:
+            os.environ.pop(name, None)
+        try:
+            result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
+                                      dependency_dirs, jobs=4, dependency_bindings=bindings)
+        finally:
+            os.environ.update(saved_auth)
+        receipt = result if isinstance(result, dict) else worker.read_json(receipt_path)
+        if (receipt.get("id") != shard_id or receipt.get("run_id") != str(context["execution_id"])
+                or receipt.get("worker_commit") != context["worker_commit"]
+                or receipt.get("manifest_sha256") != task["manifest_sha256"]
+                or receipt.get("source_root") != context["source_root"]
+                or receipt.get("out_root") != context["out_root"]):
+            raise CompileError("Native worker receipt differs from fresh-build shard identity")
+        receipt["fresh_build"] = fresh_identity
+        receipt["status"] = result.get("status", "failed")
+        if receipt["status"] != "success" and "error" not in receipt:
+            receipt["error"] = "native shard compilation failed"
+    except Exception as error:
+        if receipt_path.is_file():
+            try:
+                receipt = worker.read_json(receipt_path)
+            except Exception:
+                pass
+        receipt.update({"schema_version": 1, "id": shard_id, "status": "failed",
+                       "fresh_build": fresh_identity, "error": str(error)})
+    receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return (0 if receipt.get("status") == "success" else 1), receipt
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--context", required=True)
+    parser.add_argument("--id", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--staging", required=True)
+    args = parser.parse_args(argv)
+    try:
+        code, receipt = compile_shard(Path(args.context), args.id, Path(args.output), Path(args.staging))
+    except (CompileError, OSError, ValueError, json.JSONDecodeError) as error:
+        print("cloud_compile: " + str(error), file=sys.stderr)
+        return 1
+    print(json.dumps({"id": args.id, "status": receipt["status"],
+                      "execution_id": receipt["fresh_build"]["execution_id"],
+                      "elapsed_seconds": receipt["elapsed_seconds"]}, sort_keys=True))
+    if code and receipt.get("error"):
+        print("cloud_compile: " + receipt["error"], file=sys.stderr)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,149 @@
+# Fresh standard-runner PE13 build
+
+Plan: standard-runner-build / revision 2 / active (2026-11-04).
+
+## Authority, baseline and acceptance
+
+The owner explicitly authorized modifying/pushing workflows and triggering Actions
+to compile, assemble and validate a completely new ROM from the 39 accepted cloud
+capsules. Use only public-repository standard Linux runners; no local PE builds,
+larger/self-hosted runners, old compiled outputs, ccache, release publication or
+device writes. Actions artifacts are the delivery boundary, not GitHub Releases.
+
+Baseline: `0ce673f85f6ebc1aff0d0ab2ee11df06d0f01de5`, clean main in
+`out/crux-pe13-actions-ota-2026-10-11/actions-repository`.
+Input pack run `41779197896`, shard run `41769467686`, graph run `41677764699`,
+index run `41685367061`, build `2026110303`. The build identity embedded in
+these capsules stays unchanged; the compilation execution is new. Source
+manifest `2950cc77ceea78dd47d140e611ef38e477823f306d841433b72f167e0ff1c69d`,
+plan `0adc8fc5ee03139e5918ecb6ea33cbc2048f955721cafe5567f75ee15f28df71`.
+Plan waves: 13/3/7/6/5/2/2/1 tasks. Preserve accepted v3 deliveries and source/device state.
+
+Completion requires every native shard built successfully with a fresh provenance
+receipt, verified dependency imports and export archives, all four new images,
+paired freshly built kernel/symbol/DTB inputs, existing image/property/AVB/cpio/FIT
+gates, and an unpublished Actions delivery with checksums and acceptance evidence.
+Fixtures do not prove the real build. No release, OTA/feed update or flashing.
+
+## Fixed integration design
+
+New artifact-backed workflows do not call the release-backed legacy controller.
+An Actions bootstrap validates accepted pack registry, slice inventory and plan,
+then emits compact `context.json` and matrices. Eight dependency-ordered reusable
+wave calls run the existing `worker.run_shard` on clean standard Ubuntu runners.
+No compilation happens on the local machine.
+
+Context schema v1:
+- `execution_id`: current compile workflow run ID; `worker_commit`: its SHA;
+  `repository`, `build_number`, `pack_run`, `shard_run`, `graph_run`,
+  `index_run`, `source_run`, `source_manifest_sha256`, `plan_sha256`,
+  `graph_index`, `source_root`, `out_root`.
+- `waves`: arrays of task IDs; `tasks`: ID-keyed records containing `id`,
+  `wave`, `depends_on`, `manifest_sha256`, `archive`, `archive_bytes`,
+  `archive_sha256`.
+- `assembly_exports`: relevant image/ramdisk/frontend/kernel output-owner map;
+  `frontend`: accepted graph receipt summary and source revision declaration.
+
+Initial compilation is empty-state. Every dependency binding points to
+`shard-<id>` in the CURRENT compile workflow run, with that run's worker SHA
+and the exact admitted manifest SHA. The transport wrapper checks the producer's
+additional `fresh_build` receipt field equals this context's execution and
+input identities before the existing worker verifies/merges bytes. No old
+reuse-state, release assets, source overlays or prebuilt OUT supplement is admitted.
+If repairs require a later fresh lineage, root must revise the explicit resume
+contract before using any earlier output; that permission is not implicit.
+
+A worker downloads only its admitted `cloud-capsule-ID` artifact, verifies the
+tar.zst byte identity against the registry, restores the cold capsule, and downloads
+only admitted fresh predecessor artifacts. No full warmed graph OUT is restored.
+The worker retains CCACHE_DISABLE=1 and cold output/external-input guards.
+It writes `fresh_build` into receipt.json after the native worker completes:
+execution_id, pack_run, shard_run, plan_sha256, source_manifest_sha256.
+Output artifact `shard-ID`; separate `fresh-receipt-ID` contains receipt.json.
+Summary requires all 39 unique successful receipts, validates binding/lineage,
+and writes fresh producer bindings. Assembly is a separate artifact-only workflow
+and cannot publish; it may use only those newly admitted producer outputs.
+
+## Contracts and ownership
+
+All executors read this plan and unchanged protocol below, check allowed-path
+diffs before edits, preserve other writers, and return concrete evidence after at
+most three in-contract fix/check cycles. Root owns integration, commits/pushes,
+Actions dispatch and final acceptance; subagents never mutate remote state.
+
+| ID | State | Owner | Allowed paths / deliverable / validation |
+| --- | --- | --- | --- |
+| C0 | active | root | This plan, `scripts/cloud_build_plan.py`, fixture tests, workflows. Validate accepted input identities on Actions; emit compact context, matrices and final all-task summary. |
+| C1 | ready | frontend_decomposition | `scripts/cloud_compile.py`, `tests/test_cloud_compile.py` only. CLI `--context --id --output --staging`; artifact transport + admitted cold extraction + fresh-only dependencies + existing worker.run_shard; receipt lineage, no old outputs. Tiny fixture/mocks only locally. |
+| A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
+| A2 | ready | source_footprint | `references/pe13-boot-contracts/package-pe13.py`, new source-declarative boot contract JSON, `scripts/package_fits.py`, `scripts/assemble_dev.py`, `scripts/cloud_assemble.py` and their relevant tests. Add an opt-in source-contract recipe route that reads no old reference DTB at runtime; retain legacy default behavior for accepted v3. Fresh assembly must select this new route and all actual kernel/base/overlay/symbol/ramdisk inputs remain fresh receipts. |
+| V1 | draft | root + read-only observer | Real Actions compile waves, fixes and all output checks. Ready only after C0/C1 usable. |
+| V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
+
+All actual source graph/index/slice/capsule regeneration, if a diagnosed input
+closure defect requires it, also stays on standard runners and derives from the
+same public source pins. Reopen dependent evidence when an input manifest changes.
+Do not insert historical source overlays or old compiled artifact bindings.
+
+## Execution record
+
+- Initial read-only audits confirm legacy wave/controller downloads Release
+  assets and has old reuse defaults; it will not be used for this task.
+- Existing worker checks manifest/bundle byte identity, rejects preexisting
+  outputs/imports, verifies dependency archives/specs and disables ccache.
+- Existing assembler supports unpublished output but its checked-in producer/
+  identity inputs are old; derive new bindings and identity for this graph.
+- Local validation baseline: 403 tests, 16 environment skips from the accepted
+  prep delivery. Actual fresh compilation has not started yet.
+- Preflight found the old FIT recipe reads retained compiled reference DTBs and
+  copies boot-contract properties. Root selected a source-declarative contract
+  route, preserving the existing hardware policy and validation but removing old
+  binary reference inputs from this fresh assembly. This is an input
+  representation change, not a boot ABI change; no device validation is claimed.
+  Legacy defaults remain unchanged. A2 must prove policy equivalence in fixtures
+  and select source-contract mode in fresh assembly; no runtime old-DTB fallback.
+
+## Executor protocol
+
+1. Before editing, read the current plan and task revisions, actual dependency
+   outputs, worktree status, and relevant code, then run the card's entry check.
+   Run entry checks and validation commands exactly as written, and read each
+   exit code from the command result instead of appending `echo $?` or other
+   commands. Stop and hand back with the evidence when the check fails or when
+   the task's allowed paths or listed code facts changed beyond the recorded
+   baseline, accepted dependency outputs, and this task's own recorded
+   checkpoint diff. Changes elsewhere need no action. Preserve existing changes;
+   if their source cannot be distinguished, hand back, and never overwrite or
+   reset them. A permitted adjustment must be named in the task card; “keep it
+   equivalent” is not permission to redesign.
+2. Start new work only from `ready`, with dependencies and authorization checked.
+   If the card delegates readiness checks, the executor may mark a settled
+   `draft` task `ready` after recording evidence that every listed prerequisite
+   holds; unresolved design choices still go to the planner. After step 1,
+   resume an interrupted `active` task without resetting its status. For a
+   `blocked` task, record evidence that the blocker was resolved within the
+   contract and existing authority, then return to `ready` if unstarted or
+   `active` if resuming. Design, acceptance, or drift blockers remain with the
+   planner. Status changes do not authorize contract changes.
+   Choose only the listed local details. Do not change requirements,
+   architecture, acceptance, or the planner-owned contract. Record work in the
+   result area, and also update the task's status where the plan records it,
+   such as its status field or heading, to `active`, `blocked`, or `done` as
+   observed.
+3. Run the specified validation and record each command with its exit code and
+   output. Fix and rerun in-contract defects; restore the environment within
+   existing authority; adjust commands only inside an explicitly allowed binding
+   range. Do not ignore failures or lower pass criteria. Stop, record the
+   attempts, and report the handback or escalation the card names when a change
+   outside the allowed paths or fixed implementation seems necessary, a failure
+   is not an in-contract defect (an environment problem outside existing
+   authority, a command binding, a plan or design error, a requirement gap, or a
+   pre-existing failure), or the attempt budget is spent.
+4. Handback states the disproven assumption, observation and source, affected
+   task and acceptance, attempts and results, and decision needed. The executor
+   cannot edit the contract to accept its own work.
+5. After interruption, record the last validation actually run and its result,
+   unfinished diff, current code state, and next action. On resumption repeat
+   step 1. Mark `done` only with the stated evidence. After the final
+   integration task is `done`, hand its evidence to the acceptance owner; only
+   an accepting record completes the overall request.
