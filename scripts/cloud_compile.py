@@ -33,6 +33,12 @@ RUN_ID_FIELDS = ("execution_id", "pack_run", "shard_run", "graph_run", "index_ru
 SHORT_KERNEL_SOURCE_REVISION = "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e"
 SHORT_KERNEL_SOURCE_PROJECT = "kernel/xiaomi/crux-pe-cepheus"
 SHORT_KERNEL_SOURCE_ALIAS = Path("/k")
+SHORT_KERNEL_SOURCE_POLICY = {
+    "project": SHORT_KERNEL_SOURCE_PROJECT,
+    "revision": SHORT_KERNEL_SOURCE_REVISION,
+    "alias": str(SHORT_KERNEL_SOURCE_ALIAS),
+    "validated_probe_run": "41801581346",
+}
 
 
 class CompileError(ValueError):
@@ -262,8 +268,17 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
     if diagnostic_context_path is not None:
         diagnostic_parent, diagnostic_identity = _validate_diagnostic_parent(
             context, worker.read_json(diagnostic_context_path), shard_id, environment)
-    if short_kernel_source and diagnostic_parent is None:
-        raise CompileError("Short-source mode requires --dependency-context diagnostic mode")
+    kernel_output = str(Path(context["out_root"]) / "target/product/crux/obj/KERNEL_OBJ")
+    owns_kernel_output = context.get("assembly_exports", {}).get(kernel_output) == shard_id
+    alias_policy = context.get("kernel_source_alias")
+    if alias_policy is not None and alias_policy != SHORT_KERNEL_SOURCE_POLICY:
+        raise CompileError("Context kernel_source_alias policy is not the validated probe policy")
+    if short_kernel_source and diagnostic_parent is None and alias_policy is None:
+        raise CompileError("Production short-source mode requires the validated context policy")
+    if short_kernel_source and not owns_kernel_output:
+        raise CompileError("Short-source mode is restricted to the task owning the kernel output")
+    alias_enabled = bool((alias_policy is not None and owns_kernel_output)
+                         or (short_kernel_source and diagnostic_parent is not None))
     task = context["tasks"][shard_id]
     source_root = Path(context["source_root"])
     out_root = Path(context["out_root"])
@@ -322,13 +337,14 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         archive.unlink()
         shutil.rmtree(capsule_dir)
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
-        if short_kernel_source:
+        if alias_enabled:
             kernel_source = _validate_short_kernel_source(context, shard_id, source_root)
             alias_record = _mount_short_source_alias(kernel_source)
             source_alias_mounted = True
             runtime_source_alias = {
                 **alias_record, "source_revision": SHORT_KERNEL_SOURCE_REVISION,
                 "makeflags_addition": "srctree=/k",
+                "validation_policy": alias_policy,
             }
             receipt["runtime_source_alias"] = runtime_source_alias
 
@@ -360,23 +376,25 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         for name in auth_names:
             os.environ.pop(name, None)
         previous_makeflags = os.environ.get("MAKEFLAGS", "")
-        if diagnostic_parent is not None:
+        makeflags_modified = diagnostic_parent is not None or alias_enabled
+        if makeflags_modified:
             flags = previous_makeflags.split()
-            if "--trace" not in flags:
+            if diagnostic_parent is not None and "--trace" not in flags:
                 flags.append("--trace")
-            if short_kernel_source and "srctree=/k" not in flags:
+            if alias_enabled and "srctree=/k" not in flags:
                 flags.append("srctree=/k")
             os.environ["MAKEFLAGS"] = " ".join(flags)
-            if short_kernel_source:
+            if alias_enabled:
                 runtime_source_alias["makeflags"] = os.environ["MAKEFLAGS"]
                 receipt["runtime_source_alias"] = runtime_source_alias
+        if diagnostic_parent is not None:
             diagnostic_process_limits = _diagnostic_process_limits(os.environ)
             receipt["diagnostic_process_limits"] = diagnostic_process_limits
         try:
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
                                       dependency_dirs, jobs=4, dependency_bindings=bindings)
         finally:
-            if diagnostic_parent is not None:
+            if makeflags_modified:
                 if previous_makeflags:
                     os.environ["MAKEFLAGS"] = previous_makeflags
                 else:
@@ -398,7 +416,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 "fresh_build": diagnostic_identity,
             }
             receipt["diagnostic_process_limits"] = diagnostic_process_limits
-        if short_kernel_source:
+        if alias_enabled:
             runtime_source_alias["makeflags"] = " ".join(flags)
             receipt["runtime_source_alias"] = runtime_source_alias
         receipt["status"] = result.get("status", "failed")

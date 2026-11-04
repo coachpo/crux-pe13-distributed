@@ -190,6 +190,7 @@ def derive_source_selection(context: dict, manifest_path: Path | None = None) ->
         'graph_receipt_sha256': graph.get('receipt_sha256'),
         'build_date_epoch': int(frontend['build_date']) if isinstance(frontend['build_date'], str)
                             else frontend['build_date'],
+        'kernel_source_alias': context.get('kernel_source_alias'),
     }
 
 

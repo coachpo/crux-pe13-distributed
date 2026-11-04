@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 3 / active (2026-11-04).
+Plan: standard-runner-build / revision 4 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -135,6 +135,17 @@ Do not insert historical source overlays or old compiled artifact bindings.
   compiler flags other than source path spelling, output ownership or old-data
   admission changes. This remains diagnostic-only until a real complete kernel
   build and trace validate it. Capture alias/provenance and clean the mount.
+- Short-source probe `41801581346`, head `9f76036`, passed all 4,000 native
+  actions and verified 5,463 declared outputs. The failing QCA recipe shrank
+  from 135,239 to 80,479 bytes; no E2BIG remains. Fresh raw Image, Image-dtb,
+  vmlinux, System.map, .config, all four base DTBs and Crux overlay are present
+  in one fresh producer receipt. Source bytes were not edited, and `/k` was
+  cleaned. The 14 pre-existing headers-install shell-probe diagnostics remain
+  visible; the header action and complete native worker returned success.
+  The new production context admits this exact pinned runtime policy only for
+  the kernel-output owner, without trace or diagnostic lineage. The complete
+  production build will restart all 39 tasks from empty current-run output
+  state; neither prior successful compiled outputs nor probe Image are reused.
 
 ## Executor protocol
 

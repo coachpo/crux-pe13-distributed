@@ -190,6 +190,10 @@ def bootstrap(args):
                'source_selection': {'schema_version': 1, 'build_number': args.build_number,
                    'source_manifest_sha256': registry['source_manifest_sha256'],
                    'projects': [{'path': p['path'], 'revision': p['revision']} for p in manifest['projects']]}}
+    runtime = read(Path(__file__).resolve().parents[1] / 'config/standard-build-runtime.json')
+    if runtime.get('schema_version') != 1:
+        raise ValueError('Unsupported admitted build runtime policy')
+    context['kernel_source_alias'] = runtime['kernel_source_alias']
     write(output / 'context.json', context)
     print(json.dumps({'execution_id': execution, 'tasks': len(tasks), 'waves': list(map(len, waves))}))
 

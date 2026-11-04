@@ -2,8 +2,8 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 import subprocess
 import tempfile
 import unittest
@@ -18,6 +18,18 @@ spec.loader.exec_module(cloud_compile)
 
 
 class CloudCompileTests(unittest.TestCase):
+    def test_makeflags_source_alias_has_command_line_precedence_without_trace(self):
+        make = shutil.which('make')
+        if not make or 'GNU Make' not in subprocess.run([make, '--version'], capture_output=True, text=True).stdout:
+            self.skipTest('GNU Make is required for the variable-precedence fixture')
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'policy.mk'
+            path.write_text('srctree := ignored\nall:\n\t@printf "%s|%s\\n" "$(srctree)" "$(origin srctree)"\n')
+            result = subprocess.run([make, '--no-print-directory', '-f', str(path)],
+                                    env={**os.environ, 'MAKEFLAGS': 'srctree=/k'},
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout, '/k|command line\n')
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
@@ -384,6 +396,7 @@ class CloudCompileTests(unittest.TestCase):
             "alias": "/k", "mount": "bind",
             "source_revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
             "makeflags_addition": "srctree=/k",
+            "validation_policy": None,
             "makeflags": "--trace srctree=/k",
         })
         self.assertIn("srctree=/k", self.worker_calls[0]["makeflags"])
@@ -392,13 +405,12 @@ class CloudCompileTests(unittest.TestCase):
         parent_path = self._prepare_short_source_context()
         self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = "w000-s999"
         self.context_path.write_text(json.dumps(self.fresh_context))
-        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
-        self.assertEqual(code, 1)
-        self.assertIn("task owning the kernel output", receipt["error"])
-        self.mount_calls.assert_not_called()
-        self.unmount_calls.assert_not_called()
+        with mock.patch.dict(os.environ, self.runner_env, clear=True):
+            with self.assertRaisesRegex(cloud_compile.CompileError, "task owning the kernel output"):
+                cloud_compile.compile_shard(self.context_path, self.shard_id,
+                                            self.root / "result-owner", self.root / "staging-owner",
+                                            diagnostic_context_path=parent_path, short_kernel_source=True)
 
-        shutil.rmtree(self.source)
         self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = self.shard_id
         self.fresh_context["source_selection"]["projects"][0]["revision"] = "0" * 40
         self.context_path.write_text(json.dumps(self.fresh_context))
@@ -416,6 +428,38 @@ class CloudCompileTests(unittest.TestCase):
             with self.assertRaisesRegex(cloud_compile.CompileError, "alias already exists"):
                 cloud_compile._mount_short_source_alias(source)
         run.assert_not_called()
+
+    def test_validated_policy_auto_enables_only_kernel_owner_in_production(self):
+        self._prepare_short_source_context()
+        self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertNotIn("diagnostic_only", receipt)
+        self.assertEqual(receipt["fresh_build"], self.identity())
+        self.assertEqual(receipt["runtime_source_alias"]["validation_policy"],
+                         cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
+        self.assertEqual(self.worker_calls[0]["makeflags"], "srctree=/k")
+        self.mount_calls.assert_called_once()
+        self.unmount_calls.assert_called_once()
+
+    def test_validated_policy_does_not_mount_for_nonowner_and_wrong_policy_fails(self):
+        self._prepare_short_source_context()
+        self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
+        self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = "w009-s009"
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertNotIn("runtime_source_alias", receipt)
+        self.mount_calls.assert_not_called()
+
+        self.fresh_context["kernel_source_alias"] = {**cloud_compile.SHORT_KERNEL_SOURCE_POLICY,
+                                                       "revision": "0" * 40}
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        with mock.patch.dict(os.environ, self.runner_env, clear=True):
+            with self.assertRaisesRegex(cloud_compile.CompileError, "not the validated probe policy"):
+                cloud_compile.compile_shard(self.context_path, self.shard_id,
+                                            self.root / "result-policy", self.root / "stage-policy")
 
 
 if __name__ == "__main__":
