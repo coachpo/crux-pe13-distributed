@@ -108,20 +108,32 @@ class Mutations:
         self.producers = {}
         self.reasons = {}
 
+    def prime(self, edges):
+        missing = sorted({int(edge) for edge in edges} - self.original.keys())
+        if not missing:
+            return
+        current = graph.Graph(self.database)
+        handles = {}
+        try:
+            for batch in graph.chunks(missing):
+                marks = ','.join('?' for _ in batch)
+                rows = current.db.execute(
+                    'SELECT statements.*, edges.outputs AS edge_outputs FROM statements '
+                    'JOIN edges ON edges.id=statements.id WHERE statements.id IN (' + marks + ')', batch).fetchall()
+                if len(rows) != len(batch):
+                    raise ValueError('Unknown dependency consumer edge in: ' + str(batch))
+                for row in rows:
+                    edge = row['id']
+                    self.original[edge] = current.raw(row, handles)
+                    self.updated[edge] = self.original[edge]
+                    self.producers[edge] = json.loads(row['edge_outputs'])[0]
+        finally:
+            for handle in handles.values():
+                handle.close()
+            current.db.close()
+
     def raw(self, edge):
-        if edge not in self.original:
-            current = graph.Graph(self.database)
-            handles = {}
-            try:
-                row = current.db.execute('SELECT * FROM statements WHERE id=?', (edge,)).fetchone()
-                self.original[edge] = current.raw(row, handles)
-                self.updated[edge] = self.original[edge]
-                self.producers[edge] = json.loads(current.db.execute(
-                    'SELECT outputs FROM edges WHERE id=?', (edge,)).fetchone()[0])[0]
-            finally:
-                for handle in handles.values():
-                    handle.close()
-                current.db.close()
+        self.prime([edge])
         return self.updated[edge]
 
     def scalar(self, edge, desired):
@@ -133,6 +145,9 @@ class Mutations:
 
     def dependencies(self, additions, reason):
         changed = 0
+        # SQLite may spill dirty pages and take an exclusive lock during a
+        # large update. Finish every independent graph read before writing.
+        self.prime(additions)
         connection = sqlite3.connect(self.database)
         try:
             for edge, paths in sorted(additions.items()):

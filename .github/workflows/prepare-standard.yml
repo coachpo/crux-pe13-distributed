@@ -84,6 +84,7 @@ jobs:
           PY
       - name: Validate graph identity and create the canonical index
         run: |
+          set -euo pipefail
           /usr/bin/time -v python3 scripts/cloud_index.py \
             --graph-evidence "$RUNNER_TEMP/graph-input" \
             --source-manifest config/cloud-source-manifest.json \
@@ -175,6 +176,7 @@ jobs:
             --staging "$RUNNER_TEMP/source-layers" --evidence "$RUNNER_TEMP/shard-evidence/source"
       - name: Complete runtime dependencies, cold-probe source actors and slice
         run: |
+          set -euo pipefail
           /usr/bin/time -v python3 scripts/cloud_shard.py \
             --graph-evidence "$RUNNER_TEMP/graph-input" --source-manifest config/cloud-source-manifest.json \
             --graph-run "$GRAPH_RUN" --index-input "$RUNNER_TEMP/index-input" --index-run "$INDEX_RUN" \

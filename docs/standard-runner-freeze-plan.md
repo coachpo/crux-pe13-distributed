@@ -122,6 +122,15 @@ return any remaining failure to root with evidence; never lower acceptance.
   behavior require fixture regression tests before another hosted full run.
   This failed run is not shard or pack acceptance. Raw logs and receipts are
   retained under `out/crux-pe13-standard-freeze-2026-11-03/` in the workspace.
+- Run `41762955760`, commit `766c68f`, passed the source-read derivation and
+  reached bulk dependency updates, then failed with SQLite `database is locked`.
+  A large write transaction can spill dirty pages and exclude a newly opened
+  reader. The fix batches and closes raw-statement reads before any updates,
+  retaining the dependency union and unchanged canonical graph parser. A
+  constrained-cache fixture reproduces the failure before the fix and passes
+  afterward. Index/shard log pipelines now use `pipefail` so the native failure
+  cannot be hidden by `tee`; failed receipts already prevented downstream
+  acceptance. The next full run still requires actual slice/pack acceptance.
 
 ## Executor protocol
 

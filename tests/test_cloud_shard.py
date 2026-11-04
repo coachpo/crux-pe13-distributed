@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 SPEC = importlib.util.spec_from_file_location('cloud_shard', Path(__file__).resolve().parents[1] / 'scripts/cloud_shard.py')
@@ -82,6 +83,30 @@ class CloudShardTests(unittest.TestCase):
         self.assertIn(second, raw)
         self.assertEqual(len(current.meta['file_stats']), 3)
         current.db.close()
+
+    def test_bulk_dependencies_update_multiple_consumers_consistently(self):
+        current = shard.graph.Graph(self.database)
+        owners = current.producers([self.number, self.other])
+        current.db.close()
+        # Exceed SQLite's ordinary page cache, as real notice/host-tool reads
+        # do, so the write transaction cannot rely on staying memory-only.
+        leaves = [str(self.source / ('x' * 180) / ('y' * 180) / (str(index) + '-' + 'z' * 150))
+                  for index in range(8192)]
+        mutation = shard.Mutations(self.database)
+        additions = {owners[self.number]: leaves, owners[self.other]: ['another-input']}
+        connect = shard.sqlite3.connect
+        def constrained_cache(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connection.execute('PRAGMA cache_size=1')
+            connection.execute('PRAGMA cache_spill=1')
+            return connection
+        with mock.patch.object(shard.sqlite3, 'connect', side_effect=constrained_cache):
+            self.assertEqual(mutation.dependencies(additions, 'bulk runtime inputs'), len(leaves) + 1)
+        current = shard.graph.Graph(self.database)
+        records, _ = current.edge_records(owners.values())
+        current.db.close()
+        self.assertEqual({path for path, kind in records[owners[self.number]]['deps']}, set(leaves))
+        self.assertIn('another-input', mutation.updated[owners[self.other]])
 
 
 if __name__ == '__main__':
