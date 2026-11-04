@@ -86,11 +86,11 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | pending D2 | root + read-only observer | Production run `41819689572`, head `f4592fed75f20c7de8ee3cd16d55516611b03d19`, ended with 28 successful tasks and one AIDL failure; later waves skipped. After D2 repacking, all 39 tasks restart empty with the new admitted registry. |
+| V1 | ready for new empty execution | root + read-only observer | Production run `41819689572` ended with 28 successes and one AIDL failure. The reviewed repair pack `41835375815` has 39 successful capsules; all native compilation will restart empty against its new registry. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
-| D2 | active | source_footprint + root | `scripts/capsule.py`, `tests/test_capsule.py`: repair implicit AIDL source-type closure. Add source-only same-package siblings and their transitive imports, preserving generated OUT exclusion and source/graph pins. Root verifies the old capsule inventory, reviews/tests, repacks all 39 on standard Actions, admits the new registry separately from the immutable original, then restarts all compilation empty. |
+| D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
 | D2-perf | implemented, cloud check pending | source_footprint + root | Source-only AIDL closure caches pass fixtures for repeated lookup, distinct roots and genuine unvisited leaves. Recognizes real `aidl`/`aidl-cpp` invocations, preserves their exact root searches and gives only unvisited leaves the AIDL-specific fallback. No source bytes, generated-input policy or native action changes. |
 
@@ -219,6 +219,20 @@ Do not insert historical source overlays or old compiled artifact bindings.
   optimized collector rather than relying on the slow outstanding task. Both
   use the same 39 slice manifests, source pins and build identity; only a fully
   successful, reviewed capsule registry can enter the new cold compilation.
+- The first repair run `41835375815` completed all 39 pack jobs and wrote a
+  successful aggregate registry (artifact `13340737858`, ZIP digest
+  `9d83be8688c1b545304ff7411a6098dfea42231969d7ed9043c44658ddc86775`).
+  Fourteen archive identities changed; 25 are byte-identical. Source inputs sum
+  to 141,033,865,445 bytes, archives to 40,834,867,107 bytes. Root verified the
+  original source manifest, source/graph/index/shard runs, pruned-index identity,
+  plan and exact 39 IDs are unchanged. Only the source closure and archive/input
+  totals differ. The reviewed registry is checked in under
+  `docs/evidence/standard-fresh-build-2026110303/` and selected by the compile
+  workflow; no previous native outputs enter the next production execution.
+  The optimized replacement repack `41857485715` remains an independent check;
+  pending-only dispatch `41857418346` was cancelled before any work after the
+  old build-only concurrency key delayed it. Preparation concurrency now also
+  includes the worker revision, keeping independent revisions isolated.
 
 ## Executor protocol
 

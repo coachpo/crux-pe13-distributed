@@ -16,7 +16,10 @@ from cloud_source_reads import iter_invocations
 
 
 EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110303'
-PACK_REGISTRIES = {'41779197896': EVIDENCE / 'pack-registry.json'}
+PACK_REGISTRIES = {
+    '41779197896': EVIDENCE / 'pack-registry.json',
+    '41835375815': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-41835375815.json',
+}
 
 
 def read(path):
