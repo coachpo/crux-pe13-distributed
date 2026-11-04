@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from email.utils import formatdate
 import unittest
 import urllib.error
 import zipfile
@@ -155,6 +156,63 @@ class CloudLayersTests(unittest.TestCase):
                         sleep=waits.append, now=lambda: 100)
         self.assertEqual(waits, [1])
 
+    def test_transient_http_statuses_use_bounded_exponential_backoff(self):
+        calls, waits = [], []
+        statuses = (503, 500, 502, 504)
+        errors = [urllib.error.HTTPError('https://api.github.com/test', status, 'transient', {},
+                                         io.BytesIO(b'<Error>ServerBusy</Error>'))
+                  for status in statuses]
+        def opener(request):
+            calls.append(request)
+            if len(calls) <= len(errors):
+                raise errors[len(calls) - 1]
+            return self.response(b'{}')
+        result, _ = layers._request('https://api.github.com/test', 'token', opener=opener,
+                                    sleep=waits.append, now=lambda: 100)
+        self.assertEqual(result, b'{}')
+        self.assertEqual(waits, [1, 2, 4, 8])
+        self.assertEqual(len(calls), 5)
+
+    def test_secondary_429_retry_after_seconds_takes_precedence(self):
+        waits, calls = [], []
+        error = urllib.error.HTTPError('https://api.github.com/test', 429, 'secondary limit',
+                                       {'Retry-After': '17', 'X-RateLimit-Remaining': '9'},
+                                       io.BytesIO(b'{"message":"secondary rate limit"}'))
+        def opener(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise error
+            return self.response(b'{}')
+        result, _ = layers._request('https://api.github.com/test', 'token', opener=opener,
+                                    sleep=waits.append, now=lambda: 100)
+        self.assertEqual(result, b'{}')
+        self.assertEqual(waits, [17])
+        self.assertEqual(len(calls), 2)
+
+    def test_transient_http_date_retry_after_uses_injected_clock(self):
+        waits = []
+        error = urllib.error.HTTPError('https://api.github.com/test', 503, 'busy',
+                                       {'Retry-After': formatdate(111, usegmt=True)},
+                                       io.BytesIO(b'<Error>ServerBusy</Error>'))
+        opener = mock.Mock(side_effect=[error, self.response(b'{}')])
+        layers._request('https://api.github.com/test', 'token', opener=opener,
+                        sleep=waits.append, now=lambda: 100)
+        self.assertEqual(waits, [11])
+        self.assertEqual(opener.call_count, 2)
+
+    def test_transient_http_retries_exhaust_then_fail(self):
+        waits, calls = [], []
+        error = urllib.error.HTTPError('https://api.github.com/test', 503, 'busy', {},
+                                       io.BytesIO(b'<Error>ServerBusy</Error>'))
+        def opener(request):
+            calls.append(request)
+            raise error
+        with self.assertRaisesRegex(RuntimeError, '503.*after 5 transient retries'):
+            layers._request('https://api.github.com/test', 'token', opener=opener,
+                            sleep=waits.append, now=lambda: 100)
+        self.assertEqual(waits, [1, 2, 4, 8, 16])
+        self.assertEqual(len(calls), 6)
+
     def test_inventory_paginates_without_relisting_for_each_layer(self):
         records = [{'id': index + 1, 'name': 'artifact-' + str(index), 'expired': False}
                    for index in range(101)]
@@ -169,16 +227,18 @@ class CloudLayersTests(unittest.TestCase):
         self.assertIn('page=2', requests[-1])
 
     def test_non_rate_limit_api_error_is_not_retried(self):
-        calls = []
-        error = urllib.error.HTTPError('https://api.github.com/test', 404, 'not found', {},
-                                       io.BytesIO(b'{"message":"Not Found"}'))
-        def opener(request):
-            calls.append(request)
-            raise error
-        with self.assertRaisesRegex(RuntimeError, '404.*Not Found'):
-            layers._request('https://api.github.com/test', 'token', opener=opener,
-                            sleep=lambda _: self.fail('must not sleep'))
-        self.assertEqual(len(calls), 1)
+        for status, message in ((403, 'Resource not accessible by integration'), (404, 'Not Found')):
+            calls = []
+            error = urllib.error.HTTPError('https://api.github.com/test', status, 'error', {},
+                                           io.BytesIO(json.dumps({'message': message}).encode()))
+            def opener(request):
+                calls.append(request)
+                raise error
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(RuntimeError, str(status) + '.*' + message):
+                    layers._request('https://api.github.com/test', 'token', opener=opener,
+                                    sleep=lambda _: self.fail('must not sleep'))
+                self.assertEqual(len(calls), 1)
 
     def test_artifact_blob_redirect_does_not_forward_github_credentials(self):
         request = layers.urllib.request.Request('https://api.github.com/artifact',

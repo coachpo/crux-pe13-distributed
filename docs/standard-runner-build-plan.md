@@ -92,7 +92,8 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
-| D2-perf | implemented, cloud check pending | source_footprint + root | Source-only AIDL closure caches pass fixtures for repeated lookup, distinct roots and genuine unvisited leaves. Recognizes real `aidl`/`aidl-cpp` invocations, preserves their exact root searches and gives only unvisited leaves the AIDL-specific fallback. No source bytes, generated-input policy or native action changes. |
+| D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
+| T1 | implemented, recovery pending | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures for 503 recovery, exhaustion, Retry-After and immediate non-transient failures. All identity checks stay unchanged. Current production recovery is a same-execution failed-job retry on a clean standard runner, not cross-run output reuse. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -239,6 +240,25 @@ Do not insert historical source overlays or old compiled artifact bindings.
   to this run's receipts. No previously compiled object, JAR, kernel or image
   from any earlier execution is admitted. Wave 1 has started; later compilation
   and the separate image assembly/validation remain pending.
+- Production `41866735013` passed all 16 tasks in waves 0–1, including its newly
+  rebuilt kernel. Wave 2 `w002-s003` job `126734850823` failed before native
+  compilation while downloading a GitHub artifact: HTTP 503, Azure `ServerBusy`,
+  "Egress is over the account limit." Existing transport handles primary API
+  quota resets but not transient 5xx. T1 adds bounded transport-only backoff.
+  Healthy sibling jobs continue. Root may rerun this failed job and its skipped
+  descendants in the SAME execution/worker SHA after the active attempt ends:
+  the retry restores a new empty source/OUT runner, imports only already fresh
+  parents from this execution, and overwrites the failed task's artifacts.
+  This does not enable cross-run resume, old compiled inputs, ccache, native
+  error suppression, or changing the pinned graph/source/capsules.
+- T1 integrated validation passed 460 tests (16 environment skips), actionlint
+  and whitespace checks. HTTP 429/500/502/503/504 have at most five transient
+  retries with exponential backoff, honoring numeric/date Retry-After; existing
+  primary quota reset waits and cross-host credential stripping are unchanged.
+  This follows [Azure's storage throttling guidance](https://learn.microsoft.com/en-us/azure/storage/blobs/scalability-targets).
+  [GitHub reruns retain the original commit/ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs?tool=cli):
+  production retry therefore retains worker `79c8c2f` and the same context;
+  the transport fix applies to future executions and the later assembly job.
 
 ## Executor protocol
 

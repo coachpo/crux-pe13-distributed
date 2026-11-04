@@ -3,6 +3,8 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import os
@@ -39,9 +41,29 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _API_OPENER = urllib.request.build_opener(_SafeRedirect()).open
+_TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
+_TRANSIENT_RETRIES = 5
+_TRANSIENT_BACKOFF_MAX = 30
+
+
+def _retry_after_seconds(headers, now):
+    value = headers.get('Retry-After')
+    if not value:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0, retry_at.timestamp() - now())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 def _open_retry(request, opener=_API_OPENER, sleep=time.sleep, now=time.time):
+    transient_retries = 0
     while True:
         try:
             return opener(request)
@@ -57,6 +79,19 @@ def _open_retry(request, opener=_API_OPENER, sleep=time.sleep, now=time.time):
             if error.code in (403, 429) and primary and reset:
                 delay = max(1, int(reset) - int(now()) + 1)
                 print(f'GitHub API primary rate limit reached; waiting {delay}s for reset', flush=True)
+                sleep(delay)
+                continue
+            if error.code in _TRANSIENT_HTTP_CODES:
+                if transient_retries >= _TRANSIENT_RETRIES:
+                    raise RuntimeError(
+                        f'GitHub API request failed ({error.code}) after {_TRANSIENT_RETRIES} transient retries: '
+                        f'{message or body.decode(errors="replace")[:1000]}') from error
+                delay = _retry_after_seconds(error.headers, now)
+                if delay is None:
+                    delay = min(2 ** transient_retries, _TRANSIENT_BACKOFF_MAX)
+                transient_retries += 1
+                print(f'GitHub API transient HTTP {error.code}; retry {transient_retries}/'
+                      f'{_TRANSIENT_RETRIES} in {delay:g}s', flush=True)
                 sleep(delay)
                 continue
             raise RuntimeError(f'GitHub API request failed ({error.code}): {message or body.decode(errors="replace")[:1000]}') from error
