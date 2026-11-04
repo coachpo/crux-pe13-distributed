@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | pending D3 restart | root + read-only observer | Production `41866735013` passed waves 0–5 after same-execution transport retries, but wave-6 keystore2 has a genuine missing native-link input. It is not accepted. After D3 admission repair all 39 tasks restart empty on the latest worker, including automatic download/upload retry fixes. |
+| V1 | active | root + read-only observer | New cold execution `41920576338`, worker `9b37b3140ba9792a79105956d711beaa1c8dddd0`, passed bootstrap and started all 13 wave-0 jobs. D3 runtime admission and automatic transport retries are active; all 39 tasks and final summary remain required. No compiled outputs from previous executions are used. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -339,6 +339,15 @@ Do not insert historical source overlays or old compiled artifact bindings.
   [Rust codegen option contract](https://doc.rust-lang.org/rustc/codegen-options/index.html#link-args)
   and recorded native command provide the operand semantics. Integrated
   validation: 476 tests, 16 environment skips, actionlint and whitespace checks.
+- Old execution `41866735013` ended with 37 successful tasks and the known
+  keystore2 native failure; its healthy Recovery-image task completed before
+  the pending replacement acquired concurrency. New cold run `41920576338`,
+  worker `9b37b3140ba9792a79105956d711beaa1c8dddd0`, passed bootstrap and wave-0
+  planning. It retains the same repaired 39 capsule archives and immutable
+  preparation pins, but imports no previous native archive. Root inspected the
+  cloud-generated context and verified all three formerly missing Soong native
+  libraries have both declared-owner extra exports and matching current-run
+  consumer runtime imports. Original Ninja/local ordering remains unchanged.
 
 ## Executor protocol
 
