@@ -1,0 +1,78 @@
+{
+  "build_number": "2026110303",
+  "cold_frontend_probe": {
+    "actions": 7,
+    "bpglob_help_exit": 0,
+    "expr": "3",
+    "status": "success",
+    "tr": "CRUX"
+  },
+  "derived_database_bytes": 8264257536,
+  "derived_database_sha256": "fec237a541fe61fca68f023105cdcff1bdf57e648a5ecbe5a96369d74ead5ff5",
+  "elapsed_seconds": 2075.773,
+  "graph_run": "41677764699",
+  "index_run": "41685367061",
+  "iterations": [
+    {
+      "new_dependencies": 63494,
+      "selected_edges": 136036
+    },
+    {
+      "new_dependencies": 44,
+      "selected_edges": 136591
+    },
+    {
+      "new_dependencies": 0,
+      "selected_edges": 136591
+    }
+  ],
+  "manifest_sha256": "2950cc77ceea78dd47d140e611ef38e477823f306d841433b72f167e0ff1c69d",
+  "out_root": "/home/runner/work/_temp/android-out",
+  "plan": {
+    "action_count": 136566,
+    "edge_count": 136591,
+    "job_count": 39,
+    "max_actions": 4000,
+    "max_parallel": 20,
+    "schema_version": 1,
+    "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+    "wave_count": 8
+  },
+  "platform_path_consumers": [
+    {
+      "edge": 130596,
+      "kind": "kernel config",
+      "output": "/home/runner/work/_temp/android-out/target/product/crux/obj/KERNEL_OBJ/.config"
+    },
+    {
+      "edge": 130594,
+      "kind": "kernel image",
+      "output": "/home/runner/work/_temp/android-out/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb"
+    },
+    {
+      "edge": 245339,
+      "kind": "DTBO",
+      "output": "/home/runner/work/_temp/android-out/target/product/crux/obj/DTBO_OBJ/arch/arm64/boot/dtbo.img"
+    },
+    {
+      "edge": 1641079,
+      "kind": "headers_install sbox",
+      "output": "/home/runner/work/_temp/android-out/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen/.dummy_dep"
+    }
+  ],
+  "pruned_database": {
+    "bytes": 1534316544,
+    "path": "/home/runner/work/_temp/shard-evidence/index-pruned.sqlite",
+    "sha256": "52b19246e25a2ca94b74b9d0b70a7553eca3798d9aca91f4561733b91bdf94eb"
+  },
+  "scalar_probe": [
+    {
+      "output": "/home/runner/work/_temp/android-out/soong/build_number.txt",
+      "status": "success"
+    }
+  ],
+  "schema_version": 1,
+  "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+  "source_run": "41677764699",
+  "status": "success"
+}

@@ -1,183 +1,121 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 6 / active (2026-11-04).
+Plan: standard-runner-freeze / revision 7 / done (2026-11-04).
 
-The owner authorized implementation, commits/pushes and Actions execution to
-replace local PE13 build preparation using only public-repository standard Linux
-GitHub-hosted runners. No larger/self-hosted runners or device operations.
-Baseline: `a134139812b700c6667343f3f4aeabb87aee0064` in
-`out/crux-pe13-actions-ota-2026-10-11/actions-repository`; clean working tree.
-The remote main revision matches. Preserve the accepted v3 delivery and inputs.
+## Outcome and scope
 
-The first acceptance gate is a fresh four-image Soong/Kati graph generated on a
-standard runner from a complete pinned source view mounted from compressed source
-layers, with no locally compiled host binaries or pre-generated Android graph.
-Next gates are a new canonical index/closure/ownership/shard plan and parallel
-cold-input capsule packing. Source acquisition must run in Actions; local source
-inspection may export revision and layout metadata only. Missing cloud source
-bytes are an explicit blocker, never replaced with placeholders or old graphs.
+The complete preparation chain is accepted on public-repository standard
+`ubuntu-22.04` GitHub-hosted runners: public pinned source acquisition,
+compressed source mounts, fresh Soong/Kati graph generation, canonical indexing,
+runtime/dependency completion, closure-preserving pruning, slicing and parallel
+cold-input capsule packing. No larger/self-hosted runner, local PE graph/index,
+local slicing/packing, pre-generated local graph or locally compiled host seed
+was used. Local work comprised implementation, source/layout metadata and
+evidence inspection, and fixture tests.
 
-## Contracts
+The owner authorized implementation, commits/pushes and Actions execution.
+The maintained checkout is `out/crux-pe13-actions-ota-2026-10-11/actions-repository`
+in the Crux workspace, published as `coachpo/crux-pe13-distributed`.
+The accepted implementation revision is
+`9b4e3e24d360685a6e0eecfdd91ad206de3531ce`; final documentation adds evidence
+without changing that implementation. The original baseline was `a134139`.
 
-All executors read this plan, applicable AGENTS.md and the unchanged executor
-protocol linked below. Entry check: `git diff --quiet -- <allowed paths>` before
-editing. Root owns integration, workflows, source manifest publication and final
-acceptance. Executors may edit/test their assigned files; root alone commits,
-pushes, triggers runs and updates this record. No unrelated source or device
-changes. Use the inherited model/effort. After three in-contract fix/check cycles,
-return any remaining failure to root with evidence; never lower acceptance.
+This accepts preparation for the pinned `aosp_crux-userdebug` development
+product, not a newly compiled ROM, image assembly, release/OTA publication or
+device deployment. The accepted `dev-pe13-2026101105-v3` delivery, kernel/symbol
+pairings and device state remain unchanged.
 
-| Task | State | Owner | Allowed paths / interface / validation |
+## Completed contracts
+
+| Task | State | Owner | Accepted interface and evidence |
 | --- | --- | --- | --- |
-| S1 source layers | done | source_footprint + root integration | `scripts/cloud_source.py`, `tests/test_cloud_source.py`; pinned JSON projects (path, URL, revision), copy/link entries and deterministic layer IDs; fetch complete project trees, preserve symlinks/modes, SquashFS layers and machine receipts; tests cover manifest/layout/nested-project handling and source failure. Accepted source run `41677764699`. |
-| F1 graph frontend | done | frontend_decomposition + root integration | `scripts/cloud_freeze.py`, `tests/test_cloud_freeze.py`; fresh external OUT_DIR from complete mounted source; explicit identity, GOGC injection under env reset and `--skip-ninja` four-image graph only; no existing graph or local binary seeds. Accepted graph run `41677764699`. |
-| W1 graph integration probe | done | root | workflow, pinned manifest, docs; standard `ubuntu-22.04` only, complete-source layer fanout, graph job and always-uploaded logs/receipts; accepted hosted run `41677764699`. |
-| P1 index/slice/pack | active | root | Preserve canonical producer/scope semantics, audit new graph ownership and package all shards in parallel. Overall acceptance requires successful hosted slicing, cold probes, every planned capsule and aggregate registry. |
-| P1-I canonical index | done | frontend_decomposition + root integration | `scripts/cloud_index.py`, fixture tests and `prepare-standard.yml`; accepted graph run `41677764699` and the same source manifest. All four graph digests validated; a new canonical SQLite index and four target producers accepted in run `41685367061`. Actual index/closure work runs only on standard runners. |
-| P1-A/S/R runtime contracts | active | source_footprint, frontend_decomposition, postgraph_decomposition; root integrates | New source actor, source-reader and host/Rust runtime modules. Generate from the current graph/source tree; no old audit JSON or diagnostic binaries as runtime inputs. Root `cloud_shard.py` applies producer-bound order dependencies to a copied fresh index, cold-probes source-built Go actors and scalar rematerialization, then prunes and shards. |
+| S1 complete source | done | source_footprint + root | 1,170 pinned projects, 32 SquashFS layers, 51 copy/link entries; cloud acquisition/reuse verifies project contracts and image parts. Complete source run `41677764699`. |
+| F1/W1 fresh frontend | done | frontend_decomposition + root | Fresh external OUT_DIR, complete compressed source view, explicit build identity, GOGC injection under env reset and four-image `--skip-ninja`; graph job `126065932319` in `41677764699`. |
+| P1-I canonical index | done | frontend_decomposition + root | Four fresh Ninja digests verified, new SQLite index and four terminal producers; run `41685367061`. Canonical parser unchanged by later fixes. |
+| P1-A/R source runtime contracts | done | source_footprint, frontend_decomposition, postgraph_decomposition + root | Source-derived scalar/Go actors, license/R8 reads, host-tool libraries, Rust imports and structural PATH dependencies; real cold probes and dependency fixed point passed. No old audit JSON, native IDs or diagnostic binaries imported. |
+| P1-S prune and slice | done | root | Full source/pruned closure equivalence and producer-bound metadata projection; 136,591 edges / 136,566 actions, 39 shards / 8 dependency waves. Successful shard job `126375516290` in `41769467686`. |
+| P1-P parallel cold packing | done | frontend_decomposition + root | All 39 jobs and aggregate registry passed in `41779197896`; exact inventory/manifest/index bindings and streamed tar contents verified, no generated-OUT allowlist. |
+| E1 delivery | done | acceptance_audit + root | Usage guide, acceptance record and compact repository evidence; raw API records, logs and receipts retained in the workspace evidence directory. |
 
-## Execution and acceptance
+Executors had bounded file contracts and no remote-write authority; root
+reviewed/integrated changes, committed, pushed and dispatched Actions. No
+separate worktrees or task branches were created. Historical failed-run evidence
+is retained; no source VM or device changes require cleanup.
 
-- S1/F1 source/helper diffs inspected and accepted for the first hosted probe.
-  Source manifest: 1,170 pinned projects, 32 layers and 51 copy/link entries.
-- Local checks: actionlint 1.7.12 passed; 312 unit tests completed with 15
-  skips; `git diff --check` passed. SquashFS mounting/build execution remains a
-  hosted acceptance gate, not established by fixture tests.
-- Actions graph gate: pending; retain run IDs, commit IDs, raw logs and artifact
-  receipts under the workspace task evidence directory.
-- First hosted probe: `41664251881`, commit `b988133`. Standard runner source
-  layers were produced successfully; other layers exposed upstream-vs-maintained
-  fork URL drift, the local-only device v2 commit, and Gitiles 503/truncated
-  archives. The next probe uses corrected maintained repository URLs, an exact
-  source patch with a checked Git tree for device commit `80c137e`, and a
-  commit-verified Git fetch fallback for failed Gitiles archives. Unchanged source
-  layers may be reused only after complete layer-contract and part verification.
-- Integration decision: pending. This plan remains active until every gate passes
-  or a concrete external/source/runner blocker is established and reported.
-- Revised source probe: `41666229218`, commit `dafe3a4`, build `2026110302`.
-  It has produced the patched device tree and most source layers; source-07
-  exposed two existing dangling QCOM layout links. Commit `1cf0910` preserves
-  those links. Follow-up `41668368879` is queued behind that probe, with the same
-  build identity and verified reuse from `41666229218`.
-- Execution owners: root integrates, commits, pushes and dispatches. Source,
-  frontend and source-reuse helpers were delivered by reused `gpt-6-luna`
-  subagents; root independently inspected the diffs and ran the unit/actionlint
-  checks. The source/graph observer is read-only. Source VM/device trees remain
-  unchanged; local inspection exported revision/layout metadata and one existing
-  source patch only. No local graph generation or source capsule packaging ran.
-- Current graph acceptance target: full run `41674662924`, commit `9ea420e`,
-  build `2026110302`, with verified source reuse from `41666229218` plus the
-  parallel source-07 repair `41673377043` (`mode=source-only`). The source-only
-  run cannot satisfy graph acceptance. Pending runs `41668368879` and
-  `41673697025` were intentionally canceled with zero jobs when superseded.
-  No generated graph has passed the gate yet. Before graph execution, CI
-  authentication is removed from the Android child environment so it cannot
-  enter Soong's persisted available-environment snapshot.
-- Superseding active target: full run `41677764699`, commit `154c1dc`, build
-  `2026110303`. It combines verified source layers from `41666229218`,
-  `41673377043` and `41664251881`; the first run's source-01 artifact became
-  available before the duplicated second download. The complete 32-layer input
-  selection totaled 32,311,000,918 artifact bytes including receipts/ZIP framing.
-  Source-01's old/current layer contracts were independently compared and match.
-- Source gate accepted: all 32 source jobs plus plan succeeded in
-  `41677764699`. Graph job `126065932319` is active, initially restoring and
-  mounting the compressed source view. This accepts source acquisition and
-  transport, not graph generation or the overall plan. Superseded pending run
-  `41674662924` was canceled with zero jobs. Current local suite: 331 tests,
-  15 skips, actionlint passed. P1 remains draft until the hosted graph succeeds.
-- Fresh graph gate accepted: `41677764699` succeeded, graph job
-  `126065932319`, artifact `cloud-graph-2026110303` ID `13254050598`,
-  800,535,901 bytes. The mounted source images total 31,927,148,544 bytes.
-  The graph command completed in 7:28.79 with maximum RSS 14,700,164 KiB and
-  exit 0. The full graph job (transport/setup/graph/archive) took about 22 minutes.
-  This is a fresh hosted graph, not a frozen-graph replay. Canonical indexing is
-  now ready and is being connected through `prepare-standard.yml`.
-- Canonical index gate accepted: run `41685367061`, commit `9c89b47`, job
-  `126089581715`, artifact `13255112960`. 1,749,436 edges / 1,961,774 outputs
-  / 2,441,929 statements across four fresh Ninja files; all four target producers
-  exist. SQLite is 8,154,189,824 bytes, compressed to 204,799,099 bytes. Indexing
-  took 5:42.37, maximum RSS 285,180 KiB. Restored graph resource samples show
-  maximum swap use 5,517,811,712 bytes and minimum available disk 61,768,339,456
-  bytes during generation. Runtime completion/slicing is the next hosted gate.
-- First shard gate `41698738039` failed on the fresh native scalar command
-  `/bin/bash -c "touch .../soong/build_number.txt"`. The next revision unwraps
-  that single native writer before validation and adds regression coverage.
-  Source-reviewed kernel/DTBO/header PATH consumers are rebound by output paths
-  to fresh index IDs; their source-built interposer and alias-directory readiness
-  is explicit. Distinct dependency categories retain their union in both SQLite
-  and emitted Ninja bindings. Parallel capsule jobs restore only indexed graph
-  text from the derived graph transport, not warmed frontend binaries.
-- Pack/full workflow stages and a streaming per-capsule archive verifier are
-  implemented; actual pack acceptance remains pending a successful slice gate.
-- Follow-up full run `41759299116`, commit `d0726f7`, reused the accepted
-  graph/index and mounted all 32 layers. Native scalar rematerialization passed,
-  and the four kernel/DTBO/header PATH consumers resolved to fresh producer IDs.
-  Source-read analysis then failed on Make's manually written license argument
-  response file (edge `106927`). The pinned Make source writes it within the
-  same command using `rm`, `touch`, and literal `echo -n` appends, rather than
-  declaring Ninja `rspfile_content`. The fix must derive those bytes from the
-  native command without opening any warm OUT file. The pinned Go license tool
-  expands only top-level `@` operands; it does not recursively expand response
-  payload tokens. These semantics, unknown-writer rejection and source-read
-  behavior require fixture regression tests before another hosted full run.
-  This failed run is not shard or pack acceptance. Raw logs and receipts are
-  retained under `out/crux-pe13-standard-freeze-2026-11-03/` in the workspace.
-- Run `41762955760`, commit `766c68f`, passed the source-read derivation and
-  reached bulk dependency updates, then failed with SQLite `database is locked`.
-  A large write transaction can spill dirty pages and exclude a newly opened
-  reader. The fix batches and closes raw-statement reads before any updates,
-  retaining the dependency union and unchanged canonical graph parser. A
-  constrained-cache fixture reproduces the failure before the fix and passes
-  afterward. Index/shard log pipelines now use `pipefail` so the native failure
-  cannot be hidden by `tee`; failed receipts already prevented downstream
-  acceptance. The next full run still requires actual slice/pack acceptance.
-- Independent review of `14cb7cd` found that pre-reading also caches no-op
-  candidates; only edges with actual changes may enter the published adaptation
-  profile. A regression reproduced the missing-reason `KeyError`, then passed
-  after publishing only reason-bearing changes. Run `41764768391` was
-  intentionally canceled during setup rather than spend further source-download
-  work on the superseded revision. No shard/pack acceptance is claimed for it.
-- Current shard target is `41765283807`, commit `aedf0e1`. In parallel, the
-  source/artifact transport was revised for the pack matrix: one source artifact
-  inventory instead of 32 repeated listings, artifact-ID downloads streamed to
-  disk, and primary API-limit waits using the server reset header. All
-  preparation artifact reads share this retry transport, including reads before
-  the source mount. This follows GitHub's documented normal 1,000 REST
-  requests/hour/repository budget. The revised transport passed 399 fixture
-  tests (16 environment skips) and actionlint; actual hosted pack validation
-  remains required. A compatible successful shard artifact may be resumed with
-  `stage=pack` on the revised transport without rerunning graph/index/slicing.
-- Run `41765283807` accepted the real cold frontend probe (7 actions, expr=3,
-  tr=CRUX, bpglob help exit 0) and native scalar probe, and reached a dependency
-  fixed point: 136,036 edges/+63,494 inputs, then 136,591/+44, then +0. It
-  failed during prune validation because copied runtime metadata still named
-  the DTBO producer outside the selected closure. The prune fix projects
-  producer-bound ownership and edge adaptations into the kept edge domain,
-  re-anchors shared-rule adaptations to a retained lexical-rule consumer, and
-  compares the full source/pruned closure semantics. It neither widens the
-  product target closure nor removes any selected adaptation. Actual slicing
-  and packing still require a successful hosted run after this fix.
-- Shard acceptance passed in `41769467686`, commit `3802881`, job
-  `126375516290`: 136,591 retained edges / 136,566 actions, 39 shards / 8
-  waves; pruned index 1,534,316,544 bytes with digest
-  `52b19246e25a2ca94b74b9d0b70a7553eca3798d9aca91f4561733b91bdf94eb`.
-  Native preparation took 34:39.00 with maximum RSS 12,741,012 KiB. Artifact
-  `13296156332` is 610,880,810 bytes. Pack-plan also succeeded, but the pack
-  job inherited the implicit `success()` check from the skipped index ancestor
-  and was skipped; summary correctly failed on missing receipts. Job gates now
-  explicitly use `!cancelled()` with their required-result checks, preserving
-  skipped-stage resume and ordinary cancellation. The next `stage=pack` run
-  reuses this accepted shard artifact; no graph/index/slice rerun is needed.
-- Pack-only run `41774690617`, commit `62cc3c2`, dispatched all 39 jobs. The
-  first real collector failure was `w000-s012`: a bpglob-name argument in its
-  source bootstrap caused the collector to scan a later command's `mkdir -p`
-  operand as a glob root, then reject the unrelated `OUT/soong/build.ninja`.
-  Fixture tests reproduce this exact failure; the fix restricts bpglob and Go
-  test-runner runtime arguments to their actual invocation boundaries. Real
-  source glob collection and the generated-OUT rejection remain enforced; no
-  generated input is whitelisted. The full suite passes 403 tests (16 skips).
-  Healthy jobs in the first batch continue, and all 39 capsules are revalidated
-  on the fixed collector against the same accepted shard plan and pruned index.
+## Accepted compatible run chain
+
+Build `2026110303`, epoch `1793724452`; source-manifest SHA-256
+`2950cc77ceea78dd47d140e611ef38e477823f306d841433b72f167e0ff1c69d`.
+
+| Gate | Accepted run/job | Result |
+| --- | --- | --- |
+| Source + fresh graph | `41677764699` / graph `126065932319`, head `154c1dc` | 32 verified source images totaling 31,927,148,544 bytes. Native graph command 7:28.79, max RSS 14,700,164 KiB; peak swap 5,517,811,712 bytes; minimum free disk 61,768,339,456 bytes. Artifact `13254050598`. |
+| Index | `41685367061` / `126089581715`, head `9c89b47` | 1,749,436 edges / 1,961,774 outputs / 2,441,929 statements, four files and all four target producers. SQLite 8,154,189,824 bytes; 5:42.37, max RSS 285,180 KiB. Artifact `13255112960`. |
+| Runtime completion + slicing | `41769467686` / shard `126375516290`, head `3802881` | Scalar and seven-action Go cold probes passed; dependency additions +63,494, +44, +0. Native preparation 34:39.00, max RSS 12,741,012 KiB. Pruned index 1,534,316,544 bytes. Artifact `13296156332`, 610,880,810 bytes. |
+| Parallel packing + registry | `41779197896`, head `9b4e3e2` | 39/39 pack jobs and summary succeeded; 43 total jobs = 41 success + 2 intentionally skipped upstream stages. Archives total 40,834,624,242 bytes, shard input bytes total 141,030,747,546 (includes cross-shard duplication). Max native pack RSS 2,276,388 KiB, max pack elapsed 1,081.518 seconds. Registry artifact `13300960503`. |
+
+The earlier full run `41769467686` succeeded at the accepted shard job but failed
+after its pack job was skipped. It is not described as a successful whole run.
+The successful final pack-only run exercises resume with both upstream stages
+intentionally skipped. It consumes the same accepted graph/index/shard identity.
+
+Plan digest:
+`0adc8fc5ee03139e5918ecb6ea33cbc2048f955721cafe5567f75ee15f28df71`.
+Pruned index digest:
+`52b19246e25a2ca94b74b9d0b70a7553eca3798d9aca91f4561733b91bdf94eb`.
+All 39 receipts match those identities and the exact slice manifest inventory.
+The artifact API lists all 39 capsule artifacts, all 39 receipt artifacts and
+the successful aggregate registry. Every executed final job has the standard
+`ubuntu-22.04` label and GitHub Actions runner group; the repository is public.
+
+## Fixed failures and acceptance boundaries
+
+- Source probes `41664251881` / `41666229218` exposed fork URL drift,
+  unavailable local-only device revision, Gitiles failures and existing dangling
+  layout links. Public pinned forks, exact device patch/tree verification, Git
+  fetch fallback and verified multi-run layer reuse resolved them.
+- `41698738039` exposed native scalar `bash -c touch`; its one writer now
+  rematerializes the exact frontend bytes and mode.
+- `41759299116` exposed Make's literal in-command license response writer.
+  Recovery follows the pinned tool's one-level response grammar without reading
+  a warm OUT response file.
+- `41762955760` exposed SQLite read/write locking during cache spill. Batched
+  reads now close before writes; no-op cached candidates do not enter adaptation
+  profiles. Superseded `41764768391` was canceled during setup.
+- `41765283807` passed cold probes but exposed out-of-closure runtime metadata
+  during pruning. Projection preserves retained edge/rule semantics and drops
+  irrelevant ownership; full closure equivalence is checked.
+- `41769467686` exposed implicit status propagation from intentionally skipped
+  ancestors. Explicit `!cancelled()` gates now dispatch resumed stages and allow
+  ordinary cancellation.
+- `41774690617` finished 38 successful capsules and one false input-audit
+  failure. The bpglob heuristic had scanned a later `mkdir -p` operand.
+  Invocation-scoped arguments fix the cause, preserve real source glob reads,
+  and do not approve any generated OUT input. The final run revalidated all
+  39 capsules on the fixed collector, including `w000-s012`.
+
+Validation: `python3 -m unittest discover -s tests` passed 403 tests with 16
+environment skips; actionlint 1.7.12 and `git diff --check` passed. Local fixtures
+are separate from the real hosted gates above.
+
+## Delivery and retention
+
+- [Usage](standard-runner-freeze.md) — full and resumable workflow commands.
+- [Acceptance](standard-runner-preparation-acceptance-2026-11-04.md) — scope,
+  results, identities and artifact pointers.
+- [Compact evidence](evidence/standard-preparation-2026110303/) — source artifact
+  identities, graph/index/shard receipts, slice inventory, all condensed pack
+  receipts, capsule artifact identities, runner audit and aggregate registry.
+- Workspace raw evidence: `out/crux-pe13-standard-freeze-2026-11-03/`,
+  especially `accepted-graph-41677764699/`,
+  `accepted-index-41685367061/`, `accepted-shards-41769467686/` and
+  `pack-41779197896/`.
+
+Source artifacts expire after 7 days; graph/index/shard/capsule/registry artifacts
+after 14 days. Compact acceptance evidence is versioned in Git; raw logs and
+receipts are archived locally for inspection only, not required runtime inputs.
+Expired payloads can be regenerated in Actions from the pinned public sources
+and workflow inputs, subject to continued source/archive availability.
 
 ## Executor protocol
 

@@ -1,0 +1,490 @@
+{
+  "schema_version": 1,
+  "repository": "coachpo/crux-pe13-distributed",
+  "visibility": "public",
+  "pack_run": 41779197896,
+  "head_sha": "9b4e3e24d360685a6e0eecfdd91ad206de3531ce",
+  "status": "completed",
+  "conclusion": "success",
+  "job_count": 43,
+  "successful_jobs": 41,
+  "intentional_skips": 2,
+  "capsule_count": 39,
+  "maximum_pack_rss_kib": 2276388,
+  "maximum_pack_seconds": 1081.518,
+  "jobs": [
+    {
+      "id": 126408126626,
+      "name": "pack-plan",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:30:43Z",
+      "completed_at": "2026-11-04T05:34:22Z"
+    },
+    {
+      "id": 126408127649,
+      "name": "index",
+      "conclusion": "skipped",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": null,
+      "started_at": "2026-11-04T05:30:41Z",
+      "completed_at": "2026-11-04T05:30:40Z"
+    },
+    {
+      "id": 126408160165,
+      "name": "shard",
+      "conclusion": "skipped",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": null,
+      "started_at": "2026-11-04T05:30:47Z",
+      "completed_at": "2026-11-04T05:30:40Z"
+    },
+    {
+      "id": 126409332684,
+      "name": "pack (w000-s009)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:50:37Z"
+    },
+    {
+      "id": 126409332703,
+      "name": "pack (w000-s003)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:24Z",
+      "completed_at": "2026-11-04T05:46:47Z"
+    },
+    {
+      "id": 126409332713,
+      "name": "pack (w000-s008)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:49:57Z"
+    },
+    {
+      "id": 126409332732,
+      "name": "pack (w001-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:52:12Z"
+    },
+    {
+      "id": 126409332733,
+      "name": "pack (w001-s002)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:52:27Z"
+    },
+    {
+      "id": 126409332752,
+      "name": "pack (w002-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:49:28Z"
+    },
+    {
+      "id": 126409332757,
+      "name": "pack (w000-s004)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:46:49Z",
+      "completed_at": "2026-11-04T05:58:57Z"
+    },
+    {
+      "id": 126409332758,
+      "name": "pack (w001-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T06:01:47Z"
+    },
+    {
+      "id": 126409332768,
+      "name": "pack (w000-s010)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:51:39Z"
+    },
+    {
+      "id": 126409332773,
+      "name": "pack (w000-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:52:15Z",
+      "completed_at": "2026-11-04T06:07:06Z"
+    },
+    {
+      "id": 126409332789,
+      "name": "pack (w000-s007)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:50:09Z"
+    },
+    {
+      "id": 126409332792,
+      "name": "pack (w000-s005)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:49:12Z"
+    },
+    {
+      "id": 126409332796,
+      "name": "pack (w000-s011)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:46:59Z"
+    },
+    {
+      "id": 126409332802,
+      "name": "pack (w003-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:49:36Z"
+    },
+    {
+      "id": 126409332814,
+      "name": "pack (w000-s002)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:49:39Z",
+      "completed_at": "2026-11-04T06:06:00Z"
+    },
+    {
+      "id": 126409332817,
+      "name": "pack (w000-s006)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:47:54Z"
+    },
+    {
+      "id": 126409332829,
+      "name": "pack (w003-s002)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:26Z",
+      "completed_at": "2026-11-04T05:51:07Z"
+    },
+    {
+      "id": 126409332836,
+      "name": "pack (w002-s002)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:49:14Z",
+      "completed_at": "2026-11-04T06:09:47Z"
+    },
+    {
+      "id": 126409332837,
+      "name": "pack (w003-s003)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:47:38Z"
+    },
+    {
+      "id": 126409332869,
+      "name": "pack (w007-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:30Z",
+      "completed_at": "2026-11-04T05:48:43Z"
+    },
+    {
+      "id": 126409332873,
+      "name": "pack (w005-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:44:31Z"
+    },
+    {
+      "id": 126409332877,
+      "name": "pack (w002-s004)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:54:54Z"
+    },
+    {
+      "id": 126409332883,
+      "name": "pack (w005-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:44:33Z",
+      "completed_at": "2026-11-04T05:56:12Z"
+    },
+    {
+      "id": 126409332888,
+      "name": "pack (w002-s006)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:48:45Z",
+      "completed_at": "2026-11-04T06:07:01Z"
+    },
+    {
+      "id": 126409332896,
+      "name": "pack (w000-s012)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:49:30Z",
+      "completed_at": "2026-11-04T06:06:00Z"
+    },
+    {
+      "id": 126409332925,
+      "name": "pack (w004-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:50:40Z",
+      "completed_at": "2026-11-04T06:10:31Z"
+    },
+    {
+      "id": 126409332943,
+      "name": "pack (w002-s005)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:54:45Z"
+    },
+    {
+      "id": 126409332955,
+      "name": "pack (w003-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:34:25Z",
+      "completed_at": "2026-11-04T05:50:19Z"
+    },
+    {
+      "id": 126409332957,
+      "name": "pack (w004-s004)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:50:22Z",
+      "completed_at": "2026-11-04T06:01:36Z"
+    },
+    {
+      "id": 126409332969,
+      "name": "pack (w004-s003)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:51:41Z",
+      "completed_at": "2026-11-04T06:09:23Z"
+    },
+    {
+      "id": 126409332979,
+      "name": "pack (w000-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:50:00Z",
+      "completed_at": "2026-11-04T06:02:39Z"
+    },
+    {
+      "id": 126409332987,
+      "name": "pack (w004-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:54:47Z",
+      "completed_at": "2026-11-04T06:06:08Z"
+    },
+    {
+      "id": 126409333007,
+      "name": "pack (w006-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:47:40Z",
+      "completed_at": "2026-11-04T06:02:07Z"
+    },
+    {
+      "id": 126409333050,
+      "name": "pack (w003-s005)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:52:29Z",
+      "completed_at": "2026-11-04T06:03:40Z"
+    },
+    {
+      "id": 126409333052,
+      "name": "pack (w004-s002)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:47:01Z",
+      "completed_at": "2026-11-04T05:58:11Z"
+    },
+    {
+      "id": 126409333133,
+      "name": "pack (w006-s000)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:47:56Z",
+      "completed_at": "2026-11-04T06:00:49Z"
+    },
+    {
+      "id": 126409333138,
+      "name": "pack (w003-s004)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:54:57Z",
+      "completed_at": "2026-11-04T06:14:44Z"
+    },
+    {
+      "id": 126409333144,
+      "name": "pack (w002-s003)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:50:11Z",
+      "completed_at": "2026-11-04T06:11:36Z"
+    },
+    {
+      "id": 126409333660,
+      "name": "pack (w002-s001)",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T05:51:10Z",
+      "completed_at": "2026-11-04T06:14:45Z"
+    },
+    {
+      "id": 126422582930,
+      "name": "pack-summary",
+      "conclusion": "success",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_group_name": "GitHub Actions",
+      "started_at": "2026-11-04T06:14:48Z",
+      "completed_at": "2026-11-04T06:15:23Z"
+    }
+  ]
+}

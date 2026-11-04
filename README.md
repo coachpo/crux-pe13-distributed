@@ -12,10 +12,19 @@ written by anything here.
 ## Pipeline
 
 The [standard-runner preparation workflow](docs/standard-runner-freeze.md)
-validates complete cloud source acquisition and fresh Soong/Kati graph
-generation. It is separate from the accepted frozen-graph pipeline below.
+now covers complete cloud source acquisition, fresh Soong/Kati graph generation,
+canonical indexing, slicing and parallel cold-input capsule packing. The
+[accepted run chain](docs/standard-runner-preparation-acceptance-2026-11-04.md)
+passed all stages, including 39/39 capsules and the aggregate registry, using
+only this public repository's standard Linux runners. Start a new preparation
+with `freeze-standard.yml`, then `prepare-standard.yml` (`stage=full`). No local
+PE build-preparation input or larger/self-hosted runner is required.
 
-1. **Freeze** the development graph and pack the cold source capsules.
+Preparation does not automatically compile, assemble, publish or install a new
+ROM. The accepted frozen development delivery below remains unchanged.
+
+1. **Frozen inputs** retain the accepted development graph and source capsules
+   in their pinned registry.
 2. **Prepare** (`prepare.yml`) reconstructs the frozen source tree, restores the
    toolchains, re-slices the graph and re-packs every capsule. `mode=full`
    verifies the complete set against the registry; it does not need to publish
@@ -72,10 +81,11 @@ Host prerequisites for the dev OTA are listed in
 
 ## Source and dependencies
 
-The build inputs use the frozen October 2026 Crux source selection. The
-existing generated Android Ninja graph is a planning input: compilation is
-performed from source in cold runner tasks. An installed ROM binary is never a
-substitute for a successful distributed build.
+The accepted v3 delivery uses its frozen October 2026 Crux source selection and
+graph. New preparation uses `config/cloud-source-manifest.json` to reconstruct
+all pinned source projects in Actions and generate a new graph. In either case,
+compilation is performed from source in cold runner tasks; an installed ROM
+binary is never a substitute for a successful distributed build.
 
 Android source/toolchain revisions stay pinned to the PE13 build configuration.
 Current Actions dependencies are `actions/checkout@v7.0.1` and

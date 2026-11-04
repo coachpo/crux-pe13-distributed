@@ -10,8 +10,17 @@ systemimage vendorimage` generates the four-image build graph; it does not compi
 the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
 and packs input capsules; it does not assemble or deploy ROM/Recovery images,
 publish an OTA, or install anything on a device. The accepted
-`dev-pe13-2026101105-v3` delivery remains a separate existing build. This guide
-does not certify a new end-to-end acceptance.
+`dev-pe13-2026101105-v3` delivery remains a separate existing build. The complete
+preparation chain has [passed acceptance](standard-runner-preparation-acceptance-2026-11-04.md);
+this is not acceptance of a newly compiled ROM.
+
+Both workflows can be dispatched entirely from the repository's GitHub Actions
+page. The CLI commands below are optional remote controls, not local build steps.
+For a new build, run full freeze first; then choose Prepare with `stage=full`,
+that successful freeze run's ID, and the same build number. Leave `index_run`
+empty to create its new canonical index. Preparation automatically slices and
+packs the complete plan. Accept the result only after every planned pack job
+and the aggregate registry succeed.
 
 ## Identities and reuse
 
@@ -199,11 +208,14 @@ Do not mark preparation accepted until the complete chain has passed:
    report success and the expected shard count.
 
 Record the workflow commit, build number and datetime, manifest digest, source,
-graph, index, shard and pack run IDs, and the relevant receipts/logs. A failed,
-skipped or still-running stage leaves overall acceptance pending. The current
-recorded execution has graph run `41677764699` and index run `41685367061`
-accepted. See [the execution record](standard-runner-freeze-plan.md) for the
-current shard/pack gate; overall acceptance remains pending until both pass.
+graph, index, shard and pack run IDs, and the relevant receipts/logs. An unverified
+required gate leaves acceptance pending; an intentionally skipped stage with a
+compatible accepted upstream run is a supported resume, not a missing gate.
+The accepted build `2026110303` uses graph/source run `41677764699`, index run
+`41685367061`, successful shard job `126375516290` in `41769467686`, and final
+pack run `41779197896`. All 39 capsules and its aggregate registry passed.
+See [acceptance](standard-runner-preparation-acceptance-2026-11-04.md) and
+[the execution record](standard-runner-freeze-plan.md) for exact identities.
 
 Artifacts are temporary Actions records: `cloud-source-<nn>` and
 `failure-source-<nn>` are retained for 7 days; `cloud-graph-<build>`,

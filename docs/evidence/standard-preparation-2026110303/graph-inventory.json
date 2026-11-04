@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/home/runner/work/_temp/android-out/.cloud-preparation/combined.ninja",
+    "size": 160,
+    "mtime_ns": 1793724452000000000,
+    "sha256": "2e107f12a6cc63bb6298aef307a23280850cce4569f0c74ae082a1c365c14c6c"
+  },
+  {
+    "path": "/home/runner/work/_temp/android-out/.cloud-preparation/frontends/companion.ninja",
+    "size": 6250,
+    "mtime_ns": 1793724452000000000,
+    "sha256": "c8d18418246803ee541c0884a42c18a8e45acd12ea73fb27c9469f0b8ad5419d"
+  },
+  {
+    "path": "/home/runner/work/_temp/android-out/build-aosp_crux-package.ninja",
+    "size": 42138,
+    "mtime_ns": 1793726039000000000,
+    "sha256": "0d157757df93b45ccda53b97e705deb36a1fe90a4afff6187f112a1d53b086a9"
+  },
+  {
+    "path": "/home/runner/work/_temp/android-out/build-aosp_crux.ninja",
+    "size": 1054705503,
+    "mtime_ns": 1793726036000000000,
+    "sha256": "cc5f7aa4bfe90f7a461b30f8d8ebf0a68b43995f63454739ba8dbbd368a22de2"
+  },
+  {
+    "path": "/home/runner/work/_temp/android-out/combined-aosp_crux.ninja",
+    "size": 282,
+    "mtime_ns": 1793726039000000000,
+    "sha256": "36a78a3ae6bf04099102e23165f2ed638fc77f5d52dd49379392fe5e133c9efc"
+  },
+  {
+    "path": "/home/runner/work/_temp/android-out/soong/build.ninja",
+    "size": 7299100202,
+    "mtime_ns": 1793725963000000000,
+    "sha256": "35fbd8201ac4a32884daa6b6e53a36d79535c0ecde4205978dbadc6f9914801d"
+  }
+]

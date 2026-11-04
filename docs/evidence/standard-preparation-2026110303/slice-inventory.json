@@ -1,0 +1,435 @@
+{
+  "plan_sha256": "0adc8fc5ee03139e5918ecb6ea33cbc2048f955721cafe5567f75ee15f28df71",
+  "schema_version": 1,
+  "shards": {
+    "w000-s000": {
+      "manifest_sha256": "5e1e435b0a911306dc8e2afe6480b30fee9e3a2d0079b1c86b00cc1c27f156c8",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "c8a8753d55c6faafac6f889c423a3fe6022a9da31cbd7f38c44bfd0c8b0f79ba",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "a179c6aeef6e1ed998bd9f1d46f678397e495fc30d9f207e920916c756d3f886",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s001": {
+      "manifest_sha256": "aa39ecc0cd1a182020f1a2b63c829c6082a7e4bdcebe7d5ddf74fa5c183f46be",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "586e0771885fb2c2847b20971726291f72f2980974b466bac04eee8b557f8089",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "a1ac12d24c18949af602282aa42cbca82e57075f23ca55bc84453832f24b3e6c",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s002": {
+      "manifest_sha256": "14f7efdbcbf8fdd8e3957921fd6644799447ff317e8260c752611970e39ed748",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "b99e7bcd73da3bd6f414d8ae65722e9a2e383179aecf3c4f4a95a4892b456208",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "3fb21c327c53914ac9d9d8c8c8c90a323b5fbab7b4a7386e0e5fad59367042c1",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s003": {
+      "manifest_sha256": "ccdc7f30ea4af772b330f8dc7226bbfb561a75bd8f6093d7ecfdfe8c90dc7afd",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "e36ab8bdb510fc367fb2f5d3f1adc05654fdc4d338315fef8fb79fc9a939d068",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "62f2c83f37717a90766262dd260897f9140b49befc4bc55e58b2f47a270ee11e",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s004": {
+      "manifest_sha256": "d06804ae95006104c544d7c4916b3efc597b2cf5968650146a555e0ff8bec9b7",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "3e68f490ccd5ca0eb0b62b46738746e0cca031aeaaf92feb4f82d0a8e4795ec9",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "417b09f3892d4828e87be1bc88e0451fb3e5b0fb828173e8b4ffc8272054d4b7",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s005": {
+      "manifest_sha256": "97b27279a1b09e550c15e25f31cbd09cf58a638d1770a305533c4253cb36a045",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "5106c36f0838af72bf7fd6570065e761c82e00b087baf5ee7f4296c8dbcead6d",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s006": {
+      "manifest_sha256": "989481e9da21764e82715f960b79c48cf046e1bc28a90880ccb34ecbdaeca904",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "53c226746d08794e520c743abba8886048648377820c5c6914c5793b461f2ba7",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s007": {
+      "manifest_sha256": "828acdd44b916707694d7494f1d31a72d0b230f9033599ed0df54a4f92aaf199",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "89cde77ae90288e2452951cf9296d5df4ec163d07a3f252ba03e8b484bdffb7d",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s008": {
+      "manifest_sha256": "1def39139ffd0532715417bd88be5d2167698fa951bb9d1a2bc020aac5f5e3b0",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6b8e53466fb6b4810824c252a87992b0e56af04d62f217a46c4398d466778394",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "bf6c04db7f87ef20f83cb869507fd2486e179c162af4116b280c737d709ebfa9",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s009": {
+      "manifest_sha256": "e7d973aa83ccffdb3401a93bb2fec2e84ce48c003f09133c84cad3881307ce53",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "ef45a6f3a3d959c256620b9c1b1865fccaa3cb7232e84382d5d79b6bee579614",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "b4d0636c8308caa47f4234c38c04d70e0950e8789c7d12ab406a975febcbcdcd",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s010": {
+      "manifest_sha256": "c1182d327f7d0d09d4b10740bf3d47896fd95798c4ad6b80849ae205e2479a69",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6e5881f563bb97bfd6293fa92bfac2a1225ecfa05c4e1fffe7ac02656444ee8e",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "4c641632682dcea8a7a46c22c0f5678e6bfa0b11b42c2d1ed6c056747732ef7d",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s011": {
+      "manifest_sha256": "8f78bc81bf195e202d1d307d81c4eadd32642f551643266deb1d24b5e52cdf05",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "beab064744a1208e444ac6ed89cd419299b5a030b24aa9e010f4ee04908406b4",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "3a6a2dacc03050bcce22edd95e857c75fd3b58c583d837b9a81d804fe14f0dbe",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w000-s012": {
+      "manifest_sha256": "f8db7dd37f168dd83158ba6928562fcc0672730e70ccb93d93c28ef55317937f",
+      "ninja_files": {
+        "build.ninja": "2bc05c2bbe87d615cb7664cb0f422760909c59585ea79252660f606826d287d2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6df6fae9d67627e6298de2b4c98b21c857a1420f8e302fe7179fd3e4d9b28525",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "296f2939f0ca50c8e7c6bf00eb39e6c30e0ac5834a54a1fcbc7ebae9fc6e71f5",
+        "file-5.ninja": "f3202bd693716e661b089bc81d0044c364b69422bebeb6f89c3e75d6ac4973f7"
+      }
+    },
+    "w001-s000": {
+      "manifest_sha256": "05fbca69fb06e3edbec906e4f1d8d55f2f3bd2c333e3e43f0967be815475df2d",
+      "ninja_files": {
+        "build.ninja": "ba9e6e733e9469dec885e67aa03cd77917a8a33ef9c4d778768ca2f6765ae2af",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "e5136239e8cbf6f6726cbfa36b58f6f9ff387e8a6f8e289842d4a882c5edb2d1",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "555d805d647640af033e43352a8431e62929b3f7ab56544a7689d727308ffe6c",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w001-s001": {
+      "manifest_sha256": "fd7dbb8f9d84952cb9529af054f9c4c88987e80996261d801cd2f989d942d6c4",
+      "ninja_files": {
+        "build.ninja": "2f6330fb1eb91a6697093557a2d1f72079bd882c8c72d5b0833e2f1dee7f7aed",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "1921c5027291be4617bfaa5b0e5341800f0524c0e2d12f2301d3c2fb10ab9e64",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "f294d0405a8d4cf34f9b1c1f4324cf569e2eb835220a84129782c6a7cd856445",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w001-s002": {
+      "manifest_sha256": "11c5bd0edf28599e531b831df433225dbe780c381ef280a5fc411f868559cde9",
+      "ninja_files": {
+        "build.ninja": "88479d6880f8247c65ef3d56fd449f71657d18f054a8275f82e6ef86cc24efcd",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "18d03c055d6de8702ca2f8d5a9cd805ecc175470dd14014dbb98924b007a72bf",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "8a85a0ca4119c235c35047ef87d0617e454faad63771792b80895a59dda2ff04",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s000": {
+      "manifest_sha256": "cd2dcef37553e5339aede86c5019a8e3a64589ae02c06a4425db3b026381f708",
+      "ninja_files": {
+        "build.ninja": "b804990326cbdbdee3acdf0a38b324bd7b58e4cd54cd19810dd13f18e3515b78",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "1e0c30eb29d185b1528b7902c84a2fc24fea4b0ff49f42b017a7b1edf4ca0d46",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "a1be620a057bea95ce7fd835593080edb44beb14ad91c8d46327e669fd4f1e31",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s001": {
+      "manifest_sha256": "2fc1c94609fed6b892f49fed1267658dfcbb289da4a3874b7a0ea29bfdd25481",
+      "ninja_files": {
+        "build.ninja": "a9a8bf01f3d6ccc40ead36d6b61d2d045a9cebb682c088647063cd6c84f3b580",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "bf7cec60c6d44eee07a0c01b95ca28eb53197cfd7bffd63e72d6b5566d8d3c70",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "959db4fb167b75257022b36dd6e36e80ff0889ffb255a2f30cc937d223e29353",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s002": {
+      "manifest_sha256": "2808243dc09318dda1cc6e647e0b46d75ffca3edb91fee8429d148f1e5a83a21",
+      "ninja_files": {
+        "build.ninja": "076d71b73d387fbe299fc4b0860efa5d9f4ab7ee110e5297984a3ff08d658772",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "531e8d2b8350132ee59b345a8654b073f0816c14ba4a5ee61a9ae1c67468def7",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "6aa95f1f9c7f9aa0fd0157cd01c9022af310f747ee6916c8a7934f16287322ed",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s003": {
+      "manifest_sha256": "f9bdb3da9a4eb85fc4bff768c61aaad74754dd46a71636841b294245c3346cb5",
+      "ninja_files": {
+        "build.ninja": "7ee1cad2f26915a6c1268457ab6f4a2f76b611f685ccf9266c5b87d6435ebc62",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "445d04e1607d9da229b8805cbe63c8bec633bc8c6ba816cc2dd1e9650963fc60",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "397332096d7ecc9e8c6d2587c3dbe6e92a71eedbf6d1adc2b36cc0c282da4b17",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s004": {
+      "manifest_sha256": "bf0946b606d69b3e9e884f1686feaaac7b0385135479e7a29a7a44b8be8a5c91",
+      "ninja_files": {
+        "build.ninja": "b955646947f581a811319074cd292941d5316d566d2fe4dcccac118d15bfbca9",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "1ab37033dce62cd8495847333ae6aa9bcfcc2c6f4c7f79e75f8ffabe29ee6258",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "c5e82a5896da08411dbe9a3992e476aff38bc6f3880d934aeb404366b0c1c1fa",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s005": {
+      "manifest_sha256": "53e253c39d771c4a449f92d7cc6d6a600df41ba62a257060f8eb5886468c8279",
+      "ninja_files": {
+        "build.ninja": "f966944e42a2bb5c693b38d6ee35bc0a7be902e04573f61b8d621be5244937f5",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "49666f4abc8f402dd2fcdce74715e61096c8f85e9abf76deacd690a5f930587d",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "08d490076d8f40d70f3efb706666887e3ee3a2ee5c9c2ff7eae627476f255003",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w002-s006": {
+      "manifest_sha256": "2bca5353725a2caed4ff6d4ca35eff137dbcc54106ef17f9e9222cdd04fd45e9",
+      "ninja_files": {
+        "build.ninja": "92e74c49d57634ef02e01f1cccc5b919b153750704cefd518b0d97c4fdb91fa2",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "4c9727da58de9b752348c8b114ea9a4fcbf3421d875af015dc43d2f52c4b6204",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "552ac6d640d5651a1d9d9e47d3a7b535ca4661702621756c6ac6ddeaf76436b0",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s000": {
+      "manifest_sha256": "58f16c932f70a4174eb5f6974a801eed337f0ffbd1e8510d04d689455784b5bd",
+      "ninja_files": {
+        "build.ninja": "be0f0888bd96db3bab9aeaf27518584be0b5decad3e80c0b86363b6e58f74dce",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "3415d19e6e2c19de98580a0362723f5017d06f8bd49e0bc5f6e5449b2fcf45dc",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "71d0e1c7840949e593c30f5aded2767350f16293213fa9428093cefc3d53ca85",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s001": {
+      "manifest_sha256": "9411cc772b3e23bb82ca247ea5413b947c9d646f38b278dbca827309d279378e",
+      "ninja_files": {
+        "build.ninja": "af26783f755ad38bf66db53ba181e828e59008a0f09a98bc09477251b1bec853",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "f6bb2e9149eab7ce2a4460166ea9db026ea271af957a3b97dd9f60c55c54e6b0",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "2a47af144e96d3a3be9312e67f07afcf1bc98c5f19d3c5e80b6e36cbf0e51ebb",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s002": {
+      "manifest_sha256": "8abd1f7f9cbe62c7344cc707398c81c570f485da1b2272216a5cd6bbaff66f2c",
+      "ninja_files": {
+        "build.ninja": "25c868f02e399fca9658eff7c45ff3efdad73632b7f5dd88d5ba7d82ce9ed8d3",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "c9a28de31b85d7bbf4aedad5cfc5250bce1179a6f2b41f4ba7a762e9dd035e39",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "363c3073ec1b1b4885a4b81571cf4944c943f1073d76b5474d5d625d316b15e3",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s003": {
+      "manifest_sha256": "f258716cb553249ee57e28d73a8cd304677b506a2d3ea865e799dadde801c7fd",
+      "ninja_files": {
+        "build.ninja": "367ab3c4d1ccf3fec0ebac345b6b47e10f23563752d5cc62dc58ecbd1da488df",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "6c12e650584ec6c8959f4a4f3026e3017f76afaf3b4fe9761febaf754e36bad2",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "f01d18eacd55684171d50d6d6ca0b0509a765d1b6925022b692ec9258a096f82",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s004": {
+      "manifest_sha256": "bb635678acecb87d2a0aab33dff5f12b616797d0cbf0cc550a7cf7cd57421631",
+      "ninja_files": {
+        "build.ninja": "ce167758e37ecc6da83774f5f6d600032c38b0612ae6cd7c3b989654fccff83d",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "69be7ca92a3397757091c291ed65e467716bbba687b4c0ca9b41b8f660cba8ef",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "dfffb1ead44e877a076c30d60fbb28c33f462ba208bf0c109fd7fc1f71c34728",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w003-s005": {
+      "manifest_sha256": "ac27ee717f174de27197c093d8dd44fc8f79c9148e204219bada332fcc42ffce",
+      "ninja_files": {
+        "build.ninja": "8a36057caa53806b926eb5b227c64dcb4f7f612e9f506b2b776c6607c71d660c",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "574e9e7b385425d59bdd0e94bb158d93d7ad6bdbb253dfcbdbdc2daa3b7f233e",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "eee2d694f86cda397b1d0472bbade6f71f43831079d11cd2a0f28618e1f0ca0f",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w004-s000": {
+      "manifest_sha256": "f80e7c0fe786bbceb0250b3eb5c24bbf6f83b4f96fbcf4e38adb235500869f12",
+      "ninja_files": {
+        "build.ninja": "1b0898a993cf97a3c137c8758cf4a3f8b0fc6f0b2097e87c4936085ca52ea497",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "db6d646d66de28cda6636fe89e05e20c93f6d0ba88d020e062bda5aaaffe83ae",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "50e0080c94236337882d2ef0058204de93379a3321fec56257643a86fad1c498",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w004-s001": {
+      "manifest_sha256": "ae5b7f3174dceac2c69a3f6527feddee90835b85ba814b8f28db8019209feed1",
+      "ninja_files": {
+        "build.ninja": "01cb91988587e871563272a21f42272f85a867c74473e4fff3bcd35049dcb145",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "49d87f1425675acf03f67782665eae7b6e012759912a4e51954d40b41d7b6356",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "e964448ceacae244720644c1317ca0a0b5e60d0a1bbc9cf82c88a3082c3d48db",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w004-s002": {
+      "manifest_sha256": "187f72b7deffcc45862d0b94246ddd4a36ee3433cee86cfae33b5b9a5b1ebd83",
+      "ninja_files": {
+        "build.ninja": "da44be5c7fa6d437df4c960718fd1d08c4bc49b8d5bad7ac2608ddc141dd12ca",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "8f59e3296bd3592c63c573321de5cfb0fa1c89d1e931fa77450f8fde86f7326e",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "7c1dc9dff912eb1775c43dbb5ff76c84e4183da81a2831cdca85725f1c86f05c",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w004-s003": {
+      "manifest_sha256": "f63c0e8d3fac86bdf855538a6dbdb1ee89866a50c8a3e1f06455fd106de3632f",
+      "ninja_files": {
+        "build.ninja": "07e7c7b069a3f9d8b005523a97a6982ec9afb2080400cf5ecc8ed364b2d602ac",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "86d1ef7383465f5461186b75e5af357196ba71e30b7e0022b53560c886f7f8c5",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "222f0ba5f1e8b28390059e3e085726ffdf7913d5f046faa6d7bc4a1ada6cfa3d",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w004-s004": {
+      "manifest_sha256": "3779a6986ef489c17b7cc898e6521c1a834f1cf5402f3dd68fb1a0b6055c655d",
+      "ninja_files": {
+        "build.ninja": "2c227824b6836fb7f0acd497d447a682b5383b3e795c094aca4cfc531f50cdcc",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "48b5e19388c3ce259342e8c65c69309ce8dd4d30893dc1c01e8ed8f0be04b4e0",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "d2e81674c8c3f386583956abc6501581c872b0447a34c519409aa821ba93d785",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w005-s000": {
+      "manifest_sha256": "c1495e5f2aa841c1eecc25cfd022126112c3a22219a575bea0e659364a551d55",
+      "ninja_files": {
+        "build.ninja": "e481a2b79c6f9e989fed81ff596eec76c00c1981a2bc3c994da0807ff0e9622b",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "0f9f72afe92f5642525405504671f58a47d018d0e16ded584833404ade158fb5",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "0fbbfd376658d929ce38388dd39d177e29d18233059cc687a82c4d6e03fd7c28",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w005-s001": {
+      "manifest_sha256": "fdeee3c490edaadb2f80e536df7d2423a030dba472e98ecb7996e78362f23958",
+      "ninja_files": {
+        "build.ninja": "9374e3782ed22095f49defb87f9c8f073dfe437234297453add0bdc6f6526286",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "13309185ba2d8342f5116f1d7e50d5b413f6c99c2949b27db4fb0902f3106b73",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "a01586c1ad9bb772e3737f05e7def6bc16e9789766ea05ad6889b59f713b7798",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w006-s000": {
+      "manifest_sha256": "78b6e97bb72379e9873483372fc160d9cf3542cb4beab6ec8e885893889e8666",
+      "ninja_files": {
+        "build.ninja": "e1e704ede02bd9ca12b83b8aa484542d17a71d90db671a146f514d34a0c1a85b",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "a7a7547fc1affe656e013db63ab8a1e6e5609e3f450608db29c0cbaeb2b90193",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "79b39cab4927b9d647a71472436543b6d330c530da4be3435dfe4aeb56232560",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w006-s001": {
+      "manifest_sha256": "6a9719b1f9aeda58192e168a03906d6d179a1c507312138fa4d4240f719939c7",
+      "ninja_files": {
+        "build.ninja": "165c1228d6683a9dc3f111f243d446be44d3f635bbd2d2341bb90e9ebb522495",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "022b98025924929857c29e8efda158201e5ff9a2b62176ea430c0389fa94e209",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "7b80519e005c8328e221c0e2eae6605b69bb78d70a6b0888f8f2c431d48a1563",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    },
+    "w007-s000": {
+      "manifest_sha256": "d161f2966f2c07b3e885333b41f368035ebcb5f4a6fb26e1487ad7c8a2d312cb",
+      "ninja_files": {
+        "build.ninja": "cc17f4850622fabedb5a023f90fc68224990b4c1dabb3c6b1404e3e48b7824aa",
+        "file-1.ninja": "88b30b4a92b2912c17543db3afa35737e3ae1373f5de9aadc601e5e9974ff0e2",
+        "file-2.ninja": "ff3c710d30ef61255b0ec627a7da387aca581efe8ce2fe1301c17da5218e202b",
+        "file-3.ninja": "6859a6bce800bc53d880ca819b36e5164b913fd1009710c99976be8bc03e3750",
+        "file-4.ninja": "c2c0b9ff34e2b012788a20e7bcf5e8323ca9bf8c70147db84e39e1b4055bacdb",
+        "file-5.ninja": "94c6cc9772d5f2aad62cb186fe74bb68d51a8ed0ac33a4cbbc0b6f5aeaa4f9ae"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "graph_run": "41677764699",
+  "index_run": "41685367061",
+  "source_images_bytes": 31927148544,
+  "source_layer_count": 32,
+  "minimum_disk_available_bytes": 61768339456,
+  "minimum_memory_available_bytes": 556589056,
+  "maximum_swap_used_bytes": 5517811712,
+  "graph_maximum_resident_set_kib": 14700164,
+  "graph_time_v_elapsed": "7:28.79",
+  "index_maximum_resident_set_kib": 285180,
+  "index_time_v_elapsed": "5:42.37"
+}

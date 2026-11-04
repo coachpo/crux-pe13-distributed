@@ -1,0 +1,105 @@
+{
+  "original_receipt_sha256": "8a3972919bfa50653a48131db74871ddd2496c2b69a269856b9d59b4ad497abe",
+  "receipt_summary": {
+    "schema_version": 1,
+    "status": "success",
+    "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+    "out_root": "/home/runner/work/_temp/android-out",
+    "build_number": "2026110303",
+    "build_datetime": 1793724452,
+    "build_fingerprint": "Xiaomi/crux/crux:13/TQ3A.230901.001.B1/2026110303:userdebug/test-keys",
+    "source_manifest": {
+      "path": "/home/runner/work/crux-pe13-distributed/crux-pe13-distributed/config/cloud-source-manifest.json",
+      "sha256": "2950cc77ceea78dd47d140e611ef38e477823f306d841433b72f167e0ff1c69d",
+      "project_count": 1170
+    },
+    "soong_source_revision": "48a808f9c84fc001f03171408e3523dedd895a24",
+    "gogc": 50,
+    "host_source_patch": {
+      "path": "build/soong/ui/build/soong.go",
+      "status": "patched",
+      "original_sha256": "36bd1c02e7ba3ab03e48408c2ab9dc5b19f4565c1d20769b315ca0721dbade9e",
+      "result_sha256": "30cafb81319915bf4ad2db8322ab5c2e0b36d9cc453439aa515a55e73a96fceb",
+      "injection": "// CRUX_HOSTED_FREEZE_GOGC: env -i otherwise drops the runner setting.\n\tif gogc := os.Getenv(\"CRUX_SOONG_GOGC\"); gogc != \"\" {\n\t\tinvocationEnv[\"GOGC\"] = gogc\n\t}"
+    },
+    "removed_ci_environment_variables": [
+      "ACTIONS_ORCHESTRATION_ID",
+      "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE",
+      "ACTIONS_RUNNER_RETURN_JOB_RESULT_FOR_HOSTED",
+      "GH_TOKEN",
+      "GITHUB_ACTION",
+      "GITHUB_ACTIONS",
+      "GITHUB_ACTION_REF",
+      "GITHUB_ACTION_REPOSITORY",
+      "GITHUB_ACTOR",
+      "GITHUB_ACTOR_ID",
+      "GITHUB_API_URL",
+      "GITHUB_ARTIFACTS",
+      "GITHUB_ARTIFACTS_LIST",
+      "GITHUB_BASE_REF",
+      "GITHUB_ENV",
+      "GITHUB_EVENT_NAME",
+      "GITHUB_EVENT_PATH",
+      "GITHUB_GRAPHQL_URL",
+      "GITHUB_HEAD_REF",
+      "GITHUB_JOB",
+      "GITHUB_OUTPUT",
+      "GITHUB_PATH",
+      "GITHUB_REF",
+      "GITHUB_REF_NAME",
+      "GITHUB_REF_PROTECTED",
+      "GITHUB_REF_TYPE",
+      "GITHUB_REPOSITORY",
+      "GITHUB_REPOSITORY_ID",
+      "GITHUB_REPOSITORY_OWNER",
+      "GITHUB_REPOSITORY_OWNER_ID",
+      "GITHUB_RETENTION_DAYS",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_RUN_ID",
+      "GITHUB_RUN_NUMBER",
+      "GITHUB_SERVER_URL",
+      "GITHUB_SHA",
+      "GITHUB_STATE",
+      "GITHUB_STEP_SUMMARY",
+      "GITHUB_TRIGGERING_ACTOR",
+      "GITHUB_WORKFLOW",
+      "GITHUB_WORKFLOW_REF",
+      "GITHUB_WORKFLOW_SHA",
+      "GITHUB_WORKSPACE"
+    ],
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "bash",
+      "-c",
+      "set -e; source build/envsetup.sh >/dev/null; lunch aosp_crux-userdebug >/dev/null; m --skip-ninja bootimage recoveryimage systemimage vendorimage -j4"
+    ],
+    "graph_files": [
+      {
+        "path": "/home/runner/work/_temp/android-out/soong/build.ninja",
+        "size": 7299100202,
+        "sha256": "35fbd8201ac4a32884daa6b6e53a36d79535c0ecde4205978dbadc6f9914801d"
+      },
+      {
+        "path": "/home/runner/work/_temp/android-out/build-aosp_crux.ninja",
+        "size": 1054705503,
+        "sha256": "cc5f7aa4bfe90f7a461b30f8d8ebf0a68b43995f63454739ba8dbbd368a22de2"
+      },
+      {
+        "path": "/home/runner/work/_temp/android-out/build-aosp_crux-package.ninja",
+        "size": 42138,
+        "sha256": "0d157757df93b45ccda53b97e705deb36a1fe90a4afff6187f112a1d53b086a9"
+      },
+      {
+        "path": "/home/runner/work/_temp/android-out/combined-aosp_crux.ninja",
+        "size": 282,
+        "sha256": "36a78a3ae6bf04099102e23165f2ed638fc77f5d52dd49379392fe5e133c9efc"
+      }
+    ],
+    "elapsed_seconds": 448.865,
+    "exit_code": 0,
+    "missing_graph_files": [],
+    "source_receipts_dir": "/home/runner/work/_temp/evidence/source"
+  },
+  "project_list": "See the source manifest identified by source_manifest.sha256"
+}

@@ -1,0 +1,39 @@
+{
+  "closure_edge_count": 136591,
+  "created_at_UTC": "2026-11-04T04:11:01.009282+00:00",
+  "graph_script_sha256": "8766879c097e66aa047c2dd54a2c31793c68d611fb1b70f4f3f3418320ff2917",
+  "kind": "closure-pruned-graph-index",
+  "output": {
+    "bytes": 1534316544,
+    "path": "/home/runner/work/_temp/shard-evidence/index-pruned.sqlite",
+    "sha256": "52b19246e25a2ca94b74b9d0b70a7553eca3798d9aca91f4561733b91bdf94eb"
+  },
+  "output_row_counts": {
+    "edges": 136591,
+    "files": 6,
+    "meta": 11,
+    "outputs": 200200,
+    "side_output_dirs": 11,
+    "statements": 2441945
+  },
+  "schema_version": 1,
+  "source": {
+    "bytes": 8264257536,
+    "path": "/home/runner/work/_temp/shard-evidence/index-derived.sqlite",
+    "sha256": "fec237a541fe61fca68f023105cdcff1bdf57e648a5ecbe5a96369d74ead5ff5"
+  },
+  "source_row_counts": {
+    "edges": 1749442,
+    "files": 6,
+    "meta": 11,
+    "outputs": 1961793,
+    "side_output_dirs": 11,
+    "statements": 2441945
+  },
+  "targets": [
+    "bootimage",
+    "recoveryimage",
+    "systemimage",
+    "vendorimage"
+  ]
+}

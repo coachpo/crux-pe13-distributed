@@ -1,0 +1,13 @@
+{
+  "shard_run": "41769467686",
+  "job_id": 126375516290,
+  "time_v_elapsed": "34:39.00",
+  "maximum_resident_set_kib": 12741012,
+  "artifact": {
+    "id": 13296156332,
+    "name": "cloud-shards-2026110303",
+    "size_in_bytes": 610880810,
+    "digest": "sha256:bc6a95546b4ead5c28b3f2dfe9ed64bfcbe471271888d5b784e62290ddd65200",
+    "expires_at": "2026-11-18T04:33:18Z"
+  }
+}
