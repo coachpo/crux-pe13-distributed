@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import posixpath
+import re
 import shlex
 
 
@@ -29,33 +30,107 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
-def _shell_segments(command: str):
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    segments, current = [], []
-    for token in lexer:
-        if token in ("&&", "||", ";", "|", "&", "(", ")"):
+def _read_rsp_tokens(content: str) -> list[str]:
+    """Match the pinned Soong response.ReadRspFile single-pass grammar."""
+    values, current = [], []
+    quote = None
+    escaping = False
+    for char in content:
+        if escaping:
+            if quote == '"' and char not in ('"', "\\"):
+                current.append("\\")
+            current.append(char)
+            escaping = False
+        elif char == "\\" and quote != "'":
+            escaping = True
+        elif quote is None and char in ('"', "'"):
+            quote = char
+        elif quote is not None and char == quote:
+            quote = None
+        elif quote is None and char.isspace():
             if current:
-                segments.append(current)
+                values.append("".join(current))
                 current = []
         else:
-            current.append(token)
+            current.append(char)
     if current:
-        segments.append(current)
-    return segments
+        values.append("".join(current))
+    return values
 
 
-def iter_invocations(metadata: dict, source_root: str):
-    """Yield (argv, cwd) command contexts, unwrapping common shell launchers."""
-    def visit(command: str, cwd: str):
-        for segment in _shell_segments(command):
-            local_cwd = cwd
+def _raw_shell_segments(command: str):
+    """Yield raw shell command segments while preserving quote provenance."""
+    current = []
+    quote = None
+    escaped = False
+    index = 0
+    separators = ";|&()"
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+        elif char == "\\" and quote != "'":
+            current.append(char)
+            escaped = True
+            index += 1
+        elif quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+        elif char in ("'", '"'):
+            quote = char
+            current.append(char)
+            index += 1
+        elif char in separators:
+            segment = "".join(current).strip()
+            current = []
+            if segment:
+                yield segment, None
+            if char in "|&" and index + 1 < len(command) and command[index + 1] == char:
+                separator = char * 2
+                index += 2
+            else:
+                separator = char
+                index += 1
+            yield None, separator
+        else:
+            current.append(char)
+            index += 1
+    segment = "".join(current).strip()
+    if segment:
+        yield segment, None
+
+
+def _shell_tokens(segment: str) -> list[str]:
+    lexer = shlex.shlex(segment, posix=True, punctuation_chars="<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def _shell_command_contexts(command: str, source_root: str):
+    """Yield leaf argv/cwd/position, restoring cwd at enclosing subshells."""
+    position = [0]
+
+    def visit(script: str, initial_cwd: str):
+        cwd_stack = [initial_cwd]
+
+        def flush(raw):
+            if not raw:
+                return []
+            segment = _shell_tokens(raw)
+            if not segment:
+                return []
+            cwd = cwd_stack[-1]
             index = 0
             while index < len(segment):
                 token = segment[index]
                 name = posixpath.basename(token)
-                if "=" in token and token.split("=", 1)[0].replace("_", "a").isalnum():
+                assignment = token.split("=", 1)[0] if "=" in token else ""
+                if assignment and assignment.replace("_", "a").isalnum():
                     index += 1
                 elif name in {"exec", "command", "then", "else", "do", "time"}:
                     index += 1
@@ -70,7 +145,7 @@ def iter_invocations(metadata: dict, source_root: str):
                             index += 1
                         elif option in {"-u", "--unset", "-C", "--chdir"} and index + 1 < len(segment):
                             if option in {"-C", "--chdir"}:
-                                local_cwd = _absolute(segment[index + 1], local_cwd)
+                                cwd = _absolute(segment[index + 1], cwd)
                             index += 2
                         elif "=" in option and not option.startswith("-"):
                             index += 1
@@ -83,27 +158,128 @@ def iter_invocations(metadata: dict, source_root: str):
                 else:
                     break
             if index >= len(segment):
-                continue
+                return []
             argv = segment[index:]
             program = posixpath.basename(argv[0])
             if program == "cd":
-                if len(argv) > 1:
-                    cwd = _absolute(argv[1], cwd)
-                continue
+                path_index = 2 if len(argv) > 1 and argv[1] == "--" else 1
+                if path_index < len(argv):
+                    cwd_stack[-1] = _absolute(argv[path_index], cwd)
+                return []
             if program in {"bash", "sh", "dash"}:
-                for position, option in enumerate(argv[1:], 1):
+                for arg_index, option in enumerate(argv[1:], 1):
                     if option.startswith("-") and not option.startswith("--") and "c" in option[1:]:
-                        if position + 1 < len(argv):
-                            yield from visit(argv[position + 1], local_cwd)
-                        break
-                continue
-            yield argv, local_cwd
+                        if arg_index + 1 < len(argv):
+                            return list(visit(argv[arg_index + 1], cwd))
+                        return []
+                return []
+            command_position = position[0]
+            position[0] += 1
+            return [(argv, cwd, command_position, raw)]
 
-    yield from visit(metadata.get("command", ""), source_root)
+        contexts = []
+        for raw, separator in _raw_shell_segments(script):
+            if raw is not None:
+                contexts.extend(flush(raw))
+            elif separator == "(":
+                cwd_stack.append(cwd_stack[-1])
+            elif separator == ")" and len(cwd_stack) > 1:
+                cwd_stack.pop()
+        return contexts
+
+    yield from visit(command, source_root)
+
+
+def iter_invocations(metadata: dict, source_root: str):
+    """Yield (argv, cwd) command contexts, unwrapping common shell launchers."""
+    for argv, cwd, _, _ in _shell_command_contexts(metadata.get("command", ""), source_root):
+        yield argv, cwd
+
+
+def _response_target(token: str, cwd: str, response_path: str) -> bool:
+    return token.startswith("@") and len(token) > 1 and _absolute(token[1:], cwd) == response_path
+
+
+def _make_argument_file(command: str, source_root: str, response_path: str,
+                        license_position: int) -> str:
+    """Reconstruct Kati dump-words-to-file from literal writes in this edge."""
+    contexts = list(_shell_command_contexts(command, source_root))
+    matching = [(argv, cwd, position) for argv, cwd, position, _ in contexts
+                if position == license_position
+                and any(posixpath.basename(token) == LICENSE_TOOL for token in argv)
+                and any(_response_target(token, cwd, response_path) for token in argv)]
+    if len(matching) != 1:
+        raise SourceReadError(
+            f"license metadata writer edge has no unique consumer for Make response: {response_path}")
+    consumer_position = matching[0][2]
+    events = []
+
+    def resolved(token, cwd):
+        return _absolute(token, cwd)
+
+    for argv, cwd, position, raw in contexts:
+        if position == consumer_position:
+            continue
+        program = posixpath.basename(argv[0]) if argv else ""
+        redirect_index = None
+        redirect_kind = None
+        redirect_path = None
+        for index, token in enumerate(argv[:-1]):
+            if token in (">", ">>", "1>", "1>>"):
+                redirect_index, redirect_kind = index, token
+                redirect_path = resolved(argv[index + 1], cwd)
+                break
+            if token.startswith(">>") and len(token) > 2:
+                redirect_index, redirect_kind = index, ">>"
+                redirect_path = resolved(token[2:], cwd)
+                break
+            if token.startswith(">") and len(token) > 1:
+                redirect_index, redirect_kind = index, ">"
+                redirect_path = resolved(token[1:], cwd)
+                break
+        if redirect_path == response_path:
+            if position > consumer_position:
+                raise SourceReadError("Make response is written after its license reader: " + response_path)
+            if program != "echo" or redirect_kind != ">>":
+                raise SourceReadError("unrecognized Make response writer for " + response_path)
+            if redirect_index != len(argv) - 2:
+                raise SourceReadError("Make response echo has extra redirections or operands: " + response_path)
+            arguments = argv[:redirect_index]
+            if (len(arguments) != 3 or posixpath.basename(arguments[0]) != "echo"
+                    or arguments[1] != "-n"):
+                raise SourceReadError("Make response echo is not a literal echo -n append: " + response_path)
+            if not re.fullmatch(r"\s*(?:[^\s]+/)?echo\s+-n\s+'[^']*'\s*>>\s*(?:.+?)\s*", raw):
+                raise SourceReadError("Make response echo payload is not single-quoted literal text: " + response_path)
+            events.append((position, "echo", arguments[2]))
+            continue
+
+        operands = [token for token in argv[1:] if token != "--" and not token.startswith("-")]
+        matching_operands = [token for token in operands if resolved(token, cwd) == response_path]
+        if not matching_operands:
+            continue
+        if position > consumer_position:
+            raise SourceReadError("Make response is accessed after its license reader: " + response_path)
+        if len(operands) != 1:
+            raise SourceReadError("Make response path is mixed with unsupported command operands: " + response_path)
+        if program not in {"rm", "touch"}:
+            raise SourceReadError("unrecognized Make response file operation: " + response_path)
+        events.append((position, program, None))
+
+    removals = [event for event in events if event[1] == "rm"]
+    touches = [event for event in events if event[1] == "touch"]
+    echoes = [event for event in events if event[1] == "echo"]
+    if len(removals) != 1 or len(touches) != 1:
+        raise SourceReadError("Make response lacks the expected rm/touch initializer: " + response_path)
+    if not (removals[0][0] < touches[0][0] < consumer_position):
+        raise SourceReadError("Make response initializer order is unsupported: " + response_path)
+    if any(not touches[0][0] < event[0] < consumer_position for event in echoes):
+        raise SourceReadError("Make response append is outside its initialization/read window: " + response_path)
+    return "".join(event[2] for event in sorted(echoes))
 
 
 def _expand_inline_response(argv: list[str], metadata: dict, cwd: str,
-                            source_root: str, out_root: str) -> tuple[list[str], list[str], list[str]]:
+                            source_root: str, out_root: str,
+                            one_level: bool = False) -> tuple[list[str], list[str], list[str]]:
     response = metadata.get("rspfile")
     content = metadata.get("rspfile_content")
     response_path = _absolute(response, source_root) if isinstance(response, str) else None
@@ -123,8 +299,12 @@ def _expand_inline_response(argv: list[str], metadata: dict, cwd: str,
                     continue
                 if response_path in active:
                     raise SourceReadError("recursive declared response file: " + response_path)
-                nested = shlex.split(content, comments=False, posix=True)
-                expanded.extend(expand(nested, active | {response_path}))
+                nested = (_read_rsp_tokens(content) if one_level else
+                          shlex.split(content, comments=False, posix=True))
+                if one_level:
+                    expanded.extend(nested)
+                else:
+                    expanded.extend(expand(nested, active | {response_path}))
                 continue
             if _inside(token_path, out_root):
                 unresolved.append(token_path)
@@ -134,11 +314,16 @@ def _expand_inline_response(argv: list[str], metadata: dict, cwd: str,
                 if token_path in active:
                     raise SourceReadError("recursive source response file: " + token_path)
                 try:
-                    nested = shlex.split(Path(token_path).read_text(), comments=False, posix=True)
+                    text = Path(token_path).read_text()
+                    nested = (_read_rsp_tokens(text) if one_level else
+                              shlex.split(text, comments=False, posix=True))
                 except (OSError, UnicodeDecodeError, ValueError) as error:
                     raise SourceReadError("cannot read source response file " + token_path + ": " + str(error)) from error
                 source_files.add(token_path)
-                expanded.extend(expand(nested, active | {token_path}))
+                if one_level:
+                    expanded.extend(nested)
+                else:
+                    expanded.extend(expand(nested, active | {token_path}))
                 continue
             unresolved.append(token_path)
             expanded.append(token)
@@ -233,15 +418,17 @@ def derive_source_reads(g, records: dict, native: dict, source_root: str, out_ro
             if batch:
                 native.update(g.native_metadata(batch))
 
-    def invocations(edge_id):
-        if edge_id not in metadata_cache:
+    def invocations(edge_id, one_level=False):
+        cache_key = (edge_id, one_level)
+        if cache_key not in metadata_cache:
             metadata = edge_native(edge_id)
-            metadata_cache[edge_id] = []
-            for argv, cwd in iter_invocations(metadata, source_root):
+            metadata_cache[cache_key] = []
+            for argv, cwd, position, raw in _shell_command_contexts(metadata.get("command", ""), source_root):
                 expanded, source_responses, unresolved = _expand_inline_response(
-                    argv, metadata, cwd, source_root, out_root)
-                metadata_cache[edge_id].append((argv, cwd, expanded, source_responses, unresolved))
-        return metadata_cache[edge_id]
+                    argv, metadata, cwd, source_root, out_root, one_level=one_level)
+                metadata_cache[cache_key].append(
+                    (argv, cwd, expanded, source_responses, unresolved, position, raw))
+        return metadata_cache[cache_key]
 
     def license_writer(edge_id):
         if edge_id in writer_cache:
@@ -250,12 +437,45 @@ def derive_source_reads(g, records: dict, native: dict, source_root: str, out_ro
         if LICENSE_TOOL not in edge_native(edge_id).get("command", ""):
             writer_cache[edge_id] = None
             return None
-        for argv, cwd, expanded, source_responses, unresolved in invocations(edge_id):
+        metadata = edge_native(edge_id)
+        for argv, cwd, expanded, source_responses, unresolved, position, _ in invocations(edge_id, one_level=True):
             if any(posixpath.basename(token) == LICENSE_TOOL for token in expanded):
                 if unresolved:
-                    response_path = unresolved[0]
-                    raise SourceReadError(
-                        f"license metadata writer edge {edge_id} has unresolved response input: {response_path}")
+                    response_args = {}
+                    for response_path in unresolved:
+                        if not _inside(response_path, out_root):
+                            raise SourceReadError(
+                                f"license metadata writer edge {edge_id} has unresolved response input: {response_path}")
+                        try:
+                            payload = _make_argument_file(metadata.get("command", ""), source_root,
+                                                          response_path, position)
+                        except SourceReadError as error:
+                            raise SourceReadError(
+                                f"license metadata writer edge {edge_id} has unresolved response input "
+                                f"{response_path}: {error}") from error
+                        response_args[response_path] = _read_rsp_tokens(payload)
+                    resolved_args = []
+                    replaced = set()
+                    # Replace only original command-line @ operands. Tokens
+                    # emitted by another response are literal to the Go tool.
+                    for token in argv:
+                        if token.startswith("@") and len(token) > 1:
+                            response_path = _absolute(token[1:], cwd)
+                            if response_path in response_args:
+                                resolved_args.extend(response_args[response_path])
+                                replaced.add(response_path)
+                                continue
+                        token_args, _, remaining = _expand_inline_response(
+                            [token], metadata, cwd, source_root, out_root, one_level=True)
+                        if remaining:
+                            raise SourceReadError('Unresolved license response operand: ' + token)
+                        resolved_args.extend(token_args)
+                    if replaced != set(response_args):
+                        missing = sorted(set(response_args) - replaced)
+                        raise SourceReadError(
+                            f"license metadata writer edge {edge_id} has unmatched response input: "
+                            + ", ".join(missing))
+                    expanded = resolved_args
                 notices, dependencies = _license_options(expanded)
                 result = {"edge": edge_id, "notices": notices,
                           "dependencies": dependencies, "cwd": cwd,
@@ -288,7 +508,7 @@ def derive_source_reads(g, records: dict, native: dict, source_root: str, out_ro
         command = edge_native(edge_id).get("command", "")
         if not any(tool in command for tool in NOTICE_TOOLS):
             continue
-        for _, _, argv, source_responses, unresolved in invocations(edge_id):
+        for _, _, argv, source_responses, unresolved, _, _ in invocations(edge_id):
             program = posixpath.basename(argv[0]) if argv else ""
             if program not in NOTICE_TOOLS and not any(posixpath.basename(arg) in NOTICE_TOOLS for arg in argv):
                 continue
@@ -416,7 +636,7 @@ def derive_source_reads(g, records: dict, native: dict, source_root: str, out_ro
         record = records[edge_id]
         if R8_CLASS not in edge_native(edge_id).get("command", ""):
             continue
-        for argv, cwd, expanded, source_responses, unresolved in invocations(edge_id):
+        for argv, cwd, expanded, source_responses, unresolved, _, _ in invocations(edge_id):
             if R8_CLASS not in expanded:
                 continue
             if unresolved:

@@ -68,11 +68,11 @@ class CloudSourceReadsTests(unittest.TestCase):
             (self.config_dir / "nested/child.pro").write_text(f'-include "{nested_config}"\n')
         lines = [
             "rule license_root",
-            "  command = /tools/build_license_metadata -o $out @" +
-            (str(root_dep) + ".untracked.rsp" if unknown_license_rsp else "$out.rsp"),
+            "  command = /tools/build_license_metadata -o $out " +
+            (shlex.quote("@" + str(license_args)) if source_license_rsp else
+             "@" + str(root_dep) + ".untracked.rsp" if unknown_license_rsp else "@$out.rsp"),
             "  rspfile = $out.rsp",
-            (f'  rspfile_content = @"{license_args}"' if source_license_rsp else
-             f'  rspfile_content = -n "LICENSE root.txt" -s "{self.out}/old compiled.bin" -d "{child_dep}:static"'),
+            f'  rspfile_content = -n "LICENSE root.txt" -s "{self.out}/old compiled.bin" -d "{child_dep}:static"',
             "rule license_child",
             "  command = /tools/build_license_metadata -o $out @$out.rsp",
             "  rspfile = $out.rsp",
@@ -91,6 +91,43 @@ class CloudSourceReadsTests(unittest.TestCase):
             f"build {notice}: textnotice {root_dep}",
             f"build {notice2}: textnotice {root_dep}",
             f"build {r8}: r8 input/classes.jar",
+        ]
+        self.ninja.write_text("\n".join(lines) + "\n")
+
+    def write_make_rsp_ninja(self):
+        make_notice = self.source / "@literal.txt"
+        make_notice.write_text("literal at-sign notice")
+        response_dir = self.out / "notice_intermediates"
+        response_relative = "METAbootdebug/arguments"
+        response_path = response_dir / response_relative
+        root_meta = self.out / "bootdebug.meta_lic"
+        child_meta = self.out / "make-child.meta_lic"
+        notice = self.out / "make-notice.txt"
+        payload1 = f"-n @literal.txt -s {self.out}/old.bin "
+        payload2 = f"-d {child_meta}:static "
+        script = " && ".join((
+            "mkdir -p " + str(response_dir),
+            "(cd " + str(response_dir) + " && (rm -f " + response_relative + ") "
+            "&& (touch " + response_relative + ") "
+            "&& (echo -n '" + payload1 + "' >> " + response_relative + ") "
+            "&& (echo -n '" + payload2 + "' >> " + response_relative + "))",
+            "OUT_DIR=" + str(self.out) + " /tools/build_license_metadata "
+            "-mt raw -mc unknown -is_container -r boot @" + str(response_path) + " -o "
+            + str(root_meta),
+            "(echo after-subshell)",
+        ))
+        lines = [
+            "rule make_license",
+            "  command = /bin/bash -c \"" + script + "\"",
+            "rule license_child",
+            "  command = /tools/build_license_metadata -o $out @$out.rsp",
+            "  rspfile = $out.rsp",
+            '  rspfile_content = -n "child/LICENSE child.txt" -s missing-source.bin',
+            "rule textnotice",
+            "  command = /tools/textnotice -o " + str(notice) + " -d " + str(self.out / "notice.d") + " " + str(root_meta),
+            f"build {str(child_meta).replace(' ', '$ ')}: license_child",
+            f"build {root_meta}: make_license {child_meta}",
+            f"build {notice}: textnotice {root_meta}",
         ]
         self.ninja.write_text("\n".join(lines) + "\n")
 
@@ -213,6 +250,74 @@ class CloudSourceReadsTests(unittest.TestCase):
         self.assertIn(str(self.source / "LICENSE root.txt"), report["additions"][edge])
         details = next(item for item in report["notice_readers"] if item["edge"] == edge)
         self.assertIn(str(self.source / "license args.rsp"), details["response_files"])
+
+    def test_make_literal_argument_writer_is_reconstructed_without_reading_out(self):
+        self.write_make_rsp_ninja()
+        self.database = self.root / "index-make-rsp.sqlite"
+        graph.index_graph(self.ninja, self.source, self.database)
+        self.index.db.close()
+        self.index = graph.Graph(self.database)
+        notice = str(self.out / "make-notice.txt")
+        records, native, producers = self.selected([notice])
+        report = cloud_source_reads.derive_source_reads(
+            self.index, records, native, str(self.source), str(self.out))
+        edge = producers[notice]
+        self.assertIn(str(self.source / "@literal.txt"), report["additions"][edge])
+        self.assertIn(str(self.out / "bootdebug.meta_lic"), report["additions"][edge])
+        self.assertIn(str(self.out / "make-child.meta_lic"), report["additions"][edge])
+        self.assertNotIn(str(self.out / "old compiled.bin"), report["additions"][edge])
+        self.assertNotIn(str(self.out / "notice_intermediates/METAbootdebug/arguments"),
+                         report["additions"][edge])
+        self.assertEqual(report["notice_readers"][0]["license_texts"],
+                         [str(self.source / "@literal.txt"),
+                          str(self.source / "child/LICENSE child.txt")])
+
+    def test_subshell_cd_changes_only_nested_command_context(self):
+        work = self.out / "notice_intermediates"
+        command = "/bin/bash -c " + shlex.quote(
+            "(cd " + shlex.quote(str(work)) + " && (echo inside)) && (echo outside)")
+        contexts = list(cloud_source_reads._shell_command_contexts(command, str(self.source)))
+        echo_contexts = [(argv[0], cwd) for argv, cwd, _, _ in contexts if Path(argv[0]).name == "echo"]
+        self.assertEqual(echo_contexts, [("echo", str(work)), ("echo", str(self.source))])
+
+    def test_make_response_rejects_nonliteral_unknown_and_uninitialized_writers(self):
+        self.write_make_rsp_ninja()
+        self.database = self.root / "index-invalid-make-rsp.sqlite"
+        graph.index_graph(self.ninja, self.source, self.database)
+        self.index.db.close()
+        self.index = graph.Graph(self.database)
+        notice = str(self.out / "make-notice.txt")
+        root = str(self.out / "bootdebug.meta_lic")
+        records, native, producers = self.selected([notice, root])
+        writer = producers[root]
+        original = shlex.split(native[writer]['command'])[2]
+        payload = f'-n @literal.txt -s {self.out}/old.bin '
+        variants = {
+            'different writer': original.replace("echo -n '", "printf '", 1),
+            'expanded payload': original.replace("echo -n '" + payload + "'", 'echo -n "$NOTICE"', 1),
+            'missing initializer': original.replace('touch METAbootdebug/arguments', 'true', 1),
+        }
+        for label, script in variants.items():
+            with self.subTest(label=label):
+                command = '/bin/bash -c ' + shlex.quote(script)
+                changed = {**native, writer: {**native[writer], 'command': command}}
+                with self.assertRaisesRegex(cloud_source_reads.SourceReadError,
+                                            'license metadata writer edge .* unresolved response input'):
+                    cloud_source_reads.derive_source_reads(
+                        self.index, records, changed, str(self.source), str(self.out))
+
+    def test_declared_license_response_preserves_literal_at_operands(self):
+        (self.source / '@literal.txt').write_text('literal notice')
+        notice = str(self.out / 'notice.txt')
+        root = str(self.out / 'root.meta_lic')
+        records, native, producers = self.selected([notice, root])
+        writer = producers[root]
+        native[writer] = {**native[writer],
+                          'rspfile_content': '-n @literal.txt -s @not-a-response'}
+        report = cloud_source_reads.derive_source_reads(
+            self.index, records, native, str(self.source), str(self.out))
+        self.assertEqual(report['notice_readers'][0]['license_texts'],
+                         [str(self.source / '@literal.txt')])
 
     def test_missing_license_text_read_by_notice_is_an_error(self):
         (self.source / "LICENSE root.txt").unlink()

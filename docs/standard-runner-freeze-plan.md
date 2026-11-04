@@ -1,6 +1,6 @@
 # Standard hosted runner build preparation
 
-Plan: standard-runner-freeze / revision 5 / active (2026-11-04).
+Plan: standard-runner-freeze / revision 6 / active (2026-11-04).
 
 The owner authorized implementation, commits/pushes and Actions execution to
 replace local PE13 build preparation using only public-repository standard Linux
@@ -29,11 +29,11 @@ return any remaining failure to root with evidence; never lower acceptance.
 
 | Task | State | Owner | Allowed paths / interface / validation |
 | --- | --- | --- | --- |
-| S1 source layers | ready | source_footprint | `scripts/cloud_source.py`, `tests/test_cloud_source.py`; pinned JSON projects (path, URL, revision), copy/link entries and deterministic layer IDs; fetch complete project trees, preserve symlinks/modes, SquashFS layers and machine receipts; tests cover manifest/layout/nested-project handling and source failure. No workflow edits. |
-| F1 graph frontend | ready | frontend_decomposition | `scripts/cloud_freeze.py`, `tests/test_cloud_freeze.py`; mount source layers at their recorded paths, fresh external OUT_DIR, explicit build identity, `--skip-ninja` four-image graph only; no graph restore or local binary seeds. Report subprocess failures and graph/resource evidence. Explicit GOGC injection under env reset if needed. No workflow/source manifest edits. |
-| W1 integration probe | active | root | workflow, pinned manifest, docs; standard `ubuntu-22.04` only, complete-source layer fanout, graph job and always-uploaded logs/receipts; local unit suite plus actual Actions acceptance. |
-| P1 index/slice/pack | draft | root | Start after usable generated graph and full source-layer receipts exist. Preserve canonical producer/scope semantics, audit new graph ownership and package shards in parallel. |
-| P1-I canonical index | active | frontend_decomposition + root integration | `scripts/cloud_index.py`, fixture tests and `prepare-standard.yml`; input is accepted graph run `41677764699` and the same source manifest. Validate all four graph digests, create a new canonical SQLite index and verify the four target producers. No existing index reuse. Actual index/closure work runs only on standard runners. |
+| S1 source layers | done | source_footprint + root integration | `scripts/cloud_source.py`, `tests/test_cloud_source.py`; pinned JSON projects (path, URL, revision), copy/link entries and deterministic layer IDs; fetch complete project trees, preserve symlinks/modes, SquashFS layers and machine receipts; tests cover manifest/layout/nested-project handling and source failure. Accepted source run `41677764699`. |
+| F1 graph frontend | done | frontend_decomposition + root integration | `scripts/cloud_freeze.py`, `tests/test_cloud_freeze.py`; fresh external OUT_DIR from complete mounted source; explicit identity, GOGC injection under env reset and `--skip-ninja` four-image graph only; no existing graph or local binary seeds. Accepted graph run `41677764699`. |
+| W1 graph integration probe | done | root | workflow, pinned manifest, docs; standard `ubuntu-22.04` only, complete-source layer fanout, graph job and always-uploaded logs/receipts; accepted hosted run `41677764699`. |
+| P1 index/slice/pack | active | root | Preserve canonical producer/scope semantics, audit new graph ownership and package all shards in parallel. Overall acceptance requires successful hosted slicing, cold probes, every planned capsule and aggregate registry. |
+| P1-I canonical index | done | frontend_decomposition + root integration | `scripts/cloud_index.py`, fixture tests and `prepare-standard.yml`; accepted graph run `41677764699` and the same source manifest. All four graph digests validated; a new canonical SQLite index and four target producers accepted in run `41685367061`. Actual index/closure work runs only on standard runners. |
 | P1-A/S/R runtime contracts | active | source_footprint, frontend_decomposition, postgraph_decomposition; root integrates | New source actor, source-reader and host/Rust runtime modules. Generate from the current graph/source tree; no old audit JSON or diagnostic binaries as runtime inputs. Root `cloud_shard.py` applies producer-bound order dependencies to a copied fresh index, cold-probes source-built Go actors and scalar rematerialization, then prunes and shards. |
 
 ## Execution and acceptance
@@ -109,6 +109,19 @@ return any remaining failure to root with evidence; never lower acceptance.
   text from the derived graph transport, not warmed frontend binaries.
 - Pack/full workflow stages and a streaming per-capsule archive verifier are
   implemented; actual pack acceptance remains pending a successful slice gate.
+- Follow-up full run `41759299116`, commit `d0726f7`, reused the accepted
+  graph/index and mounted all 32 layers. Native scalar rematerialization passed,
+  and the four kernel/DTBO/header PATH consumers resolved to fresh producer IDs.
+  Source-read analysis then failed on Make's manually written license argument
+  response file (edge `106927`). The pinned Make source writes it within the
+  same command using `rm`, `touch`, and literal `echo -n` appends, rather than
+  declaring Ninja `rspfile_content`. The fix must derive those bytes from the
+  native command without opening any warm OUT file. The pinned Go license tool
+  expands only top-level `@` operands; it does not recursively expand response
+  payload tokens. These semantics, unknown-writer rejection and source-read
+  behavior require fixture regression tests before another hosted full run.
+  This failed run is not shard or pack acceptance. Raw logs and receipts are
+  retained under `out/crux-pe13-standard-freeze-2026-11-03/` in the workspace.
 
 ## Executor protocol
 

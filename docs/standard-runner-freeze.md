@@ -1,78 +1,201 @@
-# PE13 preparation on standard GitHub-hosted runners
+# PE13 build preparation on standard GitHub-hosted runners
 
-`freeze-standard.yml` is the validation workflow for replacing the local PE13
-build-preparation environment. Every job uses the public repository's standard
-`ubuntu-22.04` runner. The accepted v3 ROM delivery remains separate.
+`freeze-standard.yml` and `prepare-standard.yml` move PE13 source acquisition,
+Soong/Kati graph generation, graph indexing, sharding and cold-input capsule
+packing to the public repository's standard `ubuntu-22.04` GitHub-hosted Linux
+runners. No larger or self-hosted runner is used.
 
-The workflow fetches the complete pinned projects in
-`config/cloud-source-manifest.json`, creates 32 SquashFS source layers, mounts
-them read-only below a writable overlay, bootstraps the host tools and runs
-`m --skip-ninja bootimage recoveryimage systemimage vendorimage` with a fresh
-external `OUT_DIR`. It imports neither an existing Android Ninja graph nor local
-host binaries. The generated graph, source receipts, build log and resource
-samples are retained as Actions artifacts. The current gate stops after graph
-generation; index/slice/capsule stages will be enabled after this gate passes.
+This workflow prepares build inputs. `m --skip-ninja bootimage recoveryimage
+systemimage vendorimage` generates the four-image build graph; it does not compile
+the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
+and packs input capsules; it does not assemble or deploy ROM/Recovery images,
+publish an OTA, or install anything on a device. The accepted
+`dev-pe13-2026101105-v3` delivery remains a separate existing build. This guide
+does not certify a new end-to-end acceptance.
 
-## Dispatch
+## Identities and reuse
+
+- `build_number` and `build_datetime` identify a graph. Use a new build number
+  for a new build. A retry intended to reproduce the same graph must pass the
+  same build number **and** the same explicit Unix `build_datetime`; if omitted,
+  freeze uses that run's start time. A changed build identity needs a fresh
+  `freeze-standard` graph and new index, shard plan and capsules. Do not carry
+  those derived outputs across build identities.
+- `config/cloud-source-manifest.json` pins project revisions, patches and
+  source layout. A source revision, patch or layout change requires updating
+  that manifest. Per-layer source reuse is allowed only when that layer's pinned
+  project and copy/link contract is unchanged and its original receipt and every
+  compressed image part verify. Changed or unavailable layers are fetched again.
+- `source_run` selects a complete source run and requires all 32 layers to match
+  the current manifest. `reuse_sources_from` accepts one or more comma-separated
+  run IDs and tries verified layers in order; unmatched layers are fetched. A
+  `source-only` run is a reusable layer checkpoint, never graph acceptance.
+- Reuse graph/index/shard artifacts only for the same build identity, source
+  manifest and upstream run chain. `prepare-standard` validates run receipts,
+  graph/source/index bindings, plan digests and capsule receipts before using
+  them. A new source manifest or build identity requires regenerating the
+  affected downstream stages.
+
+## 1. Generate a fresh graph
+
+Dispatch a full freeze. Omit `source_run` to fetch all source layers, or pass a
+complete compatible run. For a retry, use the same explicit build datetime.
+Replace the uppercase placeholders with the build identity, Unix epoch and
+Actions run IDs for the build being prepared.
 
 ```sh
 gh workflow run freeze-standard.yml --repo coachpo/crux-pe13-distributed \
-  --ref main -f build_number=2026110302 -f gogc=50
+  --ref main \
+  -f mode=full \
+  -f build_number=BUILD_NUMBER \
+  -f build_datetime=BUILD_EPOCH \
+  -f gogc=50
 ```
 
-An empty `build_datetime` selects the run's UTC start time. `gogc` is explicitly
-injected into the Soong child process because its normal `env -i` launcher
-discards inherited environment settings. The patch exists only in the runner's
-writable source overlay and is included in the graph receipt.
-CI authentication and GitHub job variables are removed from the Android child
-environment before Soong can persist its available-environment snapshot in out.
-Transport and artifact steps retain their normal workflow authentication.
+To reuse verified layers from prior runs while allowing missing/changed layers
+to be fetched again:
 
-To retry with reusable source layers after a partial failure, set
-`reuse_sources_from=<run ID>`. A layer is reused only if its pinned projects and
-owned copy/link layout are unchanged, its original receipt matches the source
-run's exact manifest, and every image part passes size and SHA-256 verification.
-Changed or unavailable layers are rebuilt from their cloud sources. A complete
-source run can instead be selected with `source_run=<run ID>`; that skips the
-source matrix and requires every layer to match the current manifest.
+```sh
+gh workflow run freeze-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main \
+  -f mode=full \
+  -f build_number=BUILD_NUMBER \
+  -f build_datetime=BUILD_EPOCH \
+  -f reuse_sources_from=SOURCE_RUN_1,SOURCE_RUN_2 \
+  -f gogc=50
+```
 
-`reuse_sources_from` also accepts a comma-separated list of runs, tried in order.
-To repair a failed layer while other large layers are still downloading, dispatch
-`mode=source-only source_layers=source-07` with its own build identity. This
-produces a source checkpoint only and never claims graph acceptance. A later full
-run can combine verified layers from those runs. Full mode requires all 32 layers.
-With `wait_for_sources=true`, a missing layer is not downloaded again while a
-matching source job in one of the selected runs is still active. The workflow
-checks all candidates for a verified artifact before waiting, so a ready layer
-from another run is consumed immediately.
+To use a complete compatible source run instead of fetching layers, add
+`-f source_run=COMPLETE_SOURCE_RUN` to the full-freeze command. For a
+single-layer checkpoint, dispatch only that layer:
 
-## Source identity
+```sh
+gh workflow run freeze-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main \
+  -f mode=source-only \
+  -f source_layers=source-07 \
+  -f build_number=BUILD_NUMBER \
+  -f build_datetime=BUILD_EPOCH \
+  -f gogc=50
+```
 
-Project archives come from exact public Git revisions. Failed Google Gitiles
-archives fall back to a depth-one fetch of the same revision and `git archive`.
-The two former PE GitLab projects use their retained Internet Archive Git
-bundles. Maintained Crux forks are selected explicitly in
-`config/cloud-source-overrides.json`.
+The source-only run ID can later be included in `reuse_sources_from`.
+`wait_for_sources=true` waits for matching active source jobs rather than
+starting duplicate downloads. A successful source-only run does not produce an
+accepted graph.
 
-The device tree revision `80c137e` is reconstructed from published parent
-`e606ed7` and `config/source-patches/device-crux-dev-v2.patch`. The full resulting
-Git tree must match `e5779e581e6f49b590dc655ac7947e466be4d061`; this preserves
-the v2 fstab source without publishing a new branch in the device repository.
+The successful freeze run ID is `GRAPH_RUN`. It must have a successful graph
+job and the `cloud-graph-BUILD_NUMBER` artifact containing the graph receipt,
+source mount receipts, four fresh Ninja files, build log and resource samples.
+The graph identity and source manifest in this artifact are the inputs for the
+next workflow. A source artifact alone or a fixture test is not graph evidence.
 
-The pinned snapshot excludes Git object databases, old build outputs and local
-diagnostic experiments. Repo-generated copy/link entries, including links that
-the resolved manifest omitted after project replacement, are explicit inputs.
-Updates to source revisions, patches or layout require a new source manifest.
+Project archives use their pinned revisions; a failed Google Gitiles archive
+can fall back to fetching and archiving the same revision. The two former PE
+GitLab projects use retained Internet Archive Git bundles. Maintained Crux
+forks are selected in `config/cloud-source-overrides.json`. The device tree
+revision `80c137e` is reconstructed from parent `e606ed7` plus
+`config/source-patches/device-crux-dev-v2.patch`, and its resulting tree is
+checked against `e5779e581e6f49b590dc655ac7947e466be4d061`. The pinned snapshot
+omits Git object databases, old build outputs and local diagnostics; repo
+copy/link entries are explicit manifest inputs.
 
-## Evidence
+## 2. Index, shard and pack
 
-- `cloud-source-<nn>`: compressed source parts, project/content identities and
-  `layer.json`; reused layers also preserve the original receipt.
-- `failure-source-<nn>`: project-specific source acquisition failures.
-- `cloud-graph-<build>`: graph identity receipt, exact host-source GC patch,
-  `time -v` build output, two-second memory/disk samples and the generated out
-  archive on success.
+All stages run on `ubuntu-22.04`. `prepare-standard.yml` accepts `index`,
+`shard`, `pack` or `full`:
 
-A passing fixture test or successful source layer does not establish graph
-generation. The graph gate requires a successful hosted invocation and all four
-expected Ninja graph files from the fresh out directory.
+- `full` creates a fresh canonical index, slices and audits the graph, then
+  starts one parallel cold-input pack job for every shard.
+- `index` creates only the canonical index. Use its run ID as `INDEX_RUN` for
+  a later `shard` stage.
+- `shard` uses `INDEX_RUN` to create the runtime dependencies, cold probes,
+  shard plan and pruned index. Use its run ID as `SHARD_RUN` for a later `pack`
+  stage.
+- `pack` packages every shard from `SHARD_RUN`. Supply the matching `INDEX_RUN`
+  as an additional consistency check.
+
+The four terminal producers are `bootimage`, `recoveryimage`, `systemimage`
+and `vendorimage`.
+
+One-shot preparation from an accepted graph:
+
+```sh
+gh workflow run prepare-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main \
+  -f stage=full \
+  -f graph_run=GRAPH_RUN \
+  -f build_number=BUILD_NUMBER
+```
+
+Resumable stages, if a previous stage succeeded:
+
+```sh
+gh workflow run prepare-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main -f stage=index -f graph_run=GRAPH_RUN -f build_number=BUILD_NUMBER
+
+gh workflow run prepare-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main -f stage=shard -f graph_run=GRAPH_RUN -f build_number=BUILD_NUMBER \
+  -f index_run=INDEX_RUN
+
+gh workflow run prepare-standard.yml --repo coachpo/crux-pe13-distributed \
+  --ref main -f stage=pack -f graph_run=GRAPH_RUN -f build_number=BUILD_NUMBER \
+  -f index_run=INDEX_RUN -f shard_run=SHARD_RUN
+```
+
+`graph_run` and `build_number` must identify the same successful freeze graph in
+every stage. For `shard`, `index_run` must identify the canonical index created
+from that graph. For `pack`, `shard_run` must identify a successful shard run
+for that graph/build/source manifest; `index_run`, when supplied, must match
+the index recorded by its receipt. Leave `source_run` empty to use the complete
+source snapshot bound to the graph; an override must be a complete compatible
+source run. Run IDs are numeric GitHub Actions run IDs, not build numbers.
+
+Inspect the run summary and download its artifacts with, for example:
+
+```sh
+gh run view RUN_ID --repo coachpo/crux-pe13-distributed
+gh run download RUN_ID --repo coachpo/crux-pe13-distributed \
+  --name cloud-pack-registry-BUILD_NUMBER
+```
+
+Use `--name` to download only the artifact needed; source-layer artifacts can
+be very large.
+
+## Acceptance evidence and artifact retention
+
+Do not mark preparation accepted until the complete chain has passed:
+
+1. The source receipts cover all 32 layers and verify each reused or fetched
+   layer against its source contract and image parts.
+2. The freeze run and graph job succeed with the expected build identity,
+   complete mounted source snapshot, fresh external output directory and all
+   four expected Ninja graph files.
+3. The index run validates all four graph digests, creates a canonical index
+   for this graph/build identity, and identifies the four expected image
+   producers. A retry may reuse an already accepted index only for that same
+   graph/build identity.
+4. The shard run succeeds with its runtime dependencies and cold probes,
+   audited ownership/dependency bindings, complete shard inventory and plan
+   digest.
+5. The parallel pack stage has exactly one successful receipt for every shard
+   in the plan. All receipts must bind to the same build, graph, source
+   manifest, index and plan; they must report a matching pruned-index identity
+   and verified archive size and SHA-256. The aggregate `pack-registry` must
+   report success and the expected shard count.
+
+Record the workflow commit, build number and datetime, manifest digest, source,
+graph, index, shard and pack run IDs, and the relevant receipts/logs. A failed,
+skipped or still-running stage leaves overall acceptance pending. The current
+recorded execution has graph run `41677764699` and index run `41685367061`
+accepted. See [the execution record](standard-runner-freeze-plan.md) for the
+current shard/pack gate; overall acceptance remains pending until both pass.
+
+Artifacts are temporary Actions records: `cloud-source-<nn>` and
+`failure-source-<nn>` are retained for 7 days; `cloud-graph-<build>`,
+`cloud-index-<build>`, `cloud-shards-<build>`, `cloud-capsule-<shard>`,
+`cloud-pack-receipt-<shard>` and `cloud-pack-registry-<build>` are retained for
+14 days. Download and preserve required acceptance evidence before expiry.
+These artifacts can be regenerated from the pinned source manifest, workflow
+code and run inputs, subject to continued availability of their pinned public
+source revisions and required archive sources.
