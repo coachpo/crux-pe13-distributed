@@ -91,7 +91,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | active | source_footprint + root | `scripts/capsule.py`, `tests/test_capsule.py`: repair implicit AIDL source-type closure. Add source-only same-package siblings and their transitive imports, preserving generated OUT exclusion and source/graph pins. Root verifies the old capsule inventory, reviews/tests, repacks all 39 on standard Actions, admits the new registry separately from the immutable original, then restarts all compilation empty. |
-| A3 | active | acceptance_audit + root | `scripts/assemble_dev.py` and assembly fixtures: run the existing Recovery cpio gates on the fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuse the supported image extraction helper; do not omit or weaken the cpio checks. |
+| A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -201,6 +201,11 @@ Do not insert historical source overlays or old compiled artifact bindings.
   nested types, without scanning generated OUT siblings. Capsule revision
   admission now binds each reviewed pack run to its own checked-in registry;
   unreviewed runs and changed registries are rejected. Cloud repacking is next.
+- Cloud repack `41835375815`, head `19ed549f5161da859a7dede62a23e81fec45b1b2`,
+  is regenerating the 39 cold source capsules from the same admitted graph,
+  index, shards and public source snapshot. No native compiled inputs are seeded.
+  A3 integrated validation passed 453 tests (16 environment skips), actionlint
+  and whitespace checks; real image/cpio acceptance remains V2.
 
 ## Executor protocol
 

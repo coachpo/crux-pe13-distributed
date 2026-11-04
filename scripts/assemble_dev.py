@@ -145,8 +145,8 @@ def parse_android_boot(image):
             "expected_image_size": expected}
 
 
-def cpio_entries(ramdisk):
-    data = gzip.decompress(Path(ramdisk).read_bytes())
+def cpio_entries_from_bytes(ramdisk_data):
+    data = gzip.decompress(ramdisk_data)
     entries, offset = [], 0
     while offset + 110 <= len(data) and data[offset:offset + 6] == b"070701":
         fields = [data[offset + 6 + 8 * index: offset + 6 + 8 * (index + 1)] for index in range(13)]
@@ -158,6 +158,42 @@ def cpio_entries(ramdisk):
         offset = (name_start + name_size + 3) & ~3
         offset = (offset + file_size + 3) & ~3
     return entries
+
+
+def cpio_entries(ramdisk):
+    return cpio_entries_from_bytes(Path(ramdisk).read_bytes())
+
+
+def recovery_ramdisk_cpio_entries(product, accepted):
+    """Validate Recovery cpio from a fresh raw ramdisk or its fresh boot image."""
+    raw_path = Path(product) / "ramdisk-recovery.img"
+    image_path = Path(product) / "recovery.img"
+    if str(raw_path) in accepted:
+        source_path = raw_path
+        source_spec = accepted[str(raw_path)]
+        ramdisk_data = None
+        extracted = False
+    else:
+        source_path = image_path
+        source_spec = accepted.get(str(image_path))
+        ramdisk_data = None
+        extracted = True
+    if (not isinstance(source_spec, dict) or source_spec.get("type") != "file"
+            or type(source_spec.get("size")) is not int or source_spec["size"] <= 0):
+        raise ValueError("Fresh Recovery ramdisk source is not a receipted regular file: " + str(source_path))
+    worker.verify_spec(source_spec)
+    if extracted:
+        ramdisk_data, extraction = package_fits.extract_android_ramdisk(source_path.read_bytes())
+        source = {"path": str(source_path), "sha256": source_spec["sha256"],
+                  "extracted_from_android_image": True, "extraction": extraction}
+    else:
+        ramdisk_data = source_path.read_bytes()
+        source = {"path": str(source_path), "sha256": source_spec["sha256"],
+                  "extracted_from_android_image": False}
+    entries = cpio_entries_from_bytes(ramdisk_data)
+    if "system/etc/recovery.fstab" not in entries:
+        raise ValueError("Recovery ramdisk is missing system/etc/recovery.fstab")
+    return entries, source
 
 
 def fit_listing(dumpimage, fit):
@@ -201,7 +237,7 @@ def validate_identity_files(identity, product, out_root):
     return {"errors": errors, "buildinfo_members": len(buildinfo)}
 
 
-def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage, out_root):
+def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage, out_root, accepted):
     gates = {"images": {}, "boot_headers": {}, "avb": {}, "ramdisks": {}, "fits": {}}
     images = {partition: product / (partition + ".img") for partition in verify_properties.NATIVE_PARTITIONS
               if (product / (partition + ".img")).is_file()}
@@ -244,12 +280,11 @@ def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage
     missing = [name for name in MOUNT_POINTS if name not in ramdisk_entries]
     if missing:
         raise ValueError("boot ramdisk is missing mount points: " + ", ".join(missing))
-    recovery_entries = cpio_entries(product / "ramdisk-recovery.img")
-    if "system/etc/recovery.fstab" not in recovery_entries:
-        raise ValueError("recovery ramdisk is missing system/etc/recovery.fstab")
+    recovery_entries, recovery_source = recovery_ramdisk_cpio_entries(product, accepted)
     gates["ramdisks"] = {"boot_entries": len(ramdisk_entries), "boot_mount_points": list(MOUNT_POINTS),
                          "recovery_entries": len(recovery_entries),
-                         "recovery_fstab": "system/etc/recovery.fstab"}
+                         "recovery_fstab": "system/etc/recovery.fstab",
+                         "recovery_source": recovery_source}
     return gates
 
 
@@ -306,7 +341,7 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
             raise ValueError("frontend identity files differ: " + json.dumps(identity_report["errors"])[:400])
         thumbprint_path = output_dir / "build_thumbprint.txt"
         write_thumbprint(identity, thumbprint_path)
-        gates = gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage, out_root)
+        gates = gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage, out_root, accepted)
         fit_stage = output_dir / "fit-stage"
         if fit_stage.exists():
             shutil.rmtree(fit_stage)

@@ -116,3 +116,29 @@ class AssembleDevTests(unittest.TestCase):
         entries = assemble_dev.cpio_entries(ramdisk)
         for name in assemble_dev.MOUNT_POINTS:
             self.assertIn(name, entries)
+
+    def test_recovery_gate_extracts_receipted_image_ramdisk_when_raw_output_is_absent(self):
+        product = self.root / "product"
+        product.mkdir()
+        recovery = product / "recovery.img"
+        ramdisk = gzip.compress(cpio_archive(["init", "prop.default", "system/etc/recovery.fstab",
+                                              "TRAILER!!!"]))
+        boot_image(recovery, ramdisk)
+        accepted = {str(recovery): assemble_dev.worker.describe(recovery)}
+
+        entries, source = assemble_dev.recovery_ramdisk_cpio_entries(product, accepted)
+
+        self.assertIn("system/etc/recovery.fstab", entries)
+        self.assertEqual(source["path"], str(recovery))
+        self.assertTrue(source["extracted_from_android_image"])
+        self.assertEqual(source["extraction"]["size"], len(ramdisk))
+
+    def test_recovery_gate_rejects_invalid_cpio_extracted_from_receipted_image(self):
+        product = self.root / "product"
+        product.mkdir()
+        recovery = product / "recovery.img"
+        boot_image(recovery, gzip.compress(b"not a newc recovery archive"))
+        accepted = {str(recovery): assemble_dev.worker.describe(recovery)}
+
+        with self.assertRaisesRegex(ValueError, "system/etc/recovery.fstab"):
+            assemble_dev.recovery_ramdisk_cpio_entries(product, accepted)
