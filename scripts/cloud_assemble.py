@@ -309,6 +309,8 @@ def _download(run_id: str, repository: str, artifact: str, destination: Path) ->
 
 
 def _validate_receipt(context: dict, task_id: str, receipt: dict) -> None:
+    if receipt.get('diagnostic_only'):
+        raise AssembleError('Diagnostic output cannot enter ROM assembly')
     task = context['tasks'][task_id]
     expected = _binding(context, task_id)
     if receipt.get('status') != 'success' or receipt.get('fresh_build') != _fresh_binding(context):

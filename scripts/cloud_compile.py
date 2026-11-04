@@ -50,7 +50,8 @@ def _absolute(value, name):
     return Path(os.path.abspath(value))
 
 
-def validate_context(context: dict, shard_id: str, environment=None) -> tuple[dict, dict]:
+def validate_context(context: dict, shard_id: str, environment=None,
+                     check_runner=True) -> tuple[dict, dict]:
     if not isinstance(context, dict) or context.get("schema_version") != 1:
         raise CompileError("Unsupported fresh-build context schema")
     required = set(CONTEXT_IDENTITY_FIELDS) | {"waves", "tasks"}
@@ -118,9 +119,10 @@ def validate_context(context: dict, shard_id: str, environment=None) -> tuple[di
     environment = os.environ if environment is None else environment
     expected_runner = {"execution_id": "GITHUB_RUN_ID", "worker_commit": "GITHUB_SHA",
                        "repository": "GITHUB_REPOSITORY"}
-    for field, variable in expected_runner.items():
-        if environment.get(variable) != str(context[field]):
-            raise CompileError(f"Fresh-build context {field} differs from this Actions run")
+    if check_runner:
+        for field, variable in expected_runner.items():
+            if environment.get(variable) != str(context[field]):
+                raise CompileError(f"Fresh-build context {field} differs from this Actions run")
     identity = {field: context[field] for field in FRESH_BUILD_FIELDS}
     return context, identity
 
@@ -177,11 +179,47 @@ def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
     return receipt
 
 
+def _validate_diagnostic_parent(current: dict, parent: dict, shard_id: str,
+                                environment: dict) -> tuple[dict, dict]:
+    parent, parent_identity = validate_context(parent, shard_id, environment, check_runner=False)
+    compare_fields = ("repository", "build_number", "source_root", "out_root",
+                      "pack_run", "shard_run", "graph_run", "index_run", "source_run",
+                      "source_manifest_sha256", "plan_sha256", "graph_index", "waves", "tasks")
+    for field in compare_fields:
+        if parent.get(field) != current.get(field):
+            raise CompileError("Diagnostic parent differs from current lineage at " + field)
+    if parent["execution_id"] == current["execution_id"]:
+        raise CompileError("Diagnostic parent must be a distinct prior execution")
+    return parent, parent_identity
+
+
+def _diagnostic_process_limits(environment: dict) -> dict:
+    def getconf(name):
+        result = subprocess.run(["getconf", name], capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else None
+    values = [os.fsencode(key) + b"=" + os.fsencode(value) + b"\0"
+              for key, value in environment.items()]
+    return {
+        "argv_bytes": sum(len(os.fsencode(arg)) + 1 for arg in sys.argv),
+        "argv_max_string_bytes": max((len(os.fsencode(arg)) + 1 for arg in sys.argv), default=0),
+        "environment_bytes": sum(map(len, values)),
+        "environment_max_string_bytes": max((len(value) for value in values), default=0),
+        "arg_max": getconf("ARG_MAX"),
+        "page_size": getconf("PAGESIZE"),
+        "stack_limit": subprocess.run(["bash", "-lc", "ulimit -s"], capture_output=True,
+                                       text=True).stdout.strip(),
+    }
+
+
 def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
-                  staging: Path, environment=None) -> tuple[int, dict]:
+                  staging: Path, environment=None, diagnostic_context_path=None) -> tuple[int, dict]:
     environment = dict(os.environ if environment is None else environment)
     context = worker.read_json(context_path)
     context, fresh_identity = validate_context(context, shard_id, environment)
+    diagnostic_parent = diagnostic_identity = None
+    if diagnostic_context_path is not None:
+        diagnostic_parent, diagnostic_identity = _validate_diagnostic_parent(
+            context, worker.read_json(diagnostic_context_path), shard_id, environment)
     task = context["tasks"][shard_id]
     source_root = Path(context["source_root"])
     out_root = Path(context["out_root"])
@@ -200,6 +238,14 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         raise CompileError("Worker receipt already exists; refusing to overwrite")
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed",
                "fresh_build": fresh_identity}
+    if diagnostic_parent is not None:
+        receipt["diagnostic_only"] = True
+        receipt["diagnostic_parent"] = {
+            "execution_id": diagnostic_parent["execution_id"],
+            "worker_commit": diagnostic_parent["worker_commit"],
+            "fresh_build": diagnostic_identity,
+        }
+    diagnostic_process_limits = None
     started = time.monotonic()
     try:
         if os.path.lexists(source_root):
@@ -232,21 +278,24 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
 
         dependency_dirs, bindings = [], []
+        dependency_context = diagnostic_parent or context
+        dependency_identity = diagnostic_identity or fresh_identity
         for dependency_id in task["depends_on"]:
             dependency_dir = staging / "dependencies" / dependency_id
             dependency_dir.mkdir(parents=True, exist_ok=False)
             dependency_artifact = "shard-" + dependency_id
             downloaded = cloud_artifacts.download_artifacts(
-                str(context["execution_id"]), context["repository"], dependency_dir,
+                str(dependency_context["execution_id"]), dependency_context["repository"], dependency_dir,
                 token=token, name=dependency_artifact)
             if len(downloaded) != 1 or downloaded[0]["name"] != dependency_artifact:
                 raise CompileError("Current build run did not return dependency artifact: " + dependency_id)
-            _read_fresh_dependency(dependency_id, Path(downloaded[0]["destination"]), context, fresh_identity)
+            _read_fresh_dependency(dependency_id, Path(downloaded[0]["destination"]),
+                                   dependency_context, dependency_identity)
             dependency_dirs.append(Path(downloaded[0]["destination"]))
-            bindings.append({"id": dependency_id, "run_id": str(context["execution_id"]),
+            bindings.append({"id": dependency_id, "run_id": str(dependency_context["execution_id"]),
                              "artifact": dependency_artifact,
-                             "expected_worker_commit": context["worker_commit"],
-                             "expected_manifest_sha256": context["tasks"][dependency_id]["manifest_sha256"]})
+                             "expected_worker_commit": dependency_context["worker_commit"],
+                             "expected_manifest_sha256": dependency_context["tasks"][dependency_id]["manifest_sha256"]})
 
         # Keep artifact credentials in this wrapper only; worker.run_shard passes
         # its process environment to Ninja and native build tools.
@@ -255,10 +304,23 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         saved_auth = {name: os.environ[name] for name in auth_names if name in os.environ}
         for name in auth_names:
             os.environ.pop(name, None)
+        previous_makeflags = os.environ.get("MAKEFLAGS", "")
+        if diagnostic_parent is not None:
+            flags = previous_makeflags.split()
+            if "--trace" not in flags:
+                flags.append("--trace")
+            os.environ["MAKEFLAGS"] = " ".join(flags)
+            diagnostic_process_limits = _diagnostic_process_limits(os.environ)
+            receipt["diagnostic_process_limits"] = diagnostic_process_limits
         try:
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
                                       dependency_dirs, jobs=4, dependency_bindings=bindings)
         finally:
+            if diagnostic_parent is not None:
+                if previous_makeflags:
+                    os.environ["MAKEFLAGS"] = previous_makeflags
+                else:
+                    os.environ.pop("MAKEFLAGS", None)
             os.environ.update(saved_auth)
         receipt = result if isinstance(result, dict) else worker.read_json(receipt_path)
         if (receipt.get("id") != shard_id or receipt.get("run_id") != str(context["execution_id"])
@@ -268,6 +330,14 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 or receipt.get("out_root") != context["out_root"]):
             raise CompileError("Native worker receipt differs from fresh-build shard identity")
         receipt["fresh_build"] = fresh_identity
+        if diagnostic_parent is not None:
+            receipt["diagnostic_only"] = True
+            receipt["diagnostic_parent"] = {
+                "execution_id": diagnostic_parent["execution_id"],
+                "worker_commit": diagnostic_parent["worker_commit"],
+                "fresh_build": diagnostic_identity,
+            }
+            receipt["diagnostic_process_limits"] = diagnostic_process_limits
         receipt["status"] = result.get("status", "failed")
         if receipt["status"] != "success" and "error" not in receipt:
             receipt["error"] = "native shard compilation failed"
@@ -290,9 +360,11 @@ def main(argv=None) -> int:
     parser.add_argument("--id", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--staging", required=True)
+    parser.add_argument("--dependency-context")
     args = parser.parse_args(argv)
     try:
-        code, receipt = compile_shard(Path(args.context), args.id, Path(args.output), Path(args.staging))
+        code, receipt = compile_shard(Path(args.context), args.id, Path(args.output),
+                                      Path(args.staging), diagnostic_context_path=args.dependency_context)
     except (CompileError, OSError, ValueError, json.JSONDecodeError) as error:
         print("cloud_compile: " + str(error), file=sys.stderr)
         return 1

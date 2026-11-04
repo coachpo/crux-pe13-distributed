@@ -1,0 +1,72 @@
+name: Diagnose the fresh PE13 kernel on a standard runner
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Free disk space
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+      - name: Install the same native host dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/result"
+          sudo apt-get update
+          sudo apt-get install -y libncurses5 python-is-python3 flex bison libssl-dev libelf-dev zstd \
+            ccache build-essential libxml2-utils zip unzip cpio lz4 xz-utils bc rsync
+          sudo fallocate -l 8G "$RUNNER_TEMP/build.swap"
+          sudo chmod 600 "$RUNNER_TEMP/build.swap"
+          sudo mkswap "$RUNNER_TEMP/build.swap"
+          sudo swapon "$RUNNER_TEMP/build.swap"
+          uname -a > "$RUNNER_TEMP/result/runner.txt"
+          nproc >> "$RUNNER_TEMP/result/runner.txt"
+          free -b >> "$RUNNER_TEMP/result/runner.txt"
+          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+      - name: Admit only dependencies newly compiled in this task
+        run: |
+          set -euo pipefail
+          python3 scripts/cloud_artifacts.py --run 41789247344 --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/parent"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          context = json.loads((root / 'parent/context.json').read_text())
+          if (context.get('execution_id') != '41789247344'
+                  or context.get('worker_commit') != '17f59f6fe99f5e292a9da8663e7ef8a733fc1e21'
+                  or context.get('pack_run') != '41779197896'
+                  or context.get('repository') != os.environ['GITHUB_REPOSITORY']):
+              raise SystemExit('Probe permits only this task\'s original fresh dependency cohort')
+          context['execution_id'] = os.environ['GITHUB_RUN_ID']
+          context['worker_commit'] = os.environ['GITHUB_SHA']
+          (root / 'probe-context.json').write_text(json.dumps(context, indent=2) + '\n')
+          PY
+      - name: Diagnose native Make exec limits without changing source inputs
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python3 scripts/cloud_compile.py --context "$RUNNER_TEMP/probe-context.json" \
+            --dependency-context "$RUNNER_TEMP/parent/context.json" --id w001-s001 \
+            --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/compile" \
+            2>&1 | tee "$RUNNER_TEMP/result/probe.log"
+      - name: Retain diagnostic-only result and trace
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kernel-diagnostic-only
+          path: ${{ runner.temp }}/result/
+          compression-level: 0
+          retention-days: 30

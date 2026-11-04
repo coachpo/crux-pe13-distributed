@@ -60,6 +60,7 @@ class CloudCompileTests(unittest.TestCase):
         self.staging = self.root / "staging"
         self.downloads = []
         self.worker_calls = []
+        self.active_dependency_context = self.fresh_context
         self.runner_env = {"GITHUB_RUN_ID": self.fresh_context["execution_id"],
                            "GITHUB_RUN_ATTEMPT": "1",
                            "GITHUB_SHA": self.fresh_context["worker_commit"],
@@ -92,11 +93,12 @@ class CloudCompileTests(unittest.TestCase):
             archive_path.write_bytes(self.archive)
             return [{"name": name, "id": 701, "destination": str(target)}]
         dependency_id = name.removeprefix("shard-")
-        dependency_context = self.identity()
+        dependency_context = {field: self.active_dependency_context[field]
+                              for field in cloud_compile.FRESH_BUILD_FIELDS}
         task = self.fresh_context["tasks"][dependency_id]
         receipt = {"schema_version": 1, "id": dependency_id, "status": "success",
-                   "run_id": self.fresh_context["execution_id"],
-                   "run_attempt": "1", "worker_commit": self.fresh_context["worker_commit"],
+                   "run_id": self.active_dependency_context["execution_id"],
+                   "run_attempt": "1", "worker_commit": self.active_dependency_context["worker_commit"],
                    "manifest_sha256": task["manifest_sha256"],
                    "source_root": self.fresh_context["source_root"],
                    "out_root": self.fresh_context["out_root"],
@@ -120,7 +122,8 @@ class CloudCompileTests(unittest.TestCase):
                     dependency_dirs, jobs, dependency_bindings):
         self.worker_calls.append({"manifest": Path(manifest_path), "bundle": Path(bundle_path),
                                   "id": shard_id, "dependency_dirs": list(dependency_dirs),
-                                  "jobs": jobs, "bindings": dependency_bindings})
+                                  "jobs": jobs, "bindings": dependency_bindings,
+                                  "makeflags": os.environ.get("MAKEFLAGS", "")})
         self.assertNotIn("GH_TOKEN", os.environ)
         self.assertNotIn("GITHUB_TOKEN", os.environ)
         manifest = json.loads(Path(manifest_path).read_text())
@@ -133,13 +136,15 @@ class CloudCompileTests(unittest.TestCase):
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
 
-    def run_compile(self):
+    def run_compile(self, diagnostic_context_path=None):
         with mock.patch.dict(os.environ, self.runner_env, clear=True), \
                 mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts", side_effect=self.fake_download), \
                 mock.patch.object(cloud_compile.subprocess, "run", side_effect=self.fake_tar), \
-                mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker):
+                mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker), \
+                mock.patch.object(cloud_compile, "_diagnostic_process_limits", return_value={"arg_max": "2097152"}):
             return cloud_compile.compile_shard(self.context_path, self.shard_id,
-                                                self.output, self.staging)
+                                                self.output, self.staging,
+                                                diagnostic_context_path=diagnostic_context_path)
 
     def test_fresh_capsule_worker_records_context_and_disables_auth_in_build_child(self):
         code, receipt = self.run_compile()
@@ -286,6 +291,63 @@ class CloudCompileTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("source_root must be cold", receipt["error"])
         download.assert_not_called()
+
+    def test_diagnostic_parent_accepts_only_same_fresh_lineage_and_marks_probe(self):
+        dependency_id = self.shard_id
+        consumer_id = "w001-s000"
+        self.fresh_context["waves"] = [[dependency_id], [consumer_id]]
+        self.fresh_context["tasks"][consumer_id] = {
+            "id": consumer_id, "wave": 1, "depends_on": [dependency_id],
+            "manifest_sha256": self.manifest_sha, "archive": consumer_id + ".tar.zst",
+            "archive_bytes": len(b"consumer capsule"),
+            "archive_sha256": hashlib.sha256(b"consumer capsule").hexdigest(),
+        }
+        self.fresh_context["tasks"][dependency_id]["wave"] = 0
+        self.shard_id = consumer_id
+        self.archive = b"consumer capsule"
+        self.fresh_context["tasks"][consumer_id]["archive_bytes"] = len(self.archive)
+        self.fresh_context["tasks"][consumer_id]["archive_sha256"] = hashlib.sha256(self.archive).hexdigest()
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        parent = dict(self.fresh_context)
+        parent["execution_id"] = "41789247344"
+        parent["worker_commit"] = "e" * 40
+        parent_path = self.root / "parent.json"
+        parent_path.write_text(json.dumps(parent))
+        self.active_dependency_context = parent
+        self.runner_env["GITHUB_RUN_ID"] = self.fresh_context["execution_id"]
+        code, receipt = self.run_compile(parent_path)
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertTrue(receipt["diagnostic_only"])
+        self.assertEqual(receipt["diagnostic_parent"]["execution_id"], parent["execution_id"])
+        download = next(item for item in self.downloads if item["name"] == "shard-" + dependency_id)
+        self.assertEqual(download["run"], parent["execution_id"])
+        self.assertEqual(self.worker_calls[0]["bindings"][0]["run_id"], parent["execution_id"])
+        self.assertEqual(self.worker_calls[0]["bindings"][0]["expected_worker_commit"], parent["worker_commit"])
+        self.assertIn("--trace", self.worker_calls[0]["makeflags"])
+        self.assertEqual(receipt["diagnostic_process_limits"]["arg_max"], "2097152")
+
+    def test_diagnostic_parent_rejects_changed_shared_lineage(self):
+        parent = dict(self.fresh_context)
+        parent["execution_id"] = "41789247344"
+        parent["pack_run"] = "11111111111"
+        parent_path = self.root / "parent.json"
+        parent_path.write_text(json.dumps(parent))
+        self.runner_env["GITHUB_RUN_ID"] = self.fresh_context["execution_id"]
+        with mock.patch.dict(os.environ, self.runner_env, clear=True), \
+                mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts") as download:
+            with self.assertRaisesRegex(cloud_compile.CompileError, "Diagnostic parent differs"):
+                cloud_compile.compile_shard(self.context_path, self.shard_id,
+                                            self.output, self.staging,
+                                            diagnostic_context_path=parent_path)
+        download.assert_not_called()
+
+    def test_default_mode_still_rejects_old_context_and_probe_trace_is_opt_in(self):
+        old = dict(self.fresh_context)
+        old["execution_id"] = "41789247344"
+        with self.assertRaises(cloud_compile.CompileError):
+            cloud_compile.validate_context(old, self.shard_id, self.runner_env)
+        current, _ = cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
+        self.assertEqual(current["execution_id"], self.runner_env["GITHUB_RUN_ID"])
 
 
 if __name__ == "__main__":

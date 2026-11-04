@@ -195,6 +195,8 @@ def bootstrap(args):
 
 
 def validate_receipt(context, receipt, task_id):
+    if receipt.get('diagnostic_only'):
+        raise ValueError('Diagnostic output is not a production build result')
     expected = producer_binding(context, task_id)
     if receipt.get('status') != 'success' or receipt.get('fresh_build') != fresh_binding(context):
         raise ValueError('Not a successful producer of this new execution: ' + task_id)

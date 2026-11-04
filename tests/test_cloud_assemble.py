@@ -147,6 +147,13 @@ class CloudAssembleTests(unittest.TestCase):
                 'build_environment': {'CCACHE_DISABLE': '1'}, 'archive_sha256': 'e' * 64,
                 'outputs': outputs}
 
+    def test_diagnostic_receipt_is_not_an_assembly_producer(self):
+        task_id = self.ids[0]
+        receipt = self._receipt(task_id, [])
+        receipt['diagnostic_only'] = True
+        with self.assertRaisesRegex(cloud_assemble.AssembleError, 'Diagnostic output'):
+            cloud_assemble._validate_receipt(self.context, task_id, receipt)
+
     def test_admits_all_fresh_receipts_and_only_plan_owned_output_artifacts(self):
         for path in list(self.context['assembly_exports']):
             if path.startswith(str(self.kernel) + '/'):

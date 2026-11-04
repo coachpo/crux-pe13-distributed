@@ -61,6 +61,7 @@ class BuildPlanTests(unittest.TestCase):
         plan.validate_receipt(context, receipt, 'task')
         for field, value in [('run_id', 'old'), ('worker_commit', 'd' * 40),
                              ('fresh_build', {}), ('declared_dependencies', [{'id': 'old'}]),
+                             ('diagnostic_only', True),
                              ('build_environment', {'CCACHE_DISABLE': '0'})]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 plan.validate_receipt(context, {**receipt, field: value}, 'task')

@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 2 / active (2026-11-04).
+Plan: standard-runner-build / revision 3 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -53,6 +53,15 @@ reuse-state, release assets, source overlays or prebuilt OUT supplement is admit
 If repairs require a later fresh lineage, root must revise the explicit resume
 contract before using any earlier output; that permission is not implicit.
 
+The first execution produced 15 successful fresh tasks, then its kernel failed.
+A probe-only exception now permits those same-task fresh dependencies from
+execution `41789247344` / worker `17f59f6` for a diagnostic kernel execution with
+identical capsule/plan/manifest/source identities. This does not admit any output
+from before this task or any legacy reuse-state. The probe records its parent,
+is marked diagnostic-only, uploads a probe artifact rather than `shard-ID`, and
+cannot satisfy the production summary/assembly guards. Default production
+compilation remains empty/current-run-only; no general resume permission is added.
+
 A worker downloads only its admitted `cloud-capsule-ID` artifact, verifies the
 tar.zst byte identity against the registry, restores the cold capsule, and downloads
 only admitted fresh predecessor artifacts. No full warmed graph OUT is restored.
@@ -79,6 +88,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
 | V1 | active | root + read-only observer | Run `41789247344`, head `17f59f6fe99f5e292a9da8663e7ef8a733fc1e21`; all 39 native tasks and final fresh producer summary are required. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
+| K1 | active | frontend_decomposition + root | Diagnostic extension to cloud_compile and a standard-runner probe workflow: exact same admitted kernel capsule plus only newly built parent execution dependencies; Make trace, argv/env byte sizes and platform exec limits. No source change or speculative workaround yet. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -109,6 +119,12 @@ Do not insert historical source overlays or old compiled artifact bindings.
   tasks; 12 have succeeded at the current checkpoint, with no compile failure.
   No earlier compiled producer or reuse-state was admitted. Later waves and the
   separate unpublished assembly/validation workflow remain pending.
+- First execution ended with 15 successful native tasks and one kernel failure:
+  `w001-s001` job `126446947928` failed at Wi-Fi `wlan_hdd_assoc.o` with nested
+  Make `/bin/sh: Argument list too long`. Earlier headers-install shell option
+  errors are a separate anomaly. Outer Ninja argv was valid (~669 KB aggregate);
+  the actual failing recipe/env was not captured, so per-string versus aggregate
+  exec limit is not yet established. K1 measures it before choosing a fix.
 
 ## Executor protocol
 
