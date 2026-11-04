@@ -79,19 +79,81 @@ def batches(values, size=20000):
         yield values[start:start + size]
 
 
+def project_metadata(current, edge_ids):
+    """Keep producer-bound contracts meaningful in the retained edge domain."""
+    keep = set(edge_ids)
+    ownership = current.meta.get('ownership_profile')
+    runtime = current.meta.get('runtime_adaptations')
+    paths = set()
+    if ownership:
+        for key in ('side_output_dirs', 'group_export_dirs', 'not_applicable_side_effects'):
+            paths.update(item['producer'] for item in ownership.get(key, []))
+        paths.update(path for group in ownership.get('groups', []) for path in group)
+    if runtime:
+        paths.update(item['producer'] for item in runtime.get('command_adaptations', []))
+    owners = current.producers(paths)
+    updates = {}
+
+    def retain_group(members):
+        members = set(members)
+        selected = members & keep
+        if selected and selected != members:
+            raise PruneError('Closure cuts an atomic action group: ' + str(sorted(members)))
+        return bool(selected)
+
+    if 'atomic_groups' in current.meta:
+        updates['atomic_groups'] = [group for group in current.meta['atomic_groups'] if retain_group(group)]
+    if ownership:
+        projected = dict(ownership)
+        for key in ('side_output_dirs', 'group_export_dirs', 'not_applicable_side_effects'):
+            if key in ownership:
+                projected[key] = [item for item in ownership[key] if owners.get(item['producer']) in keep]
+        if 'groups' in ownership:
+            projected['groups'] = [group for group in ownership['groups']
+                                   if retain_group(owners[path] for path in group)]
+        updates['ownership_profile'] = projected
+    if runtime:
+        # A rule adaptation's producer is a witness for its lexical rule, not
+        # its only consumer. Re-anchor that witness if another consumer survives.
+        rule_witnesses = {}
+        for batch in graph.chunks(edge_ids):
+            marks = ','.join('?' for _ in batch)
+            rows = current.db.execute(
+                'SELECT statements.ref,edges.id,edges.outputs FROM statements '
+                'JOIN edges ON edges.id=statements.id WHERE edges.id IN (' + marks + ') ORDER BY edges.id', batch)
+            for row in rows:
+                rule_witnesses.setdefault(row['ref'], json.loads(row['outputs'])[0])
+        adaptations = []
+        for item in runtime.get('command_adaptations', []):
+            owner = owners[item['producer']]
+            if owner in keep:
+                adaptations.append(item)
+            elif item.get('scope') != 'edge':
+                rule = current.db.execute('SELECT ref FROM statements WHERE id=?', (owner,)).fetchone()['ref']
+                if rule in rule_witnesses:
+                    adaptations.append({**item, 'producer': rule_witnesses[rule]})
+        updates['runtime_adaptations'] = {**runtime, 'command_adaptations': adaptations}
+    return updates
+
+
 def prune(source, closure_json, output, record, targets):
     if not Path(source).is_file():
         raise PruneError("Missing source index: " + str(source))
     source_stat = Path(source).stat()
     tables, definitions = schema(source)
-    if closure_json:
-        payload = json.loads(Path(closure_json).read_text())
-        edge_ids = payload["edge_ids"]
-        if payload.get("edge_count") != len(edge_ids):
-            raise PruneError("Closure record is internally inconsistent")
-    else:
-        edge_ids = graph.Graph(source).closure(targets)["edge_ids"]
-    edge_ids = sorted(set(edge_ids))
+    current = graph.Graph(source)
+    try:
+        expected = current.closure(targets)
+        edge_ids = expected['edge_ids']
+        if closure_json:
+            payload = json.loads(Path(closure_json).read_text())
+            if payload.get('edge_count') != len(payload['edge_ids']):
+                raise PruneError('Closure record is internally inconsistent')
+            if payload['edge_ids'] != edge_ids:
+                raise PruneError('Closure record differs from the source graph closure')
+        metadata = project_metadata(current, edge_ids)
+    finally:
+        current.db.close()
     if not edge_ids:
         raise PruneError("Closure is empty; refusing to write an empty index")
 
@@ -102,16 +164,21 @@ def prune(source, closure_json, output, record, targets):
         # the source database cannot be written even by accident.
         target_db.execute("ATTACH DATABASE ? AS src", ("file:" + str(source) + "?mode=ro",))
         for table in tables:
-            if table in ("edges", "outputs"):
+            if table in ("edges", "outputs", "side_output_dirs"):
                 continue
             target_db.execute(f"INSERT INTO main.{table} SELECT * FROM src.{table}")
         target_db.execute("CREATE TEMP TABLE keep(id INTEGER PRIMARY KEY)")
         for batch in batches(edge_ids):
             target_db.executemany("INSERT INTO keep VALUES (?)", [(value,) for value in batch])
-        for table, column in (("edges", "id"), ("outputs", "edge")):
+        retained_tables = [('edges', 'id'), ('outputs', 'edge')]
+        if 'side_output_dirs' in tables:
+            retained_tables.append(('side_output_dirs', 'edge'))
+        for table, column in retained_tables:
             target_db.execute(
                 f"INSERT INTO main.{table} SELECT * FROM src.{table} "
                 f"WHERE {column} IN (SELECT id FROM keep)")
+        target_db.executemany('UPDATE meta SET value=? WHERE key=?',
+                              [(json.dumps(value), key) for key, value in metadata.items()])
         target_db.commit()
         counts = {table: target_db.execute(f"SELECT count(*) FROM main.{table}").fetchone()[0]
                   for table in tables}
@@ -122,11 +189,15 @@ def prune(source, closure_json, output, record, targets):
         target_db.close()
 
     # The pruned database must answer the same closure for the same targets.
-    check = graph.Graph(output).closure(targets)
-    if check["edge_ids"] != edge_ids:
+    reduced = graph.Graph(output)
+    try:
+        check = reduced.closure(targets)
+    finally:
+        reduced.db.close()
+    if check != expected:
         raise PruneError("Pruned index closure differs from the recorded closure")
     for table in tables:
-        if table in ("edges", "outputs"):
+        if table in ("edges", "outputs", "side_output_dirs"):
             continue
         if counts[table] != source_counts[table]:
             raise PruneError("Pruned index lost rows in " + table)

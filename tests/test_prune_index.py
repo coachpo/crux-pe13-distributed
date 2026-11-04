@@ -19,11 +19,14 @@ prune_index = load('prune_index', SCRIPTS / 'prune-index.py')
 
 
 class PruneIndexTests(unittest.TestCase):
-    def build(self, root):
+    def build(self, root, unused_rule=False):
         (root / 'build.ninja').write_text(
             'rule cp\n  command = cp $in $out\n'
             'build a: cp input\nbuild b: cp a\nbuild final: phony b\n'
             'build unrelated: cp other\n')
+        if unused_rule:
+            with (root / 'build.ninja').open('a') as stream:
+                stream.write('rule spare\n  command = unused $out\nbuild spare-output: spare\n')
         (root / 'input').write_text('seed')
         (root / 'other').write_text('decoy')
         database = root / 'index.sqlite'
@@ -83,6 +86,70 @@ class PruneIndexTests(unittest.TestCase):
             closure = root / 'closure.json'
             closure.write_text(json.dumps({'edge_ids': [1, 2], 'edge_count': 5}))
             with self.assertRaises(prune_index.PruneError):
+                prune_index.prune(str(database), str(closure), str(root / 'out.sqlite'),
+                                  str(root / 'r.json'), ['final'])
+
+    def test_pruning_projects_ownership_and_preserves_shared_rule_adaptations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self.build(root, unused_rule=True)
+            graph.augment_graph(database, {
+                'schema_version': 1,
+                'side_output_dirs': [
+                    {'producer': path, 'dirs': [path + '-tree'],
+                     'rationale': 'fixture side effect', 'evidence': ['fixture recipe']}
+                    for path in ['a', 'unrelated']],
+                'group_export_dirs': [{'producer': path, 'dirs': [path + '-export']}
+                                      for path in ['b', 'unrelated']],
+                'groups': [['a', 'b'], ['unrelated']],
+            })
+            profile = {'schema_version': 1, 'command_adaptations': [
+                {'producer': 'unrelated', 'scope': 'rule', 'replace': 'cp $in $out',
+                 'with': 'mapped $in $out', 'expected_matches': 1,
+                 'rationale': 'shared lexical rule', 'evidence': ['fixture recipe']},
+                {'producer': 'unrelated', 'scope': 'edge', 'replace': 'build unrelated: cp other',
+                 'with': 'build unrelated: cp other\n  command = unused', 'expected_matches': 1,
+                 'rationale': 'outside target closure', 'evidence': ['fixture recipe']},
+                {'producer': 'b', 'scope': 'edge', 'replace': 'build b: cp a',
+                 'with': 'build b: cp a\n  command = retained', 'expected_matches': 1,
+                 'rationale': 'selected edge override', 'evidence': ['fixture recipe']},
+                {'producer': 'spare-output', 'replace': 'unused $out', 'with': 'not-selected $out',
+                 'expected_matches': 1, 'rationale': 'unselected lexical rule', 'evidence': ['fixture recipe']},
+            ]}
+            graph.adapt_graph(database, profile)
+            original = graph.Graph(database)
+            expected = original.closure(['final'])
+            metadata = original.native_metadata(original.edge_records(expected['edge_ids'])[0])
+            original.db.close()
+            output = root / 'pruned.sqlite'
+            prune_index.prune(str(database), None, str(output), str(root / 'r.json'), ['final'])
+            reduced = graph.Graph(output)
+            try:
+                self.assertEqual(reduced.closure(['final']), expected)
+                actual = reduced.native_metadata(reduced.edge_records(expected['edge_ids'])[0])
+                self.assertEqual(actual, metadata)
+                projected = reduced.meta['runtime_adaptations']['command_adaptations']
+                self.assertEqual([(item['producer'], item['scope']) for item in projected],
+                                 [('a', 'rule'), ('b', 'edge')])
+                self.assertEqual(set(reduced.side_output_dirs), {'a-tree'})
+                self.assertEqual(set(reduced.group_export_dirs), {'b-export'})
+                self.assertEqual(reduced.meta['ownership_profile']['groups'], [['a', 'b']])
+                self.assertEqual(len(reduced.meta['atomic_groups']), 1)
+            finally:
+                reduced.db.close()
+
+    def test_incomplete_but_count_consistent_closure_record_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self.build(root)
+            current = graph.Graph(database)
+            payload = current.closure(['final'])
+            current.db.close()
+            payload['edge_ids'] = payload['edge_ids'][1:]
+            payload['edge_count'] = len(payload['edge_ids'])
+            closure = root / 'closure.json'
+            closure.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(prune_index.PruneError, 'source graph closure'):
                 prune_index.prune(str(database), str(closure), str(root / 'out.sqlite'),
                                   str(root / 'r.json'), ['final'])
 

@@ -147,6 +147,16 @@ return any remaining failure to root with evidence; never lower acceptance.
   tests (16 environment skips) and actionlint; actual hosted pack validation
   remains required. A compatible successful shard artifact may be resumed with
   `stage=pack` on the revised transport without rerunning graph/index/slicing.
+- Run `41765283807` accepted the real cold frontend probe (7 actions, expr=3,
+  tr=CRUX, bpglob help exit 0) and native scalar probe, and reached a dependency
+  fixed point: 136,036 edges/+63,494 inputs, then 136,591/+44, then +0. It
+  failed during prune validation because copied runtime metadata still named
+  the DTBO producer outside the selected closure. The prune fix projects
+  producer-bound ownership and edge adaptations into the kept edge domain,
+  re-anchors shared-rule adaptations to a retained lexical-rule consumer, and
+  compares the full source/pruned closure semantics. It neither widens the
+  product target closure nor removes any selected adaptation. Actual slicing
+  and packing still require a successful hosted run after this fix.
 
 ## Executor protocol
 
