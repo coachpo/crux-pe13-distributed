@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, has passed all 23 tasks in waves 0–2. Attempt 2 recovered the sole transport-failed task from empty state; wave 3 is active. All 39 tasks and final summary remain required. |
+| V1 | active | root + read-only observer | Production run `41866735013`, worker `79c8c2f13e879803e8e15e919d17a19520b2b4d1`, has passed 32 tasks, including all six wave-3 tasks and the repaired AIDL closure. Attempt 3 is cold-retrying two wave-4 pre-Ninja HTTP-503 failures. All 39 tasks and final summary remain required. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -268,6 +268,15 @@ Do not insert historical source overlays or old compiled artifact bindings.
   succeeded, and wave-3 plan `126768048702` started. The retry's successful
   artifacts replace its failed artifacts; every other producer remains freshly
   built within this same admitted execution.
+- Wave 3 passed all six tasks, including formerly failing `w003-s000`; AIDL
+  source closure is now verified by the real native build. Wave 4 boot-image
+  owner `w004-s000` and siblings `s001`/`s003` passed. `w004-s002` job
+  `126789890368` and `w004-s004` job `126789890461` failed before Ninja with the
+  same storage HTTP 503. Root preserved both logs and waited for top-level
+  completion (19:29:08 UTC) before the same-execution failed-job rerun. Attempt
+  3 retains worker `79c8c2f`, empty task roots and only this run's fresh parents.
+  There are 32 successful native tasks, two transport retries and five later
+  tasks still required. No native error has been suppressed.
 
 ## Executor protocol
 
