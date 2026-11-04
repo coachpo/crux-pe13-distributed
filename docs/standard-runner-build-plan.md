@@ -94,7 +94,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
-| T2 | implemented, live fixture pending | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across standard source/graph/index/slice/capsule/compile/assembly workflows. Manual standard-runner fixture tests successful replacement after a forced initial conflict and proper failure propagation when both uploads fail. |
+| T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -299,6 +299,15 @@ Do not insert historical source overlays or old compiled artifact bindings.
   [composite step conditions and error handling](https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax).
   Integrated 460 tests (16 skips), actionlint and whitespace checks pass. Real
   standard-runner transport fixture execution remains required before T2 closes.
+- Live transport fixture `41902415401`, commit
+  `a08c14c6322f2734233441298ae94b13d33a153c`, passed on standard Ubuntu. A forced
+  first-attempt 409 conflict was followed by the ten-second delayed overwrite;
+  finalized replacement artifact `13358971537` replaced seed `13358356896`, and
+  the helper ID, downloaded artifact and replacement bytes matched. A separate
+  missing-file case failed both attempts and propagated failure to the caller,
+  whose explicit regression assertion passed. The expected error annotations
+  belong only to this transport fixture, not native compilation. Root inspected
+  the raw job `126828060381` log and successful workflow conclusion.
 
 ## Executor protocol
 
