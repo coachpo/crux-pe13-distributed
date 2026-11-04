@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -77,6 +78,7 @@ class CloudCompileTests(unittest.TestCase):
     def extracted_capsule(self):
         slice_dir = self.source / ".crux-task/graph"
         slice_dir.mkdir(parents=True)
+        (self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT).mkdir(parents=True, exist_ok=True)
         (slice_dir / "manifest.json").write_bytes(self.manifest_bytes)
         (slice_dir / "bundle.json").write_text(json.dumps({
             "schema_version": 1, "source_root": str(self.source), "out_root": str(self.out_root),
@@ -136,15 +138,22 @@ class CloudCompileTests(unittest.TestCase):
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
 
-    def run_compile(self, diagnostic_context_path=None):
+    def run_compile(self, diagnostic_context_path=None, short_kernel_source=False):
         with mock.patch.dict(os.environ, self.runner_env, clear=True), \
                 mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts", side_effect=self.fake_download), \
                 mock.patch.object(cloud_compile.subprocess, "run", side_effect=self.fake_tar), \
                 mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker), \
-                mock.patch.object(cloud_compile, "_diagnostic_process_limits", return_value={"arg_max": "2097152"}):
+                mock.patch.object(cloud_compile, "_diagnostic_process_limits", return_value={"arg_max": "2097152"}), \
+                mock.patch.object(cloud_compile, "_mount_short_source_alias",
+                                  return_value={"source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
+                                                "alias": "/k", "mount": "bind"}) as mount, \
+                mock.patch.object(cloud_compile, "_unmount_short_source_alias") as unmount:
+            self.mount_calls = mount
+            self.unmount_calls = unmount
             return cloud_compile.compile_shard(self.context_path, self.shard_id,
                                                 self.output, self.staging,
-                                                diagnostic_context_path=diagnostic_context_path)
+                                                diagnostic_context_path=diagnostic_context_path,
+                                                short_kernel_source=short_kernel_source)
 
     def test_fresh_capsule_worker_records_context_and_disables_auth_in_build_child(self):
         code, receipt = self.run_compile()
@@ -348,6 +357,65 @@ class CloudCompileTests(unittest.TestCase):
             cloud_compile.validate_context(old, self.shard_id, self.runner_env)
         current, _ = cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
         self.assertEqual(current["execution_id"], self.runner_env["GITHUB_RUN_ID"])
+
+    def _prepare_short_source_context(self):
+        self.fresh_context["assembly_exports"] = {
+            str(self.out_root / "target/product/crux/obj/KERNEL_OBJ"): self.shard_id}
+        self.fresh_context["source_selection"] = {"projects": [{
+            "path": cloud_compile.SHORT_KERNEL_SOURCE_PROJECT,
+            "revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
+        }]}
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        parent = dict(self.fresh_context)
+        parent["execution_id"] = "41789247344"
+        parent_path = self.root / "parent.json"
+        parent_path.write_text(json.dumps(parent))
+        self.active_dependency_context = parent
+        return parent_path
+
+    def test_short_source_experiment_is_pinned_opt_in_and_cleans_mount(self):
+        parent_path = self._prepare_short_source_context()
+        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.mount_calls.assert_called_once()
+        self.unmount_calls.assert_called_once()
+        self.assertEqual(receipt["runtime_source_alias"], {
+            "source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
+            "alias": "/k", "mount": "bind",
+            "source_revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
+            "makeflags_addition": "srctree=/k",
+            "makeflags": "--trace srctree=/k",
+        })
+        self.assertIn("srctree=/k", self.worker_calls[0]["makeflags"])
+
+    def test_short_source_rejects_wrong_task_and_revision(self):
+        parent_path = self._prepare_short_source_context()
+        self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = "w000-s999"
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
+        self.assertEqual(code, 1)
+        self.assertIn("task owning the kernel output", receipt["error"])
+        self.mount_calls.assert_not_called()
+        self.unmount_calls.assert_not_called()
+
+        shutil.rmtree(self.source)
+        self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = self.shard_id
+        self.fresh_context["source_selection"]["projects"][0]["revision"] = "0" * 40
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        self.output = self.root / "result-revision"
+        self.staging = self.root / "staging-revision"
+        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
+        self.assertEqual(code, 1)
+        self.assertIn("pinned kernel source revision", receipt["error"])
+        self.mount_calls.assert_not_called()
+
+    def test_existing_short_source_alias_is_rejected_without_mutation(self):
+        source = self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT
+        with mock.patch.object(cloud_compile.os.path, "lexists", return_value=True), \
+                mock.patch.object(cloud_compile.subprocess, "run") as run:
+            with self.assertRaisesRegex(cloud_compile.CompileError, "alias already exists"):
+                cloud_compile._mount_short_source_alias(source)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

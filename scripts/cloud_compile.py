@@ -30,6 +30,9 @@ CONTEXT_IDENTITY_FIELDS = (
 FRESH_BUILD_FIELDS = ("execution_id", "pack_run", "shard_run", "plan_sha256",
                       "source_manifest_sha256")
 RUN_ID_FIELDS = ("execution_id", "pack_run", "shard_run", "graph_run", "index_run", "source_run")
+SHORT_KERNEL_SOURCE_REVISION = "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e"
+SHORT_KERNEL_SOURCE_PROJECT = "kernel/xiaomi/crux-pe-cepheus"
+SHORT_KERNEL_SOURCE_ALIAS = Path("/k")
 
 
 class CompileError(ValueError):
@@ -211,8 +214,47 @@ def _diagnostic_process_limits(environment: dict) -> dict:
     }
 
 
+def _validate_short_kernel_source(context: dict, shard_id: str, source_root: Path) -> Path:
+    kernel_output = str(Path(context["out_root"]) / "target/product/crux/obj/KERNEL_OBJ")
+    if context.get("assembly_exports", {}).get(kernel_output) != shard_id:
+        raise CompileError("Short-source mode is restricted to the task owning the kernel output")
+    projects = context.get("source_selection", {}).get("projects", [])
+    pins = {project.get("path"): project.get("revision") for project in projects
+            if isinstance(project, dict)}
+    if pins.get(SHORT_KERNEL_SOURCE_PROJECT) != SHORT_KERNEL_SOURCE_REVISION:
+        raise CompileError("Short-source mode requires the pinned kernel source revision")
+    kernel_source = source_root / SHORT_KERNEL_SOURCE_PROJECT
+    try:
+        kernel_source.relative_to(source_root)
+    except ValueError as error:
+        raise CompileError("Pinned kernel source escapes source_root") from error
+    if kernel_source.is_symlink() or not kernel_source.is_dir():
+        raise CompileError("Pinned kernel source must be a regular directory in the restored capsule")
+    return kernel_source
+
+
+def _mount_short_source_alias(kernel_source: Path) -> dict:
+    alias = SHORT_KERNEL_SOURCE_ALIAS
+    if os.path.lexists(alias):
+        raise CompileError("Short-source alias already exists: " + str(alias))
+    subprocess.run(["sudo", "mkdir", "--", str(alias)], check=True)
+    try:
+        subprocess.run(["sudo", "mount", "--bind", str(kernel_source), str(alias)], check=True)
+    except Exception:
+        subprocess.run(["sudo", "rmdir", "--", str(alias)], check=False)
+        raise
+    return {"source": str(kernel_source), "alias": str(alias), "mount": "bind"}
+
+
+def _unmount_short_source_alias():
+    alias = SHORT_KERNEL_SOURCE_ALIAS
+    subprocess.run(["sudo", "umount", "--", str(alias)], check=True)
+    subprocess.run(["sudo", "rmdir", "--", str(alias)], check=True)
+
+
 def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
-                  staging: Path, environment=None, diagnostic_context_path=None) -> tuple[int, dict]:
+                  staging: Path, environment=None, diagnostic_context_path=None,
+                  short_kernel_source=False) -> tuple[int, dict]:
     environment = dict(os.environ if environment is None else environment)
     context = worker.read_json(context_path)
     context, fresh_identity = validate_context(context, shard_id, environment)
@@ -220,6 +262,8 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
     if diagnostic_context_path is not None:
         diagnostic_parent, diagnostic_identity = _validate_diagnostic_parent(
             context, worker.read_json(diagnostic_context_path), shard_id, environment)
+    if short_kernel_source and diagnostic_parent is None:
+        raise CompileError("Short-source mode requires --dependency-context diagnostic mode")
     task = context["tasks"][shard_id]
     source_root = Path(context["source_root"])
     out_root = Path(context["out_root"])
@@ -246,6 +290,8 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
             "fresh_build": diagnostic_identity,
         }
     diagnostic_process_limits = None
+    source_alias_mounted = False
+    runtime_source_alias = None
     started = time.monotonic()
     try:
         if os.path.lexists(source_root):
@@ -276,6 +322,15 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         archive.unlink()
         shutil.rmtree(capsule_dir)
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
+        if short_kernel_source:
+            kernel_source = _validate_short_kernel_source(context, shard_id, source_root)
+            alias_record = _mount_short_source_alias(kernel_source)
+            source_alias_mounted = True
+            runtime_source_alias = {
+                **alias_record, "source_revision": SHORT_KERNEL_SOURCE_REVISION,
+                "makeflags_addition": "srctree=/k",
+            }
+            receipt["runtime_source_alias"] = runtime_source_alias
 
         dependency_dirs, bindings = [], []
         dependency_context = diagnostic_parent or context
@@ -309,7 +364,12 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
             flags = previous_makeflags.split()
             if "--trace" not in flags:
                 flags.append("--trace")
+            if short_kernel_source and "srctree=/k" not in flags:
+                flags.append("srctree=/k")
             os.environ["MAKEFLAGS"] = " ".join(flags)
+            if short_kernel_source:
+                runtime_source_alias["makeflags"] = os.environ["MAKEFLAGS"]
+                receipt["runtime_source_alias"] = runtime_source_alias
             diagnostic_process_limits = _diagnostic_process_limits(os.environ)
             receipt["diagnostic_process_limits"] = diagnostic_process_limits
         try:
@@ -338,6 +398,9 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 "fresh_build": diagnostic_identity,
             }
             receipt["diagnostic_process_limits"] = diagnostic_process_limits
+        if short_kernel_source:
+            runtime_source_alias["makeflags"] = " ".join(flags)
+            receipt["runtime_source_alias"] = runtime_source_alias
         receipt["status"] = result.get("status", "failed")
         if receipt["status"] != "success" and "error" not in receipt:
             receipt["error"] = "native shard compilation failed"
@@ -349,6 +412,22 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 pass
         receipt.update({"schema_version": 1, "id": shard_id, "status": "failed",
                        "fresh_build": fresh_identity, "error": str(error)})
+        if diagnostic_parent is not None:
+            receipt.update({"diagnostic_only": True, "diagnostic_parent": {
+                "execution_id": diagnostic_parent["execution_id"],
+                "worker_commit": diagnostic_parent["worker_commit"],
+                "fresh_build": diagnostic_identity,
+            }})
+            if diagnostic_process_limits is not None:
+                receipt["diagnostic_process_limits"] = diagnostic_process_limits
+        if runtime_source_alias is not None:
+            receipt["runtime_source_alias"] = runtime_source_alias
+    finally:
+        if source_alias_mounted:
+            try:
+                _unmount_short_source_alias()
+            except Exception as error:
+                receipt.update({"status": "failed", "error": "Could not clean short-source mount: " + str(error)})
     receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return (0 if receipt.get("status") == "success" else 1), receipt
@@ -361,10 +440,12 @@ def main(argv=None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--staging", required=True)
     parser.add_argument("--dependency-context")
+    parser.add_argument("--short-kernel-source", action="store_true")
     args = parser.parse_args(argv)
     try:
         code, receipt = compile_shard(Path(args.context), args.id, Path(args.output),
-                                      Path(args.staging), diagnostic_context_path=args.dependency_context)
+                                      Path(args.staging), diagnostic_context_path=args.dependency_context,
+                                      short_kernel_source=args.short_kernel_source)
     except (CompileError, OSError, ValueError, json.JSONDecodeError) as error:
         print("cloud_compile: " + str(error), file=sys.stderr)
         return 1

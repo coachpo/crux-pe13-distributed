@@ -1,6 +1,12 @@
 name: Diagnose the fresh PE13 kernel on a standard runner
 on:
   workflow_dispatch:
+    inputs:
+      short_source:
+        description: Experiment with an identical bind-mounted short Kbuild source path
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -58,9 +64,14 @@ jobs:
       - name: Diagnose native Make exec limits without changing source inputs
         run: |
           set -euo pipefail
+          extra=()
+          if [ "${{ inputs.short_source }}" = true ]; then
+            extra+=(--short-kernel-source)
+          fi
           /usr/bin/time -v python3 scripts/cloud_compile.py --context "$RUNNER_TEMP/probe-context.json" \
             --dependency-context "$RUNNER_TEMP/parent/context.json" --id w001-s001 \
             --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/compile" \
+            "${extra[@]}" \
             2>&1 | tee "$RUNNER_TEMP/result/probe.log"
       - name: Retain diagnostic-only result and trace
         if: always()

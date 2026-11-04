@@ -125,6 +125,16 @@ Do not insert historical source overlays or old compiled artifact bindings.
   errors are a separate anomaly. Outer Ninja argv was valid (~669 KB aggregate);
   the actual failing recipe/env was not captured, so per-string versus aggregate
   exec limit is not yet established. K1 measures it before choosing a fix.
+- Diagnostic run `41797793226`, head `ad6839b`, captured the failing shell
+  recipe at 135,239 bytes. Runner page size is 4,096, hence Linux's per-string
+  limit is 131,072 bytes; aggregate ARG_MAX is 4,194,304 and outer environment
+  is only 5,078 bytes. Source prefix repeats 740 times. This establishes a
+  per-string failure, not memory pressure. The next probe may bind the identical
+  admitted source tree at `/k` and pass command-line `srctree=/k` via MAKEFLAGS;
+  do not set KBUILD_SRC, which skips the kernel O= bootstrap. No source bytes,
+  compiler flags other than source path spelling, output ownership or old-data
+  admission changes. This remains diagnostic-only until a real complete kernel
+  build and trace validate it. Capture alias/provenance and clean the mount.
 
 ## Executor protocol
 
