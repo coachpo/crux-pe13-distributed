@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Current production run `41808162966`, head `a4fb476c9e9f217b7e4c5858f786c497c685c0e1`; all 39 native tasks and final fresh producer summary are required. It restarts empty and uses no outputs from earlier runs. |
+| V1 | active | root + read-only observer | Current production run `41819689572`, head `f4592fed75f20c7de8ee3cd16d55516611b03d19`; all 39 native tasks and final fresh producer summary are required. It restarts empty and uses no outputs from earlier runs. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | active | source_footprint + root | `worker.py` and worker fixtures: optional extra exports must be a subset of the admitted manifest's declared outputs, verified fresh after Ninja, then archived with the original exports. No arbitrary OUT/source approval. Root C0/C1 derives typed launcher runtime bundles, admits their current-run owners/dependencies and requests only these extra exports. |
@@ -164,6 +164,12 @@ Do not insert historical source overlays or old compiled artifact bindings.
   cold/bundle/import guards, followed by the complete original task target list.
   This explicit intra-task order uses only newly computed outputs in one worker;
   no capsule/Ninja bytes or source inputs change, and no foreign JAR is admitted.
+- New empty-state run `41819689572` passed bootstrap. Its admitted context
+  derives 23 runtime bundle relationships across d8, manifest-merger,
+  r8-compat-proguard, metalava, sdkparcelables, class2nonsdklist and xsdc.
+  Three producer tasks receive declared extra-export lists; xsdc has a local
+  JAR prebuild target in `w002-s006`. The original 39 capsule byte identities
+  remain unchanged. Integrated validation: 449 tests, 16 skips, actionlint pass.
 
 ## Executor protocol
 
