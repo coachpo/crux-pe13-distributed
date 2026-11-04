@@ -396,8 +396,24 @@ def retain_abi_diagnostics(source_root, build_environment, output_dir):
     return retained
 
 
+def validate_extra_exports(extra_exports, manifest_outputs):
+    """Allow additional exports only for outputs already declared by the slice."""
+    if not isinstance(extra_exports, (list, tuple)):
+        raise ValueError("extra exports must be a JSON array/list")
+    if any(not isinstance(path, str) or not path for path in extra_exports):
+        raise ValueError("extra exports must contain nonempty output path strings")
+    if len(extra_exports) != len(set(extra_exports)):
+        raise ValueError("extra exports must be unique")
+    if not isinstance(manifest_outputs, list) or any(not isinstance(path, str) for path in manifest_outputs):
+        raise ValueError("manifest outputs must be an array of path strings")
+    outside = sorted(set(extra_exports) - set(manifest_outputs))
+    if outside:
+        raise ValueError("extra export is not a declared slice output: " + ", ".join(outside))
+    return sorted(extra_exports)
+
+
 def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4,
-              dependency_bindings=None, dependency_supersessions=None):
+              dependency_bindings=None, dependency_supersessions=None, extra_exports=()):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed", "outputs": [],
@@ -415,6 +431,8 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             manifest = read_json(manifest_path)
             if manifest.get("schema_version") != 1:
                 raise ValueError("unsupported Ninja manifest schema")
+            extra_exports = validate_extra_exports(extra_exports, manifest.get("outputs"))
+            receipt["additional_exports"] = extra_exports
             source_root = Path(manifest["source_root"])
             receipt.update(source_root=str(source_root), manifest_sha256=digest(manifest_path),
                            targets=manifest["targets"], edge_count=manifest["edge_count"])
@@ -498,7 +516,7 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                 resolved = absolute(path, source_root)
                 if not resolved.exists() and not resolved.is_symlink():
                     raise ValueError(f"Ninja did not produce declared output: {resolved}")
-            exported = manifest.get("export_outputs", manifest["outputs"])
+            exported = sorted(set(manifest.get("export_outputs", manifest["outputs"])) | set(extra_exports))
             if not set(exported).issubset(set(manifest["outputs"])):
                 raise ValueError("export_outputs contains an output outside this Ninja slice")
             receipt["verified_output_count"] = len(manifest["outputs"])
@@ -540,13 +558,15 @@ def main():
     parser.add_argument("--dependency-dir", action="append", default=[])
     parser.add_argument("--dependency-bindings", help="JSON controller bindings aligned with dependency directory arguments")
     parser.add_argument("--dependency-supersessions", help="JSON exact regular-OUT old/new supersession declarations")
+    parser.add_argument("--extra-exports", help="JSON array of additional outputs already declared in manifest.outputs")
     parser.add_argument("--ninja")
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     receipt = run_shard(args.manifest, args.bundle, args.id, args.output_dir,
                         args.dependency_dir, args.ninja, args.jobs,
                         read_json(args.dependency_bindings) if args.dependency_bindings else None,
-                        read_json(args.dependency_supersessions) if args.dependency_supersessions else None)
+                        read_json(args.dependency_supersessions) if args.dependency_supersessions else None,
+                        read_json(args.extra_exports) if args.extra_exports else ())
     print(json.dumps({key: receipt.get(key) for key in ("id", "status", "elapsed_seconds", "error")}))
     return 0 if receipt["status"] == "success" else 1
 

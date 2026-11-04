@@ -51,13 +51,14 @@ class WorkerTests(unittest.TestCase):
                                            "files": [worker.describe(path) for path in
                                                      (self.input, self.ninja, self.ninja_file)]}))
 
-    def run_worker(self, name="producer", dependencies=()):
+    def run_worker(self, name="producer", dependencies=(), extra_exports=()):
         return worker.run_shard(self.manifest, self.bundle, name, self.root / name,
-                                dependencies, self.ninja)
+                                dependencies, self.ninja, extra_exports=extra_exports)
 
     def test_cold_compile_and_verified_exchange_preserves_bytes_and_mode(self):
         receipt = self.run_worker()
         self.assertEqual(receipt["status"], "success", receipt.get("error"))
+        self.assertEqual(receipt["additional_exports"], [])
         expected = self.output.read_bytes()
         mode = self.output.stat().st_mode & 0o7777
         self.output.unlink()
@@ -172,6 +173,56 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(receipt["outputs"], [])
         self.assertTrue(self.output.exists())
         self.assertEqual(receipt["build_environment"]["ANDROID_BUILD_TOP"], str(self.source))
+
+    def test_declared_unexported_output_can_be_added_as_a_fresh_receipted_export(self):
+        jar = self.source / "out/d8.jar"
+        jar.parent.mkdir(parents=True, exist_ok=True)
+        self.assertFalse(jar.exists())
+        self.ninja.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\n"
+            "root=Path('out'); root.mkdir(parents=True,exist_ok=True)\n"
+            "Path('out/result.bin').write_bytes(Path('source.txt').read_bytes()+b'compiled\\n')\n"
+            "Path('out/d8.jar').write_bytes(b'fresh-d8-runtime')\n")
+        self.write_manifests()
+        manifest = json.loads(self.manifest.read_text())
+        manifest['outputs'].append('out/d8.jar')
+        manifest['export_outputs'] = ['out/result.bin']
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle['manifest_sha256'] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+
+        receipt = self.run_worker(extra_exports=['out/d8.jar'])
+        self.assertEqual(receipt['status'], 'success', receipt.get('error'))
+        self.assertEqual(receipt['additional_exports'], ['out/d8.jar'])
+        exported = {item['path']: item for item in receipt['outputs']}
+        self.assertEqual(set(exported), {str(self.output), str(jar)})
+        self.assertEqual(exported[str(jar)]['sha256'], worker.digest(jar))
+        self.output.unlink()
+        jar.unlink()
+        accepted, _ = worker.merge_dependencies([self.root / 'producer'])
+        self.assertEqual(accepted[str(jar)]['sha256'], worker.digest(jar))
+        self.assertEqual(jar.read_bytes(), b'fresh-d8-runtime')
+
+    def test_extra_export_outside_manifest_is_rejected_before_ninja(self):
+        marker = self.source / 'out/ninja-ran'
+        self.ninja.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\n"
+            "Path('out').mkdir(parents=True,exist_ok=True)\n"
+            "Path('out/ninja-ran').write_text('ran')\n"
+            "Path('out/result.bin').write_bytes(b'compiled')\n")
+        receipt = self.run_worker(extra_exports=['out/not-declared.jar'])
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertIn('not a declared slice output', receipt['error'])
+        self.assertFalse(marker.exists())
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.root / 'producer/outputs.tar.zst').exists())
+
+    def test_extra_export_list_must_be_unique_and_string_typed(self):
+        outputs = ['out/result.bin']
+        for values in (['out/result.bin', 'out/result.bin'], ['out/result.bin', 3], 'out/result.bin'):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                worker.validate_extra_exports(values, outputs)
 
     def test_frozen_path_retains_host_fallback_directories(self):
         manifest = json.loads(self.manifest.read_text())

@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 4 / active (2026-11-04).
+Plan: standard-runner-build / revision 5 / active (2026-11-04).
 
 ## Authority, baseline and acceptance
 
@@ -89,6 +89,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | V1 | active | root + read-only observer | Current production run `41808162966`, head `a4fb476c9e9f217b7e4c5858f786c497c685c0e1`; all 39 native tasks and final fresh producer summary are required. It restarts empty and uses no outputs from earlier runs. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
+| D1 | active | source_footprint + root | `worker.py` and worker fixtures: optional extra exports must be a subset of the admitted manifest's declared outputs, verified fresh after Ninja, then archived with the original exports. No arbitrary OUT/source approval. Root C0/C1 derives typed launcher runtime bundles, admits their current-run owners/dependencies and requests only these extra exports. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -149,6 +150,14 @@ Do not insert historical source overlays or old compiled artifact bindings.
 - Current production run `41808162966` has passed bootstrap and dispatched wave
   0 under worker revision `a4fb476`. All dependencies in this run point only to
   this run's new producer artifacts. No general cross-run resume was enabled.
+- The repaired production kernel passed. Wave 2 exposed a host-launcher runtime
+  omission: `w002-s000` failed because d8 could not find `host/linux-x86/framework/d8.jar`.
+  The successful kernel task had freshly produced that JAR as a declared output,
+  but exported only the launcher, not the JAR. D1 adds explicit generated runtime
+  transport metadata, not a warm JAR. The same 39 capsule archives/Ninja actions
+  stay unchanged. Producer extra exports must already be declared native outputs;
+  consumers import only a current-execution receipt of the correct owner. Later
+  production restarts remain empty-state, with no reuse of this failed cohort.
 
 ## Executor protocol
 

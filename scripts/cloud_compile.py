@@ -122,6 +122,28 @@ def validate_context(context: dict, shard_id: str, environment=None,
         if not isinstance(task.get("archive_sha256"), str) or not re.fullmatch(
                 r"[a-fA-F0-9]{64}", task["archive_sha256"]):
             raise CompileError("Fresh-build task has an invalid archive SHA: " + identity)
+        extra_exports = task.get("extra_exports", [])
+        if not isinstance(extra_exports, list) or any(not isinstance(path, str) for path in extra_exports):
+            raise CompileError("Fresh-build task has invalid extra_exports: " + identity)
+        if len(extra_exports) != len(set(extra_exports)):
+            raise CompileError("Fresh-build task has duplicate extra_exports: " + identity)
+        for path in extra_exports:
+            _validate_out_path(path, out_root, "extra export")
+        runtime_inputs = task.get("runtime_inputs", [])
+        if not isinstance(runtime_inputs, list):
+            raise CompileError("Fresh-build task has invalid runtime_inputs: " + identity)
+        seen_runtime_paths = set()
+        for runtime in runtime_inputs:
+            if not isinstance(runtime, dict) or set(runtime) != {"path", "producer"}:
+                raise CompileError("Fresh-build task has invalid runtime input record: " + identity)
+            path, producer = runtime["path"], runtime["producer"]
+            _validate_out_path(path, out_root, "runtime input")
+            producer_exports = tasks.get(producer, {}).get("extra_exports", []) if isinstance(producer, str) else []
+            if (path in seen_runtime_paths or not isinstance(producer, str) or producer not in tasks
+                    or producer not in task["depends_on"]
+                    or not isinstance(producer_exports, list) or path not in producer_exports):
+                raise CompileError("Fresh-build runtime input has an invalid producer binding: " + identity)
+            seen_runtime_paths.add(path)
     if shard_id not in tasks:
         raise CompileError("Selected shard is absent from fresh-build context: " + shard_id)
 
@@ -134,6 +156,15 @@ def validate_context(context: dict, shard_id: str, environment=None,
                 raise CompileError(f"Fresh-build context {field} differs from this Actions run")
     identity = {field: context[field] for field in FRESH_BUILD_FIELDS}
     return context, identity
+
+
+def _validate_out_path(value, out_root: Path, label: str) -> Path:
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise CompileError(label + " path must be absolute")
+    candidate = Path(os.path.abspath(value))
+    if str(candidate) != value or candidate == out_root or out_root not in candidate.parents:
+        raise CompileError(label + " path must be a normalized path inside OUT_DIR")
+    return candidate
 
 
 def _locate_capsule(directory: Path, archive_name: str) -> Path:
@@ -186,6 +217,35 @@ def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
         if receipt.get(key) != value:
             raise CompileError(f"Dependency {dependency_id} receipt {key} differs from this fresh build")
     return receipt
+
+
+def _verify_runtime_inputs(task: dict, dependency_receipts: dict,
+                           dependency_directories: dict) -> list[dict]:
+    admitted = []
+    for runtime in task.get("runtime_inputs", []):
+        producer = runtime["producer"]
+        receipt = dependency_receipts.get(producer)
+        if receipt is None:
+            raise CompileError("Runtime input producer was not imported: " + producer)
+        path = runtime["path"]
+        additional_exports = receipt.get("additional_exports", [])
+        output_specs = receipt.get("outputs", [])
+        if not isinstance(additional_exports, list) or not isinstance(output_specs, list):
+            raise CompileError("Runtime input producer receipt has invalid output metadata: " + producer)
+        if path not in additional_exports:
+            raise CompileError("Runtime input is not declared as an additional producer export: " + path)
+        matches = [item for item in output_specs if isinstance(item, dict) and item.get("path") == path]
+        if len(matches) != 1:
+            raise CompileError("Runtime input has no unique producer receipt output: " + path)
+        spec = matches[0]
+        if (spec.get("type") != "file" or type(spec.get("size")) is not int or spec["size"] <= 0
+                or not isinstance(spec.get("sha256"), str)
+                or not re.fullmatch(r"[a-fA-F0-9]{64}", spec["sha256"])):
+            raise CompileError("Runtime input producer output is not a nonempty regular file: " + path)
+        receipt_path = dependency_directories[producer] / "receipt.json"
+        admitted.append({**runtime, "producer_receipt_sha256": sha256(receipt_path),
+                         "size": spec["size"], "sha256": spec["sha256"]})
+    return admitted
 
 
 def _validate_diagnostic_parent(current: dict, parent: dict, shard_id: str,
@@ -307,6 +367,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
     diagnostic_process_limits = None
     source_alias_mounted = False
     runtime_source_alias = None
+    admitted_runtime_inputs = []
     started = time.monotonic()
     try:
         if os.path.lexists(source_root):
@@ -349,6 +410,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
             receipt["runtime_source_alias"] = runtime_source_alias
 
         dependency_dirs, bindings = [], []
+        dependency_receipts, dependency_directories = {}, {}
         dependency_context = diagnostic_parent or context
         dependency_identity = diagnostic_identity or fresh_identity
         for dependency_id in task["depends_on"]:
@@ -360,13 +422,18 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 token=token, name=dependency_artifact)
             if len(downloaded) != 1 or downloaded[0]["name"] != dependency_artifact:
                 raise CompileError("Current build run did not return dependency artifact: " + dependency_id)
-            _read_fresh_dependency(dependency_id, Path(downloaded[0]["destination"]),
-                                   dependency_context, dependency_identity)
-            dependency_dirs.append(Path(downloaded[0]["destination"]))
+            dependency_directory = Path(downloaded[0]["destination"])
+            dependency_receipt = _read_fresh_dependency(dependency_id, dependency_directory,
+                                                        dependency_context, dependency_identity)
+            dependency_receipts[dependency_id] = dependency_receipt
+            dependency_directories[dependency_id] = dependency_directory
+            dependency_dirs.append(dependency_directory)
             bindings.append({"id": dependency_id, "run_id": str(dependency_context["execution_id"]),
                              "artifact": dependency_artifact,
                              "expected_worker_commit": dependency_context["worker_commit"],
                              "expected_manifest_sha256": dependency_context["tasks"][dependency_id]["manifest_sha256"]})
+
+        admitted_runtime_inputs = _verify_runtime_inputs(task, dependency_receipts, dependency_directories)
 
         # Keep artifact credentials in this wrapper only; worker.run_shard passes
         # its process environment to Ninja and native build tools.
@@ -392,7 +459,8 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
             receipt["diagnostic_process_limits"] = diagnostic_process_limits
         try:
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
-                                      dependency_dirs, jobs=4, dependency_bindings=bindings)
+                                      dependency_dirs, jobs=4, dependency_bindings=bindings,
+                                      extra_exports=task.get("extra_exports", []))
         finally:
             if makeflags_modified:
                 if previous_makeflags:
@@ -407,7 +475,11 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 or receipt.get("source_root") != context["source_root"]
                 or receipt.get("out_root") != context["out_root"]):
             raise CompileError("Native worker receipt differs from fresh-build shard identity")
+        if (result.get("status") == "success"
+                and sorted(receipt.get("additional_exports", [])) != sorted(task.get("extra_exports", []))):
+            raise CompileError("Native worker receipt differs from admitted extra_exports")
         receipt["fresh_build"] = fresh_identity
+        receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
         if diagnostic_parent is not None:
             receipt["diagnostic_only"] = True
             receipt["diagnostic_parent"] = {
@@ -440,6 +512,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 receipt["diagnostic_process_limits"] = diagnostic_process_limits
         if runtime_source_alias is not None:
             receipt["runtime_source_alias"] = runtime_source_alias
+        receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
     finally:
         if source_alias_mounted:
             try:

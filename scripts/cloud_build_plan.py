@@ -12,6 +12,7 @@ import re
 import subprocess
 
 import cloud_artifacts
+from cloud_source_reads import iter_invocations
 
 
 EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110303'
@@ -58,6 +59,43 @@ def buildinfo_environment(command):
     if not {'BUILD_ID', 'BUILD_VERSION_TAGS', 'PRIVATE_BUILD_DESC'} <= result.keys():
         raise ValueError('Admitted buildinfo command has no literal build environment')
     return result
+
+
+def admit_host_jar_bundles(tasks, owners, commands, source_root, out_root):
+    """Transport co-installed Java launcher runtimes from declared fresh owners."""
+    pairs = {}
+    for executable in owners:
+        path = Path(executable)
+        if (path.parent.name != 'bin' or not executable.startswith(out_root + '/')
+                or '/host/' not in executable):
+            continue
+        runtime = str(path.parent.parent / 'framework' / (path.name + '.jar'))
+        if runtime in owners or path.name in {'d8', 'r8', 'r8-compat-proguard', 'manifest-merger', 'retrace', 'extractmarker'}:
+            pairs[executable] = runtime
+    bundles = []
+    for task_id, rows in commands.items():
+        used = set()
+        for command in rows:
+            if not any(executable in command for executable in pairs):
+                continue
+            for argv, cwd in iter_invocations({'command': command}, source_root):
+                program = os.path.normpath(argv[0] if argv[0].startswith('/') else str(Path(cwd) / argv[0]))
+                if program in pairs:
+                    used.add(program)
+        for executable in sorted(used):
+            runtime = pairs[executable]
+            if runtime not in owners:
+                raise ValueError('Invoked Java launcher runtime has no admitted declared producer: ' + runtime)
+            producer = owners[runtime]
+            if producer == task_id:
+                raise ValueError('Local Java runtime needs explicit intra-slice ordering: ' + executable)
+            if tasks[producer]['wave'] >= tasks[task_id]['wave']:
+                raise ValueError('Java runtime producer is not in an earlier admitted wave: ' + executable)
+            tasks[producer]['extra_exports'] = sorted(set(tasks[producer].get('extra_exports', [])) | {runtime})
+            tasks[task_id]['depends_on'] = sorted(set(tasks[task_id]['depends_on']) | {producer})
+            tasks[task_id].setdefault('runtime_inputs', []).append({'path': runtime, 'producer': producer})
+            bundles.append({'consumer': task_id, 'executable': executable, 'runtime': runtime, 'producer': producer})
+    return bundles
 
 
 def admit_inputs(registry, receipt, inventory, plan, plan_sha):
@@ -119,11 +157,17 @@ def bootstrap(args):
     plan = read(plan_path)
     waves, tasks = admit_inputs(registry, receipt, inventory, plan, sha(plan_path))
     commands, branding, product_recipe, buildinfo = [], {}, None, None
+    owners, task_commands = {}, {}
     for task in tasks.values():
         manifest_path = expanded / 'shards' / task['id'] / 'manifest.json'
         if sha(manifest_path) != task['manifest_sha256']:
             raise ValueError('Shard manifest integrity differs: ' + task['id'])
         manifest = read(manifest_path)
+        task_commands[task['id']] = manifest['commands']
+        for path in manifest['outputs']:
+            if path in owners and owners[path] != task['id']:
+                raise ValueError('Multiple declared output owners: ' + path)
+            owners[path] = task['id']
         for edge in manifest['edges']:
             if any(path.endswith('/buildinfo.prop') for path in edge.get('outputs', [])):
                 commands.append({'outputs': edge['outputs'], 'command': edge['command']})
@@ -136,6 +180,7 @@ def bootstrap(args):
                 if key in branding and branding[key] != value:
                     raise ValueError('Conflicting branding literals in the admitted graph')
                 branding[key] = value
+    host_bundles = admit_host_jar_bundles(tasks, owners, task_commands, receipt['source_root'], receipt['out_root'])
     graph = read(EVIDENCE / 'graph-receipt-summary.json')['receipt_summary']
     if buildinfo is None or len(branding) != 2:
         raise ValueError('Missing independent graph-derived build identity')
@@ -179,6 +224,7 @@ def bootstrap(args):
                **{key: registry[key] for key in ('build_number', 'graph_run', 'index_run', 'source_run',
                     'source_manifest_sha256', 'plan_sha256', 'graph_index')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
+               'host_jar_runtime_bundles': host_bundles,
                'frontend': {**graph, **scalars, 'graph_receipt': graph,
                    'identity_commands': commands, 'buildinfo_environment': buildinfo,
                    'branding_keys': branding,
@@ -214,6 +260,8 @@ def validate_receipt(context, receipt, task_id):
         raise ValueError('Producer imported an undeclared dependency: ' + task_id)
     if receipt.get('build_environment', {}).get('CCACHE_DISABLE') != '1':
         raise ValueError('Fresh compilation did not disable ccache')
+    if sorted(receipt.get('additional_exports', [])) != sorted(context['tasks'][task_id].get('extra_exports', [])):
+        raise ValueError('Producer extra export policy differs from the admitted context')
 
 
 def summarize(args):

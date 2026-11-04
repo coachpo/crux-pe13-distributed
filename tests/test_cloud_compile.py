@@ -109,14 +109,18 @@ class CloudCompileTests(unittest.TestCase):
         dependency_id = name.removeprefix("shard-")
         dependency_context = {field: self.active_dependency_context[field]
                               for field in cloud_compile.FRESH_BUILD_FIELDS}
-        task = self.fresh_context["tasks"][dependency_id]
+        task = self.active_dependency_context["tasks"][dependency_id]
+        exported_paths = task.get("extra_exports", [])
         receipt = {"schema_version": 1, "id": dependency_id, "status": "success",
                    "run_id": self.active_dependency_context["execution_id"],
                    "run_attempt": "1", "worker_commit": self.active_dependency_context["worker_commit"],
                    "manifest_sha256": task["manifest_sha256"],
                    "source_root": self.fresh_context["source_root"],
                    "out_root": self.fresh_context["out_root"],
-                   "fresh_build": dependency_context, "outputs": [],
+                   "fresh_build": dependency_context,
+                   "additional_exports": list(exported_paths),
+                   "outputs": [{"path": path, "type": "file", "mode": 0o644,
+                                "size": 4, "sha256": "9" * 64} for path in exported_paths],
                    "archive_sha256": hashlib.sha256(b"dep archive").hexdigest()}
         (target / "receipt.json").write_text(json.dumps(receipt))
         (target / "outputs.tar.zst").write_bytes(b"dep archive")
@@ -133,10 +137,11 @@ class CloudCompileTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0)
 
     def fake_worker(self, manifest_path, bundle_path, shard_id, output_dir,
-                    dependency_dirs, jobs, dependency_bindings):
+                    dependency_dirs, jobs, dependency_bindings, extra_exports=()):
         self.worker_calls.append({"manifest": Path(manifest_path), "bundle": Path(bundle_path),
                                   "id": shard_id, "dependency_dirs": list(dependency_dirs),
                                   "jobs": jobs, "bindings": dependency_bindings,
+                                  "extra_exports": list(extra_exports),
                                   "makeflags": os.environ.get("MAKEFLAGS", "")})
         self.assertNotIn("GH_TOKEN", os.environ)
         self.assertNotIn("GITHUB_TOKEN", os.environ)
@@ -146,7 +151,8 @@ class CloudCompileTests(unittest.TestCase):
                    "run_attempt": "1", "worker_commit": self.fresh_context["worker_commit"],
                    "manifest_sha256": hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest(),
                    "source_root": manifest["source_root"], "out_root": self.fresh_context["out_root"],
-                   "outputs": [], "archive_sha256": hashlib.sha256(b"fresh outputs").hexdigest()}
+                   "outputs": [], "additional_exports": list(extra_exports),
+                   "archive_sha256": hashlib.sha256(b"fresh outputs").hexdigest()}
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
 
@@ -298,6 +304,87 @@ class CloudCompileTests(unittest.TestCase):
         self.assertIn("archive bytes/SHA", receipt["error"])
         run.assert_not_called()
         run_shard.assert_not_called()
+
+    def test_admitted_extra_exports_are_forwarded_to_worker_and_receipt(self):
+        runtime_path = str(self.out_root / "host/linux-x86/framework/d8.jar")
+        self.fresh_context["tasks"][self.shard_id]["extra_exports"] = [runtime_path]
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertEqual(self.worker_calls[0]["extra_exports"], [runtime_path])
+        self.assertEqual(receipt["additional_exports"], [runtime_path])
+        self.assertEqual(receipt["admitted_runtime_inputs"], [])
+
+    def _prepare_runtime_input_context(self):
+        producer_id, consumer_id = self.shard_id, "w001-s000"
+        runtime_path = str(self.out_root / "host/linux-x86/framework/d8.jar")
+        producer = self.fresh_context["tasks"][producer_id]
+        producer["extra_exports"] = [runtime_path]
+        producer["wave"] = 0
+        consumer = {"id": consumer_id, "wave": 1, "depends_on": [producer_id],
+                    "manifest_sha256": self.manifest_sha,
+                    "archive": consumer_id + ".tar.zst", "archive_bytes": 12,
+                    "archive_sha256": "f" * 64,
+                    "runtime_inputs": [{"path": runtime_path, "producer": producer_id}]}
+        self.fresh_context["waves"] = [[producer_id], [consumer_id]]
+        self.fresh_context["tasks"][consumer_id] = consumer
+        self.shard_id = consumer_id
+        self.archive = b"consumer capsule"
+        consumer["archive_bytes"] = len(self.archive)
+        consumer["archive_sha256"] = hashlib.sha256(self.archive).hexdigest()
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        return producer_id, consumer_id, runtime_path
+
+    def test_runtime_input_requires_fresh_producer_file_spec_before_worker(self):
+        producer_id, consumer_id, runtime_path = self._prepare_runtime_input_context()
+        original = self.fake_download
+
+        def missing_runtime_output(run, repository, destination, token=None, name=None, pattern=None):
+            result = original(run, repository, destination, token, name, pattern)
+            if name == "shard-" + producer_id:
+                receipt_path = Path(result[0]["destination"]) / "receipt.json"
+                producer_receipt = json.loads(receipt_path.read_text())
+                producer_receipt["outputs"] = []
+                receipt_path.write_text(json.dumps(producer_receipt))
+            return result
+
+        with mock.patch.dict(os.environ, self.runner_env, clear=True), \
+                mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts", side_effect=missing_runtime_output), \
+                mock.patch.object(cloud_compile.subprocess, "run", side_effect=self.fake_tar), \
+                mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker) as run_shard:
+            code, receipt = cloud_compile.compile_shard(self.context_path, consumer_id,
+                                                        self.output, self.staging)
+        self.assertEqual(code, 1)
+        self.assertIn("no unique producer receipt output", receipt["error"])
+        run_shard.assert_not_called()
+
+    def test_runtime_input_is_bound_to_current_producer_receipt(self):
+        producer_id, consumer_id, runtime_path = self._prepare_runtime_input_context()
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        imported = receipt["admitted_runtime_inputs"]
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(imported[0]["path"], runtime_path)
+        self.assertEqual(imported[0]["producer"], producer_id)
+        self.assertEqual(imported[0]["size"], 4)
+        self.assertEqual(imported[0]["sha256"], "9" * 64)
+        dependency_download = next(item for item in self.downloads if item["name"] == "shard-" + producer_id)
+        self.assertEqual(dependency_download["run"], self.fresh_context["execution_id"])
+        self.assertEqual(self.worker_calls[0]["extra_exports"], [])
+
+    def test_runtime_input_owner_and_path_must_be_admitted_and_inside_out(self):
+        producer_id, consumer_id, runtime_path = self._prepare_runtime_input_context()
+        task = self.fresh_context["tasks"][consumer_id]
+        task["depends_on"] = []
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        with self.assertRaisesRegex(cloud_compile.CompileError, "invalid producer binding"):
+            cloud_compile.validate_context(self.fresh_context, consumer_id, self.runner_env)
+
+        task["depends_on"] = [producer_id]
+        task["runtime_inputs"][0]["path"] = str(self.root / "outside.jar")
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        with self.assertRaisesRegex(cloud_compile.CompileError, "inside OUT_DIR"):
+            cloud_compile.validate_context(self.fresh_context, consumer_id, self.runner_env)
 
     def test_empty_context_and_non_cold_roots_are_rejected(self):
         self.context_path.write_text("{}")

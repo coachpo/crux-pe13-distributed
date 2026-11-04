@@ -74,6 +74,33 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(result['BUILD_ID'], 'TQ3')
         self.assertIn('$(cat /OUT/number)', result['PRIVATE_BUILD_DESC'])
 
+    def test_host_launchers_admit_only_declared_fresh_runtime_owners(self):
+        tasks = {'host': {'wave': 0, 'depends_on': []}, 'reader': {'wave': 1, 'depends_on': []}}
+        owners = {'/OUT/host/linux-x86/bin/d8': 'host', '/OUT/host/linux-x86/framework/d8.jar': 'host',
+                  '/OUT/host/linux-x86/bin/manifest-merger': 'host',
+                  '/OUT/host/linux-x86/framework/manifest-merger.jar': 'host'}
+        commands = {'host': ['cp source /OUT/host/linux-x86/bin/d8'],
+                    'reader': ['/bin/bash -c "/OUT/host/linux-x86/bin/d8 input.jar && '
+                               '/OUT/host/linux-x86/bin/manifest-merger --help"']}
+        bundles = plan.admit_host_jar_bundles(tasks, owners, commands, '/SOURCE', '/OUT')
+        self.assertEqual(len(bundles), 2)
+        self.assertEqual(tasks['reader']['depends_on'], ['host'])
+        self.assertEqual(tasks['host']['extra_exports'], ['/OUT/host/linux-x86/framework/d8.jar',
+                                                         '/OUT/host/linux-x86/framework/manifest-merger.jar'])
+        self.assertNotIn('runtime_inputs', tasks['host'])
+
+    def test_jar_runtime_does_not_create_an_undeclared_or_later_producer(self):
+        tasks = {'host': {'wave': 1, 'depends_on': []}, 'reader': {'wave': 0, 'depends_on': []}}
+        owners = {'/OUT/host/linux-x86/bin/tool': 'host'}
+        commands = {'reader': ['/OUT/host/linux-x86/bin/tool']}
+        self.assertEqual(plan.admit_host_jar_bundles(tasks, owners, commands, '/SOURCE', '/OUT'), [])
+        owners['/OUT/host/linux-x86/framework/tool.jar'] = 'host'
+        with self.assertRaisesRegex(ValueError, 'earlier admitted wave'):
+            plan.admit_host_jar_bundles(tasks, owners, commands, '/SOURCE', '/OUT')
+        owners = {'/OUT/host/linux-x86/bin/d8': 'host'}
+        with self.assertRaisesRegex(ValueError, 'no admitted declared producer'):
+            plan.admit_host_jar_bundles(tasks, owners, {'reader': ['/OUT/host/linux-x86/bin/d8']}, '/SOURCE', '/OUT')
+
 
 if __name__ == '__main__':
     unittest.main()
