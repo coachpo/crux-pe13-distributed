@@ -51,14 +51,17 @@ class WorkerTests(unittest.TestCase):
                                            "files": [worker.describe(path) for path in
                                                      (self.input, self.ninja, self.ninja_file)]}))
 
-    def run_worker(self, name="producer", dependencies=(), extra_exports=()):
+    def run_worker(self, name="producer", dependencies=(), extra_exports=(), prebuild_targets=()):
         return worker.run_shard(self.manifest, self.bundle, name, self.root / name,
-                                dependencies, self.ninja, extra_exports=extra_exports)
+                                dependencies, self.ninja, extra_exports=extra_exports,
+                                prebuild_targets=prebuild_targets)
 
     def test_cold_compile_and_verified_exchange_preserves_bytes_and_mode(self):
         receipt = self.run_worker()
         self.assertEqual(receipt["status"], "success", receipt.get("error"))
         self.assertEqual(receipt["additional_exports"], [])
+        self.assertEqual(receipt["prebuild_targets"], [])
+        self.assertNotIn("prebuild_command", receipt)
         expected = self.output.read_bytes()
         mode = self.output.stat().st_mode & 0o7777
         self.output.unlink()
@@ -223,6 +226,82 @@ class WorkerTests(unittest.TestCase):
         for values in (['out/result.bin', 'out/result.bin'], ['out/result.bin', 3], 'out/result.bin'):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 worker.validate_extra_exports(values, outputs)
+
+    def test_prebuild_runtime_target_is_built_fresh_before_original_targets(self):
+        jar = self.source / 'out/d8.jar'
+        self.ninja.write_text(
+            f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\n"
+            "root=Path('out'); root.mkdir(parents=True,exist_ok=True)\n"
+            "target=sys.argv[-1]\n"
+            "with Path('out/phases.txt').open('a') as log: log.write(target+'\\n')\n"
+            "if target == 'out/d8.jar': Path(target).write_bytes(b'fresh-d8-runtime')\n"
+            "elif target == 'out/result.bin':\n"
+            "    jar=Path('out/d8.jar')\n"
+            "    assert jar.read_bytes() == b'fresh-d8-runtime'\n"
+            "    Path(target).write_bytes(jar.read_bytes()+b' consumed by full task')\n"
+            "else: raise SystemExit('unexpected target '+target)\n")
+        self.write_manifests()
+        manifest = json.loads(self.manifest.read_text())
+        manifest['outputs'].append('out/d8.jar')
+        manifest['export_outputs'] = ['out/result.bin']
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle['manifest_sha256'] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+
+        receipt = self.run_worker(extra_exports=['out/d8.jar'], prebuild_targets=['out/d8.jar'])
+        self.assertEqual(receipt['status'], 'success', receipt.get('error'))
+        self.assertEqual(receipt['prebuild_targets'], ['out/d8.jar'])
+        self.assertEqual(receipt['prebuild_returncode'], 0)
+        self.assertEqual(receipt['prebuild_command'][-1], 'out/d8.jar')
+        self.assertEqual(receipt['command'][-1], 'out/result.bin')
+        self.assertEqual((self.source / 'out/phases.txt').read_text(), 'out/d8.jar\nout/result.bin\n')
+        self.assertEqual({item['path'] for item in receipt['outputs']}, {str(self.output), str(jar)})
+        self.output.unlink()
+        jar.unlink()
+        accepted, _ = worker.merge_dependencies([self.root / 'producer'])
+        self.assertEqual(jar.read_bytes(), b'fresh-d8-runtime')
+        self.assertEqual(accepted[str(jar)]['sha256'], worker.digest(jar))
+
+    def test_invalid_prebuild_target_is_rejected_before_native_invocation(self):
+        marker = self.source / 'out/ninja-ran'
+        self.ninja.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\n"
+            "Path('out').mkdir(parents=True,exist_ok=True)\n"
+            "Path('out/ninja-ran').write_text('ran')\n"
+            "Path('out/result.bin').write_bytes(b'compiled')\n")
+        self.write_manifests()
+        receipt = self.run_worker(prebuild_targets=['out/undeclared.jar'])
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertIn('not a declared slice output', receipt['error'])
+        self.assertFalse(marker.exists())
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.root / 'producer/outputs.tar.zst').exists())
+
+    def test_prebuild_failure_cannot_run_main_targets_or_publish_archive(self):
+        marker = self.source / 'out/main-ran'
+        self.ninja.write_text(
+            f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\n"
+            "Path('out').mkdir(parents=True,exist_ok=True)\n"
+            "if sys.argv[-1] == 'out/d8.jar':\n"
+            "    Path('out/prebuild-ran').write_text('ran')\n"
+            "    raise SystemExit(7)\n"
+            "Path('out/main-ran').write_text('ran')\n"
+            "Path('out/result.bin').write_bytes(b'compiled')\n")
+        self.write_manifests()
+        manifest = json.loads(self.manifest.read_text())
+        manifest['outputs'].append('out/d8.jar')
+        self.manifest.write_text(json.dumps(manifest))
+        bundle = json.loads(self.bundle.read_text())
+        bundle['manifest_sha256'] = worker.digest(self.manifest)
+        self.bundle.write_text(json.dumps(bundle))
+        receipt = self.run_worker(prebuild_targets=['out/d8.jar'])
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertEqual(receipt['prebuild_returncode'], 7)
+        self.assertIn('prebuild exited with status 7', receipt['error'])
+        self.assertTrue((self.source / 'out/prebuild-ran').exists())
+        self.assertFalse(marker.exists())
+        self.assertFalse((self.root / 'producer/outputs.tar.zst').exists())
 
     def test_frozen_path_retains_host_fallback_directories(self):
         manifest = json.loads(self.manifest.read_text())

@@ -137,11 +137,12 @@ class CloudCompileTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0)
 
     def fake_worker(self, manifest_path, bundle_path, shard_id, output_dir,
-                    dependency_dirs, jobs, dependency_bindings, extra_exports=()):
+                    dependency_dirs, jobs, dependency_bindings, extra_exports=(), prebuild_targets=()):
         self.worker_calls.append({"manifest": Path(manifest_path), "bundle": Path(bundle_path),
                                   "id": shard_id, "dependency_dirs": list(dependency_dirs),
                                   "jobs": jobs, "bindings": dependency_bindings,
                                   "extra_exports": list(extra_exports),
+                                  "prebuild_targets": list(prebuild_targets),
                                   "makeflags": os.environ.get("MAKEFLAGS", "")})
         self.assertNotIn("GH_TOKEN", os.environ)
         self.assertNotIn("GITHUB_TOKEN", os.environ)
@@ -152,6 +153,7 @@ class CloudCompileTests(unittest.TestCase):
                    "manifest_sha256": hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest(),
                    "source_root": manifest["source_root"], "out_root": self.fresh_context["out_root"],
                    "outputs": [], "additional_exports": list(extra_exports),
+                   "prebuild_targets": list(prebuild_targets),
                    "archive_sha256": hashlib.sha256(b"fresh outputs").hexdigest()}
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
@@ -182,6 +184,8 @@ class CloudCompileTests(unittest.TestCase):
         self.assertEqual(self.downloads[0]["name"], "cloud-capsule-" + self.shard_id)
         self.assertEqual(self.worker_calls[0]["jobs"], 4)
         self.assertEqual(self.worker_calls[0]["bindings"], [])
+        self.assertEqual(self.worker_calls[0]["prebuild_targets"], [])
+        self.assertEqual(receipt["admitted_local_runtime_targets"], [])
         self.assertEqual(json.loads((self.output / "receipt.json").read_text())["fresh_build"], self.identity())
         self.assertFalse((self.staging / "capsule").exists())
 
@@ -314,6 +318,21 @@ class CloudCompileTests(unittest.TestCase):
         self.assertEqual(self.worker_calls[0]["extra_exports"], [runtime_path])
         self.assertEqual(receipt["additional_exports"], [runtime_path])
         self.assertEqual(receipt["admitted_runtime_inputs"], [])
+
+    def test_admitted_local_runtime_target_is_forwarded_and_receipted(self):
+        target = str(self.out_root / "host/linux-x86/framework/d8.jar")
+        self.fresh_context["tasks"][self.shard_id]["local_runtime_targets"] = [target]
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertEqual(self.worker_calls[0]["prebuild_targets"], [target])
+        self.assertEqual(receipt["prebuild_targets"], [target])
+        self.assertEqual(receipt["admitted_local_runtime_targets"], [target])
+
+    def test_local_runtime_target_outside_out_is_rejected(self):
+        self.fresh_context["tasks"][self.shard_id]["local_runtime_targets"] = [str(self.root / "outside.jar")]
+        with self.assertRaisesRegex(cloud_compile.CompileError, "inside OUT_DIR"):
+            cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
 
     def _prepare_runtime_input_context(self):
         producer_id, consumer_id = self.shard_id, "w001-s000"

@@ -88,7 +88,10 @@ def admit_host_jar_bundles(tasks, owners, commands, source_root, out_root):
                 raise ValueError('Invoked Java launcher runtime has no admitted declared producer: ' + runtime)
             producer = owners[runtime]
             if producer == task_id:
-                raise ValueError('Local Java runtime needs explicit intra-slice ordering: ' + executable)
+                tasks[task_id]['local_runtime_targets'] = sorted(set(tasks[task_id].get('local_runtime_targets', [])) | {runtime})
+                bundles.append({'consumer': task_id, 'executable': executable, 'runtime': runtime,
+                                'producer': producer, 'transport': 'local-prebuild'})
+                continue
             if tasks[producer]['wave'] >= tasks[task_id]['wave']:
                 raise ValueError('Java runtime producer is not in an earlier admitted wave: ' + executable)
             tasks[producer]['extra_exports'] = sorted(set(tasks[producer].get('extra_exports', [])) | {runtime})
@@ -262,6 +265,8 @@ def validate_receipt(context, receipt, task_id):
         raise ValueError('Fresh compilation did not disable ccache')
     if sorted(receipt.get('additional_exports', [])) != sorted(context['tasks'][task_id].get('extra_exports', [])):
         raise ValueError('Producer extra export policy differs from the admitted context')
+    if sorted(receipt.get('prebuild_targets', [])) != sorted(context['tasks'][task_id].get('local_runtime_targets', [])):
+        raise ValueError('Producer local runtime ordering differs from the admitted context')
 
 
 def summarize(args):

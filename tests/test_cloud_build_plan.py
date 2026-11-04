@@ -101,6 +101,16 @@ class BuildPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'no admitted declared producer'):
             plan.admit_host_jar_bundles(tasks, owners, {'reader': ['/OUT/host/linux-x86/bin/d8']}, '/SOURCE', '/OUT')
 
+    def test_owned_java_runtime_is_built_first_without_foreign_import(self):
+        tasks = {'local': {'wave': 0, 'depends_on': []}}
+        owners = {'/OUT/host/linux-x86/bin/xsdc': 'local', '/OUT/host/linux-x86/framework/xsdc.jar': 'local'}
+        bundles = plan.admit_host_jar_bundles(tasks, owners,
+                    {'local': ['/OUT/host/linux-x86/bin/xsdc input.xsd']}, '/SOURCE', '/OUT')
+        self.assertEqual(tasks['local']['depends_on'], [])
+        self.assertEqual(tasks['local']['local_runtime_targets'], ['/OUT/host/linux-x86/framework/xsdc.jar'])
+        self.assertNotIn('runtime_inputs', tasks['local'])
+        self.assertEqual(bundles[0]['transport'], 'local-prebuild')
+
 
 if __name__ == '__main__':
     unittest.main()

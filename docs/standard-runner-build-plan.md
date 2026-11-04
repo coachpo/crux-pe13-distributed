@@ -158,6 +158,12 @@ Do not insert historical source overlays or old compiled artifact bindings.
   stay unchanged. Producer extra exports must already be declared native outputs;
   consumers import only a current-execution receipt of the correct owner. Later
   production restarts remain empty-state, with no reuse of this failed cohort.
+- Runtime transport admission in `41818784799` stopped before compilation on
+  a same-slice xsdc/xsdc.jar pair. Same-owner runtimes now require a first Ninja
+  invocation for those already declared local output targets, after the original
+  cold/bundle/import guards, followed by the complete original task target list.
+  This explicit intra-task order uses only newly computed outputs in one worker;
+  no capsule/Ninja bytes or source inputs change, and no foreign JAR is admitted.
 
 ## Executor protocol
 

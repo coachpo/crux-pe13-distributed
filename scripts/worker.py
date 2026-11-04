@@ -396,7 +396,7 @@ def retain_abi_diagnostics(source_root, build_environment, output_dir):
     return retained
 
 
-def validate_extra_exports(extra_exports, manifest_outputs):
+def validate_extra_exports(extra_exports, manifest_outputs, sort=True):
     """Allow additional exports only for outputs already declared by the slice."""
     if not isinstance(extra_exports, (list, tuple)):
         raise ValueError("extra exports must be a JSON array/list")
@@ -409,11 +409,11 @@ def validate_extra_exports(extra_exports, manifest_outputs):
     outside = sorted(set(extra_exports) - set(manifest_outputs))
     if outside:
         raise ValueError("extra export is not a declared slice output: " + ", ".join(outside))
-    return sorted(extra_exports)
+    return sorted(extra_exports) if sort else list(extra_exports)
 
 
 def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4,
-              dependency_bindings=None, dependency_supersessions=None, extra_exports=()):
+              dependency_bindings=None, dependency_supersessions=None, extra_exports=(), prebuild_targets=()):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed", "outputs": [],
@@ -433,6 +433,8 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                 raise ValueError("unsupported Ninja manifest schema")
             extra_exports = validate_extra_exports(extra_exports, manifest.get("outputs"))
             receipt["additional_exports"] = extra_exports
+            prebuild_targets = validate_extra_exports(prebuild_targets, manifest.get("outputs"), sort=False)
+            receipt["prebuild_targets"] = prebuild_targets
             source_root = Path(manifest["source_root"])
             receipt.update(source_root=str(source_root), manifest_sha256=digest(manifest_path),
                            targets=manifest["targets"], edge_count=manifest["edge_count"])
@@ -502,10 +504,25 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             command = [str(executable), "-f", str(manifest_path.parent / manifest["ninja"]),
                        "-j", str(jobs), "-d", "keepdepfile", *manifest["targets"]]
             receipt["command"] = command
+            prebuild_command = ([str(executable), "-f", str(manifest_path.parent / manifest["ninja"]),
+                                 "-j", str(jobs), "-d", "keepdepfile", *prebuild_targets]
+                                if prebuild_targets else None)
+            if prebuild_command:
+                receipt["prebuild_command"] = prebuild_command
             receipt["build_environment"] = build_environment
             (output_dir / "command.json").write_text(json.dumps({"cwd": str(source_root), "argv": command,
+                                                                 "prebuild_argv": prebuild_command,
                                                                  "environment": build_environment,
                                                                  "runtime_aliases": runtime_aliases}, indent=2) + "\n")
+            if prebuild_command:
+                print(json.dumps({"phase": "prebuild", "cwd": str(source_root),
+                                  "argv": prebuild_command}), file=log)
+                prebuild_result = subprocess.run(prebuild_command, cwd=source_root, stdout=log,
+                                                 stderr=subprocess.STDOUT,
+                                                 env={**os.environ, **build_environment})
+                receipt["prebuild_returncode"] = prebuild_result.returncode
+                if prebuild_result.returncode:
+                    raise ValueError(f"Ninja prebuild exited with status {prebuild_result.returncode}")
             print(json.dumps({"cwd": str(source_root), "argv": command}), file=log)
             result = subprocess.run(command, cwd=source_root, stdout=log, stderr=subprocess.STDOUT,
                                     env={**os.environ, **build_environment})
@@ -559,6 +576,7 @@ def main():
     parser.add_argument("--dependency-bindings", help="JSON controller bindings aligned with dependency directory arguments")
     parser.add_argument("--dependency-supersessions", help="JSON exact regular-OUT old/new supersession declarations")
     parser.add_argument("--extra-exports", help="JSON array of additional outputs already declared in manifest.outputs")
+    parser.add_argument("--prebuild-targets", help="JSON array of declared outputs to build before full manifest targets")
     parser.add_argument("--ninja")
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
@@ -566,7 +584,8 @@ def main():
                         args.dependency_dir, args.ninja, args.jobs,
                         read_json(args.dependency_bindings) if args.dependency_bindings else None,
                         read_json(args.dependency_supersessions) if args.dependency_supersessions else None,
-                        read_json(args.extra_exports) if args.extra_exports else ())
+                        read_json(args.extra_exports) if args.extra_exports else (),
+                        read_json(args.prebuild_targets) if args.prebuild_targets else ())
     print(json.dumps({key: receipt.get(key) for key in ("id", "status", "elapsed_seconds", "error")}))
     return 0 if receipt["status"] == "success" else 1
 

@@ -129,6 +129,14 @@ def validate_context(context: dict, shard_id: str, environment=None,
             raise CompileError("Fresh-build task has duplicate extra_exports: " + identity)
         for path in extra_exports:
             _validate_out_path(path, out_root, "extra export")
+        local_runtime_targets = task.get("local_runtime_targets", [])
+        if not isinstance(local_runtime_targets, list) or any(
+                not isinstance(path, str) for path in local_runtime_targets):
+            raise CompileError("Fresh-build task has invalid local_runtime_targets: " + identity)
+        if len(local_runtime_targets) != len(set(local_runtime_targets)):
+            raise CompileError("Fresh-build task has duplicate local_runtime_targets: " + identity)
+        for path in local_runtime_targets:
+            _validate_out_path(path, out_root, "local runtime target")
         runtime_inputs = task.get("runtime_inputs", [])
         if not isinstance(runtime_inputs, list):
             raise CompileError("Fresh-build task has invalid runtime_inputs: " + identity)
@@ -368,6 +376,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
     source_alias_mounted = False
     runtime_source_alias = None
     admitted_runtime_inputs = []
+    admitted_local_runtime_targets = task.get("local_runtime_targets", [])
     started = time.monotonic()
     try:
         if os.path.lexists(source_root):
@@ -460,7 +469,8 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         try:
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
                                       dependency_dirs, jobs=4, dependency_bindings=bindings,
-                                      extra_exports=task.get("extra_exports", []))
+                                      extra_exports=task.get("extra_exports", []),
+                                      prebuild_targets=admitted_local_runtime_targets)
         finally:
             if makeflags_modified:
                 if previous_makeflags:
@@ -478,8 +488,12 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         if (result.get("status") == "success"
                 and sorted(receipt.get("additional_exports", [])) != sorted(task.get("extra_exports", []))):
             raise CompileError("Native worker receipt differs from admitted extra_exports")
+        if (result.get("status") == "success"
+                and receipt.get("prebuild_targets") != admitted_local_runtime_targets):
+            raise CompileError("Native worker receipt differs from admitted local_runtime_targets")
         receipt["fresh_build"] = fresh_identity
         receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
+        receipt["admitted_local_runtime_targets"] = admitted_local_runtime_targets
         if diagnostic_parent is not None:
             receipt["diagnostic_only"] = True
             receipt["diagnostic_parent"] = {
@@ -513,6 +527,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         if runtime_source_alias is not None:
             receipt["runtime_source_alias"] = runtime_source_alias
         receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
+        receipt["admitted_local_runtime_targets"] = admitted_local_runtime_targets
     finally:
         if source_alias_mounted:
             try:
