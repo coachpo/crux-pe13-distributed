@@ -176,7 +176,7 @@ class Mutations:
              'replace': self.original[edge], 'with': self.updated[edge], 'expected_matches': 1,
              'rationale': '; '.join(sorted(self.reasons[edge])),
              'evidence': ['fresh hosted canonical graph and source-derived runtime dependency audit']}
-            for edge in sorted(self.updated)]}
+            for edge in sorted(self.reasons)]}
         graph.adapt_graph(self.database, profile, replace_profile=True)
         return profile
 

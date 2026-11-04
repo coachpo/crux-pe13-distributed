@@ -131,6 +131,12 @@ return any remaining failure to root with evidence; never lower acceptance.
   afterward. Index/shard log pipelines now use `pipefail` so the native failure
   cannot be hidden by `tee`; failed receipts already prevented downstream
   acceptance. The next full run still requires actual slice/pack acceptance.
+- Independent review of `14cb7cd` found that pre-reading also caches no-op
+  candidates; only edges with actual changes may enter the published adaptation
+  profile. A regression reproduced the missing-reason `KeyError`, then passed
+  after publishing only reason-bearing changes. Run `41764768391` was
+  intentionally canceled during setup rather than spend further source-download
+  work on the superseded revision. No shard/pack acceptance is claimed for it.
 
 ## Executor protocol
 

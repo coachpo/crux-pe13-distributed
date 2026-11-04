@@ -108,6 +108,17 @@ class CloudShardTests(unittest.TestCase):
         self.assertEqual({path for path, kind in records[owners[self.number]]['deps']}, set(leaves))
         self.assertIn('another-input', mutation.updated[owners[self.other]])
 
+    def test_noop_candidates_do_not_publish_command_adaptations(self):
+        current = shard.graph.Graph(self.database)
+        owners = current.producers([self.number, self.other])
+        current.db.close()
+        mutation = shard.Mutations(self.database)
+        self.assertEqual(mutation.dependencies({owners[self.number]: [self.number]}, 'own output'), 0)
+        self.assertEqual(mutation.publish()['command_adaptations'], [])
+        self.assertEqual(mutation.dependencies({owners[self.other]: ['new-input']}, 'new dependency'), 1)
+        profile = mutation.publish()
+        self.assertEqual([item['producer'] for item in profile['command_adaptations']], [self.other])
+
 
 if __name__ == '__main__':
     unittest.main()
