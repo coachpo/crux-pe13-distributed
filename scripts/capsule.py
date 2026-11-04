@@ -2289,8 +2289,10 @@ class Collector:
                 self.require_python2()
             elif token == "python":
                 self.require_python2(native_default=True)
-            if Path(token).name == "bpglob":
-                for option in range(position + 1, len(tokens) - 1):
+        for position, end in command_invocations(tokens):
+            name = Path(tokens[position]).name
+            if name == "bpglob":
+                for option in range(position + 1, end - 1):
                     if tokens[option] == "-p":
                         pattern = tokens[option + 1]
                         parts = Path(pattern).parts
@@ -2301,11 +2303,11 @@ class Collector:
                             fixed.append(part)
                         if fixed:
                             self.add(Path(*fixed), "source-glob-runtime-files", required=False)
-            if Path(token).name == "gotestrunner":
-                for option in range(position + 1, len(tokens)):
+            if name == "gotestrunner":
+                for option in range(position + 1, end):
                     if tokens[option] == "--":
                         break
-                    if tokens[option] == "-p" and option + 1 < len(tokens):
+                    if tokens[option] == "-p" and option + 1 < end:
                         self.go_test_package(tokens[option + 1])
                         break
                     if tokens[option].startswith("-p="):

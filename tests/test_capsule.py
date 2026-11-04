@@ -962,6 +962,34 @@ class CapsuleTests(unittest.TestCase):
         _, _, archive=self.collect()
         self.assertIn(str(self.source / "app/assets/nested/data.bin").lstrip("/"),archive.getnames())
 
+    def test_glob_arguments_are_scoped_to_the_executed_tool_not_later_mkdir(self):
+        graph = self.out / 'soong/build.ninja'
+        tool = self.out / 'soong/bpglob'
+        asset = self.source / 'app/assets/data.bin'
+        self.write(graph, 'current graph text')
+        self.write(asset, b'asset')
+        self.manifest['outputs'].append(str(tool))
+        commands = [
+            'build_go bpglob github.com/google/blueprint/bootstrap/bpglob; mkdir -p ' + str(graph.parent),
+            str(tool) + " -p 'app/assets/**/*' && mkdir -p " + str(graph.parent),
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.manifest['commands'] = [command]
+                _, metadata, archive = self.collect()
+                self.assertNotIn(str(graph).lstrip('/'), archive.getnames())
+                self.assertEqual(metadata['allowed_generated_inputs'], [])
+                if command.startswith(str(tool)):
+                    self.assertIn(str(asset).lstrip('/'), archive.getnames())
+
+    def test_go_runner_name_argument_does_not_capture_a_later_directory_creation(self):
+        unrelated = self.source / 'unused-package'
+        fixture = unrelated / 'testdata/not-an-input.bin'
+        self.write(fixture, b'unrelated fixture')
+        self.manifest['commands'] = ['build_go gotestrunner example/gotestrunner; mkdir -p ' + str(unrelated)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(fixture).lstrip('/'), archive.getnames())
+
     def test_compiler_include_closure_follows_quoted_search_paths_and_nested_bodies(self):
         self.write(self.source / "lib/body.c", '#include "inner.c"\n')
         self.write(self.source / "lib/inner.c", "int inner_body;\n")

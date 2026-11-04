@@ -168,6 +168,16 @@ return any remaining failure to root with evidence; never lower acceptance.
   explicitly use `!cancelled()` with their required-result checks, preserving
   skipped-stage resume and ordinary cancellation. The next `stage=pack` run
   reuses this accepted shard artifact; no graph/index/slice rerun is needed.
+- Pack-only run `41774690617`, commit `62cc3c2`, dispatched all 39 jobs. The
+  first real collector failure was `w000-s012`: a bpglob-name argument in its
+  source bootstrap caused the collector to scan a later command's `mkdir -p`
+  operand as a glob root, then reject the unrelated `OUT/soong/build.ninja`.
+  Fixture tests reproduce this exact failure; the fix restricts bpglob and Go
+  test-runner runtime arguments to their actual invocation boundaries. Real
+  source glob collection and the generated-OUT rejection remain enforced; no
+  generated input is whitelisted. The full suite passes 403 tests (16 skips).
+  Healthy jobs in the first batch continue, and all 39 capsules are revalidated
+  on the fixed collector against the same accepted shard plan and pruned index.
 
 ## Executor protocol
 
