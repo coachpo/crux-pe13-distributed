@@ -86,9 +86,9 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | Run `41789247344`, head `17f59f6fe99f5e292a9da8663e7ef8a733fc1e21`; all 39 native tasks and final fresh producer summary are required. |
+| V1 | active | root + read-only observer | Current production run `41808162966`, head `a4fb476c9e9f217b7e4c5858f786c497c685c0e1`; all 39 native tasks and final fresh producer summary are required. It restarts empty and uses no outputs from earlier runs. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
-| K1 | active | frontend_decomposition + root | Diagnostic extension to cloud_compile and a standard-runner probe workflow: exact same admitted kernel capsule plus only newly built parent execution dependencies; Make trace, argv/env byte sizes and platform exec limits. No source change or speculative workaround yet. |
+| K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -146,6 +146,9 @@ Do not insert historical source overlays or old compiled artifact bindings.
   the kernel-output owner, without trace or diagnostic lineage. The complete
   production build will restart all 39 tasks from empty current-run output
   state; neither prior successful compiled outputs nor probe Image are reused.
+- Current production run `41808162966` has passed bootstrap and dispatched wave
+  0 under worker revision `a4fb476`. All dependencies in this run point only to
+  this run's new producer artifacts. No general cross-run resume was enabled.
 
 ## Executor protocol
 
