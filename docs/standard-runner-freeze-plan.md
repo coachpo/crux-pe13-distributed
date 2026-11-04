@@ -137,6 +137,16 @@ return any remaining failure to root with evidence; never lower acceptance.
   after publishing only reason-bearing changes. Run `41764768391` was
   intentionally canceled during setup rather than spend further source-download
   work on the superseded revision. No shard/pack acceptance is claimed for it.
+- Current shard target is `41765283807`, commit `aedf0e1`. In parallel, the
+  source/artifact transport was revised for the pack matrix: one source artifact
+  inventory instead of 32 repeated listings, artifact-ID downloads streamed to
+  disk, and primary API-limit waits using the server reset header. All
+  preparation artifact reads share this retry transport, including reads before
+  the source mount. This follows GitHub's documented normal 1,000 REST
+  requests/hour/repository budget. The revised transport passed 399 fixture
+  tests (16 environment skips) and actionlint; actual hosted pack validation
+  remains required. A compatible successful shard artifact may be resumed with
+  `stage=pack` on the revised transport without rerunning graph/index/slicing.
 
 ## Executor protocol
 

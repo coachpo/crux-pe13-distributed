@@ -162,6 +162,18 @@ gh run download RUN_ID --repo coachpo/crux-pe13-distributed \
 Use `--name` to download only the artifact needed; source-layer artifacts can
 be very large.
 
+Source restoration lists a run's artifacts once and downloads by artifact ID;
+ZIP bodies stream to disk in bounded chunks. Preparation artifact reads wait
+until the server's reset time on a primary API rate limit, then retry without
+skipping receipt or content checks. This matters for the parallel pack matrix:
+GitHub documents a normal `GITHUB_TOKEN` budget of 1,000 REST requests per hour
+per repository ([rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)).
+An API-budget wait is not a request for a larger runner.
+
+If a superseded run ignores an ordinary cancellation while an `always()` gate
+is active, use `gh run cancel RUN_ID --force --repo coachpo/crux-pe13-distributed`
+and confirm that its status becomes `completed/cancelled` before replacing it.
+
 ## Acceptance evidence and artifact retention
 
 Do not mark preparation accepted until the complete chain has passed:

@@ -66,8 +66,8 @@ jobs:
           df -B1 >> "$RUNNER_TEMP/index-evidence/runner.txt"
       - name: Restore the cloud-generated graph and frontend metadata
         run: |
-          gh run download "$GRAPH_RUN" --repo "$GITHUB_REPOSITORY" \
-            --name "cloud-graph-$BUILD_NUMBER" --dir "$RUNNER_TEMP/graph-input"
+          python3 scripts/cloud_artifacts.py --run "$GRAPH_RUN" --repository "$GITHUB_REPOSITORY" \
+            --name "cloud-graph-$BUILD_NUMBER" --destination "$RUNNER_TEMP/graph-input"
           tar --zstd -xf "$RUNNER_TEMP/graph-input/graph-out.tar.zst" -C "$RUNNER_TEMP"
           python3 - <<'PY'
           import json, os
@@ -156,11 +156,11 @@ jobs:
           free -b > "$RUNNER_TEMP/shard-evidence/memory-before.txt"
       - name: Restore accepted graph and canonical index
         run: |
-          gh run download "$GRAPH_RUN" --repo "$GITHUB_REPOSITORY" \
-            --name "cloud-graph-$BUILD_NUMBER" --dir "$RUNNER_TEMP/graph-input"
+          python3 scripts/cloud_artifacts.py --run "$GRAPH_RUN" --repository "$GITHUB_REPOSITORY" \
+            --name "cloud-graph-$BUILD_NUMBER" --destination "$RUNNER_TEMP/graph-input"
           tar --zstd -xf "$RUNNER_TEMP/graph-input/graph-out.tar.zst" -C "$RUNNER_TEMP"
-          gh run download "$INDEX_RUN" --repo "$GITHUB_REPOSITORY" \
-            --name "cloud-index-$BUILD_NUMBER" --dir "$RUNNER_TEMP/index-input"
+          python3 scripts/cloud_artifacts.py --run "$INDEX_RUN" --repository "$GITHUB_REPOSITORY" \
+            --name "cloud-index-$BUILD_NUMBER" --destination "$RUNNER_TEMP/index-input"
           zstd -d "$RUNNER_TEMP/index-input/index.sqlite.zst" -o "$RUNNER_TEMP/native-index.sqlite"
           python3 - <<'PY'
           import json, os
@@ -266,8 +266,8 @@ jobs:
           input="$RUNNER_TEMP/selected-shards"
           expanded="$RUNNER_TEMP/selected-shards-expanded"
           mkdir -p "$input" "$expanded"
-          gh run download "$shard_run" --repo "$GITHUB_REPOSITORY" \
-            --name "cloud-shards-$BUILD_NUMBER" --dir "$input"
+          python3 scripts/cloud_artifacts.py --run "$shard_run" --repository "$GITHUB_REPOSITORY" \
+            --name "cloud-shards-$BUILD_NUMBER" --destination "$input"
           tar --zstd -xf "$input/shards.tar.zst" -C "$expanded"
           python3 - <<'PY'
           import hashlib, json, os, re
@@ -404,8 +404,8 @@ jobs:
           shard_tree="$RUNNER_TEMP/shard-tree"
           mkdir -p "$shard_input" "$shard_tree"
           {
-            gh run download "$SHARD_RUN" --repo "$GITHUB_REPOSITORY" \
-            --name "cloud-shards-$BUILD_NUMBER" --dir "$shard_input"
+            python3 scripts/cloud_artifacts.py --run "$SHARD_RUN" --repository "$GITHUB_REPOSITORY" \
+            --name "cloud-shards-$BUILD_NUMBER" --destination "$shard_input"
             tar --zstd -xf "$shard_input/shards.tar.zst" -C "$shard_tree"
             # Restore indexed graph text only, with no prepared host binaries.
             tar --zstd -xf "$shard_input/derived-graph.tar.zst" -C /
@@ -518,8 +518,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/pack-receipts"
-          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'cloud-pack-receipt-*' --dir "$RUNNER_TEMP/pack-receipts"
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --pattern 'cloud-pack-receipt-*' --destination "$RUNNER_TEMP/pack-receipts"
       - name: Validate every capsule and write aggregate registry
         run: |
           set -euo pipefail

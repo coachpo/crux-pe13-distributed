@@ -1,9 +1,13 @@
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
-import shutil
+import sys
 import tempfile
 import unittest
+import urllib.error
+import zipfile
 from unittest import mock
 
 
@@ -13,6 +17,32 @@ SPEC.loader.exec_module(layers)
 
 
 class CloudLayersTests(unittest.TestCase):
+    @staticmethod
+    def response(data, headers=None):
+        class Response:
+            def __init__(self, payload, response_headers):
+                self.payload = payload
+                self.headers = response_headers
+                self.read_sizes = []
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, size=-1):
+                self.read_sizes.append(size)
+                if size is None or size < 0:
+                    size = len(self.payload)
+                data, self.payload = self.payload[:size], self.payload[size:]
+                return data
+        return Response(data, headers or {})
+
+    @staticmethod
+    def artifact_zip(artifact):
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as archive:
+            for path in Path(artifact).rglob('*'):
+                if path.is_file():
+                    archive.write(path, path.relative_to(artifact).as_posix())
+        return data.getvalue()
+
     def test_restore_checks_pinned_projects_and_part_identity_before_mount(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -31,30 +61,151 @@ class CloudLayersTests(unittest.TestCase):
             staging = root / 'stage'
             staging.mkdir()
 
-            def download(command, check):
-                shutil.copytree(artifact, Path(command[-1]), dirs_exist_ok=True)
+            payload = self.artifact_zip(artifact)
+            responses = []
+            def download(request):
+                self.assertIn('/actions/artifacts/321/zip', request.full_url)
+                response = self.response(payload)
+                responses.append(response)
+                return response
 
-            with mock.patch.object(layers.subprocess, 'run', side_effect=download):
-                image, _ = layers.restore_layer('manifest', {'id': 'source-00', 'projects': ['build/soong']},
-                                                {'build/soong': 'revision'}, '123', 'owner/repo', staging)
-                self.assertEqual(image.read_bytes(), b'compressed image')
-                self.assertFalse((staging / 'source-00/layer.sqfs.parts/part-00000').exists())
+            image, _ = layers.restore_layer('manifest', {'id': 'source-00', 'projects': ['build/soong']},
+                                            {'build/soong': 'revision'}, '123', 'owner/repo', staging,
+                                            {'id': 321, 'name': 'cloud-source-00'}, 'token', opener=download)
+            self.assertEqual(image.read_bytes(), b'compressed image')
+            self.assertFalse((staging / 'source-00/layer.sqfs.parts/part-00000').exists())
+            self.assertTrue(responses[0].read_sizes)
+            self.assertTrue(all(0 < size <= 8 * 1024 * 1024 for size in responses[0].read_sizes))
 
     def test_incorrect_source_revision_fails_even_with_matching_manifest_digest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
 
-            def download(command, check):
-                destination = Path(command[-1])
+            def download(record, destination, token, repository, *args):
                 (destination / 'layer.json').write_text(json.dumps({
                     'layer_id': 'source-00', 'manifest_sha256': 'manifest',
                     'projects': [{'path': 'build/soong', 'revision': 'old', 'status': 'fetched-and-extracted'}],
                 }))
 
-            with mock.patch.object(layers.subprocess, 'run', side_effect=download):
+            with mock.patch.object(layers, '_extract_artifact', side_effect=download):
                 with self.assertRaisesRegex(ValueError, 'Incomplete source layer'):
                     layers.restore_layer('manifest', {'id': 'source-00', 'projects': ['build/soong']},
-                                         {'build/soong': 'new'}, '123', 'owner/repo', root)
+                                         {'build/soong': 'new'}, '123', 'owner/repo', root,
+                                         {'id': 321, 'name': 'cloud-source-00'}, 'token')
+
+    def test_inventory_enumerates_all_artifacts_in_one_request_for_one_page(self):
+        calls = []
+        payload = json.dumps({'total_count': 2, 'artifacts': [
+            {'id': 1, 'name': 'cloud-source-00', 'expired': False},
+            {'id': 2, 'name': 'cloud-source-01', 'expired': False},
+        ]}).encode()
+        def opener(request):
+            calls.append(request.full_url)
+            return self.response(payload)
+        found = layers.artifact_inventory('123', 'owner/repo', 'token', opener=opener)
+        self.assertEqual(set(found), {'cloud-source-00', 'cloud-source-01'})
+        self.assertEqual(len(calls), 1)
+        self.assertIn('per_page=100&page=1', calls[0])
+
+    def test_inventory_selects_unexpired_exact_artifact_and_downloads_by_id(self):
+        files = []
+        inventory_payload = json.dumps({'total_count': 2, 'artifacts': [
+            {'id': 7, 'name': 'cloud-source-00', 'expired': False},
+            {'id': 8, 'name': 'cloud-source-00-old', 'expired': True},
+        ]}).encode()
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_dir = Path(temporary) / 'artifact'
+            artifact_dir.mkdir()
+            (artifact_dir / 'layer.json').write_text('{}')
+            zip_bytes = self.artifact_zip(artifact_dir)
+            def opener(request):
+                files.append(request.full_url)
+                return self.response(inventory_payload if '/runs/123/artifacts?' in request.full_url else zip_bytes)
+            selected = layers.artifact_inventory('123', 'owner/repo', 'token', opener=opener)
+            destination = Path(temporary) / 'download'
+            destination.mkdir()
+            layers._extract_artifact(selected['cloud-source-00'], destination, 'token', 'owner/repo', opener=opener)
+            self.assertTrue((destination / 'layer.json').is_file())
+            self.assertIn('/actions/artifacts/7/zip', files[-1])
+            self.assertEqual(sum('/runs/123/artifacts?' in url for url in files), 1)
+
+    def test_primary_rate_limit_waits_until_reset_and_retries(self):
+        calls, waits = [], []
+        error = urllib.error.HTTPError('https://api.github.com/test', 403, 'rate limit',
+                                       {'X-RateLimit-Reset': '150'}, io.BytesIO(
+                                           b'{"message":"API rate limit exceeded for token"}'))
+        def opener(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise error
+            return self.response(b'{}')
+        result, _ = layers._request('https://api.github.com/test', 'token', opener=opener,
+                                    sleep=waits.append, now=lambda: 100)
+        self.assertEqual(result, b'{}')
+        self.assertEqual(waits, [51])
+        self.assertEqual(len(calls), 2)
+
+    def test_primary_429_with_past_reset_still_waits_before_retry(self):
+        waits = []
+        error = urllib.error.HTTPError('https://api.github.com/test', 429, 'limited',
+                                       {'X-RateLimit-Reset': '99', 'X-RateLimit-Remaining': '0'},
+                                       io.BytesIO(b'{"message":"rate limited"}'))
+        opener = mock.Mock(side_effect=[error, self.response(b'{}')])
+        layers._request('https://api.github.com/test', 'token', opener=opener,
+                        sleep=waits.append, now=lambda: 100)
+        self.assertEqual(waits, [1])
+
+    def test_inventory_paginates_without_relisting_for_each_layer(self):
+        records = [{'id': index + 1, 'name': 'artifact-' + str(index), 'expired': False}
+                   for index in range(101)]
+        requests = []
+        def opener(request):
+            requests.append(request.full_url)
+            page = records[:100] if len(requests) == 1 else records[100:]
+            return self.response(json.dumps({'total_count': 101, 'artifacts': page}).encode())
+        found = layers.artifact_inventory('123', 'owner/repo', 'token', opener=opener)
+        self.assertEqual(len(found), 101)
+        self.assertEqual(len(requests), 2)
+        self.assertIn('page=2', requests[-1])
+
+    def test_non_rate_limit_api_error_is_not_retried(self):
+        calls = []
+        error = urllib.error.HTTPError('https://api.github.com/test', 404, 'not found', {},
+                                       io.BytesIO(b'{"message":"Not Found"}'))
+        def opener(request):
+            calls.append(request)
+            raise error
+        with self.assertRaisesRegex(RuntimeError, '404.*Not Found'):
+            layers._request('https://api.github.com/test', 'token', opener=opener,
+                            sleep=lambda _: self.fail('must not sleep'))
+        self.assertEqual(len(calls), 1)
+
+    def test_artifact_blob_redirect_does_not_forward_github_credentials(self):
+        request = layers.urllib.request.Request('https://api.github.com/artifact',
+                                                 headers={'Authorization': 'Bearer token'})
+        handler = layers._SafeRedirect()
+        blob = handler.redirect_request(request, None, 302, '', {}, 'https://blob.example/artifact')
+        self.assertFalse(blob.has_header('Authorization'))
+        same_origin = handler.redirect_request(request, None, 302, '', {}, 'https://api.github.com/next')
+        self.assertEqual(same_origin.get_header('Authorization'), 'Bearer token')
+
+    def test_main_reaches_mount_commands_with_subprocess_available(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / 'manifest.json'
+            source = root / 'empty-source'
+            manifest.write_text(json.dumps({'source_root': str(source), 'projects': [], 'layers': []}))
+            staging, evidence = root / 'staging', root / 'evidence'
+            argv = ['cloud_layers.py', '--manifest', str(manifest), '--source-run', '123',
+                    '--repository', 'owner/repo', '--staging', str(staging), '--evidence', str(evidence)]
+            calls = []
+            with (mock.patch.object(sys, 'argv', argv),
+                  mock.patch.dict(os.environ, {'GH_TOKEN': 'test-token'}),
+                  mock.patch.object(layers, 'artifact_inventory', return_value={}),
+                  mock.patch.object(layers.subprocess, 'run', side_effect=lambda command, **kwargs: calls.append(command))):
+                layers.main()
+            self.assertTrue(any(command[:3] == ['sudo', 'mount', '-t'] for command in calls))
+            self.assertTrue(any(command[0] == 'findmnt' for command in calls))
 
 
 if __name__ == '__main__':
