@@ -6,7 +6,7 @@ on:
       pack_run:
         description: Accepted 39-capsule preparation run
         required: true
-        default: '41953667023'
+        default: '42001383332'
         type: string
       shard_run:
         description: Accepted slice plan run

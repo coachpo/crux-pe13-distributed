@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | pending D5 source repack | root + read-only observer | Cold `41965423848` passed 38 tasks and all final NOTICE actions but failed the final SystemUIGoogle R8 compile. Native output remains unaccepted. D5 will repack SOURCE only and restart all 39 empty; no previous compiled output is admitted. |
+| V1 | ready for D5 cold restart | root + read-only observer | Cold `41965423848` is not accepted despite 38 native successes and real NOTICE success. SOURCE-only repack `42001383332` passed all 39 tasks and registry. All native tasks will start empty with the new inputs; no previous compiled output is admitted. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -98,7 +98,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 | D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
 | D4 | done | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | All 39 source capsules repacked, then real `41965423848` final task passed local metadata prebuild, both NOTICE XML outputs and system/vendor NOTICE files. This proves NOTICE, not the later final R8/image actions. |
-| D5 | implemented, hosted source repack pending | rust_graph_review, rust_dependency_audit + root | Shared R8 config reader handles actual compatibility/modern invocations and recursively packs literal SOURCE includes, distinguishing annotations and output arguments. Frozen graph/slice/native args are unchanged; no OUT contents are used for this closure. |
+| D5 | implemented, real R8 pending | rust_graph_review, rust_dependency_audit + root | Hosted `42001383332` successfully repacked all 39; verified final capsule adds exactly the required pinned SystemUI config and no OUT data. The real native R8 and following final image actions remain required. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -457,6 +457,16 @@ Do not insert historical source overlays or old compiled artifact bindings.
   repack is next; graph/index/slices remain frozen and all native tasks will
   start empty again. No diagnostic or production archive from earlier failed
   executions will enter the new native cohort.
+- SOURCE-only `42001383332`, worker
+  `48006655505395174101c2d0d071f0d895d07455`, passed metadata preflight, all 39
+  pack jobs and registry artifact `13409183863` on attempt 1. The final capsule
+  (artifact `13403359258`) has 9,266 entries; root inspected its actual sidecar
+  and confirmed exactly one added file, the 6,956-byte pinned SystemUI config
+  with SHA `c28876c7814086825d4f1f9bb418793c884c426fed85996c4d06310f695412b9`.
+  Its archive SHA is
+  `a5dbfab4c58e4005258d6bacd1c4cd463b1945b40feb3eded955f75ad95ca31b`;
+  the slice manifest SHA and allowed-generated-inputs-empty contract remain
+  unchanged. The separately reviewed registry becomes the compile default.
 
 ## Executor protocol
 

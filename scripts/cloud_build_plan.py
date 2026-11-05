@@ -22,6 +22,7 @@ PACK_REGISTRIES = {
     '41779197896': EVIDENCE / 'pack-registry.json',
     '41835375815': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-41835375815.json',
     '41953667023': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-41953667023.json',
+    '42001383332': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-42001383332.json',
 }
 
 
