@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | pending D4 source repack | root + read-only observer | Cold execution `41920576338` passed 38 native tasks without a retry, including the real D3 keystore2 link, then final Vendor NOTICE generation exposed D4. The execution is not accepted. After source-only repacking and metadata admission, all 39 tasks restart empty again. |
+| V1 | ready for D4 cold restart | root + read-only observer | Cold `41920576338` is not accepted despite 38 native successes. D4 SOURCE repack `41953667023` passed all 39 tasks and registry; source completeness guards and metadata admission pass integration checks. Next execution starts all 39 native tasks empty, with no previous compiled output. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -96,7 +96,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 | D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
-| D4 | active | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | Exact recorded license writer/copy/script closure; C0 foreign metadata exports/imports and local metadata prebuilds; SOURCE-only license-text capsule supplements and cold-source guards. Preserve graph/index/slice/Ninja identities and all error checks. Root owns full hosted repack, registry admission and another empty native execution. |
+| D4 | implemented, real NOTICE pending | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | Exact recorded license closure, foreign/current-run metadata transport, local metadata prebuild and cold-source guards implemented. All 39 SOURCE-only capsules passed hosted repack with the same graph/index/slices. New registry admitted separately; actual final NOTICE and all image gates remain required. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -400,6 +400,17 @@ Do not insert historical source overlays or old compiled artifact bindings.
   Pack receipt lists all 894 notice sources. Root inspected this cloud receipt;
   the remaining pack jobs and aggregate registry are still required before
   admitting the new inputs to native compilation.
+- SOURCE-only repack `41953667023` completed successfully on attempt 1, all
+  39 pack jobs plus aggregate summary. Registry artifact `13387065833` is
+  admitted separately and becomes the new compile default. Root verified all
+  immutable identities and exact 39 IDs against the prior registry. Archives
+  total 40,835,226,805 bytes; source inputs total 141,038,057,987 bytes. Sixteen
+  archive identities changed (including source-closure provenance and the
+  earlier AIDL lookup optimization); no generated OUT data is admitted.
+  The graph, pruned index, slice manifests, plan and original native commands
+  remain unchanged. Full integrated validation is 506 tests (16 skips),
+  actionlint and whitespace checks. C0/C1 notice admission and required-source
+  checks now activate atomically with this reviewed complete source registry.
 
 ## Executor protocol
 

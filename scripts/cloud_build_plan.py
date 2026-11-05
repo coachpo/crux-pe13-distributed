@@ -12,6 +12,7 @@ import re
 import subprocess
 
 import cloud_artifacts
+from cloud_license_inputs import LicenseMetadataReads
 from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
 
@@ -20,6 +21,7 @@ EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-prepara
 PACK_REGISTRIES = {
     '41779197896': EVIDENCE / 'pack-registry.json',
     '41835375815': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-41835375815.json',
+    '41953667023': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-41953667023.json',
 }
 
 
@@ -143,6 +145,49 @@ def admit_rust_native_inputs(tasks, owners, edges, source_root, out_root):
     return [relations[key] for key in sorted(relations)]
 
 
+def admit_license_metadata_inputs(tasks, owners, edges, source_root, out_root):
+    """Admit complete notice reads without importing any previously built data."""
+    resolver = LicenseMetadataReads(
+        (edge for rows in edges.values() for edge in rows), source_root, out_root)
+    exports, local, sources, imports, dependencies = {}, {}, {}, {}, {}
+    readers = []
+    for task_id, rows in edges.items():
+        for edge_index, edge in enumerate(rows):
+            reads = resolver.notice_reads(edge)
+            if reads is None:
+                continue
+            readers.append({'consumer': task_id, 'edge_index': edge_index, **reads})
+            sources.setdefault(task_id, set()).update(reads['source_inputs'])
+            for path in reads['metadata_inputs']:
+                producer = owners.get(path)
+                if producer is None:
+                    raise ValueError('License metadata has no admitted declared producer: ' + path)
+                if producer == task_id:
+                    local.setdefault(task_id, set()).add(path)
+                    continue
+                if tasks[producer]['wave'] >= tasks[task_id]['wave']:
+                    raise ValueError('License metadata producer is not in an earlier admitted wave: ' + path)
+                exports.setdefault(producer, set(tasks[producer].get('extra_exports', []))).add(path)
+                inputs = imports.setdefault(task_id, {
+                    item['path']: item['producer'] for item in tasks[task_id].get('runtime_inputs', [])})
+                if path in inputs and inputs[path] != producer:
+                    raise ValueError('Conflicting license metadata owner: ' + path)
+                inputs[path] = producer
+                dependencies.setdefault(task_id, set(tasks[task_id]['depends_on'])).add(producer)
+    for producer, paths in exports.items():
+        tasks[producer]['extra_exports'] = sorted(paths)
+    for task_id, paths in local.items():
+        tasks[task_id]['local_runtime_targets'] = sorted(
+            set(tasks[task_id].get('local_runtime_targets', [])) | paths)
+    for task_id, paths in sources.items():
+        tasks[task_id]['required_notice_sources'] = sorted(paths)
+    for task_id, inputs in imports.items():
+        tasks[task_id]['runtime_inputs'] = [
+            {'path': path, 'producer': inputs[path]} for path in sorted(inputs)]
+        tasks[task_id]['depends_on'] = sorted(dependencies[task_id])
+    return readers
+
+
 def admit_inputs(registry, receipt, inventory, plan, plan_sha):
     if registry.get('status') != 'success' or receipt.get('status') != 'success':
         raise ValueError('Preparation input did not succeed')
@@ -227,6 +272,7 @@ def bootstrap(args):
                 branding[key] = value
     host_bundles = admit_host_jar_bundles(tasks, owners, task_commands, receipt['source_root'], receipt['out_root'])
     rust_inputs = admit_rust_native_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
+    license_readers = admit_license_metadata_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
     graph = read(EVIDENCE / 'graph-receipt-summary.json')['receipt_summary']
     if buildinfo is None or len(branding) != 2:
         raise ValueError('Missing independent graph-derived build identity')
@@ -272,6 +318,7 @@ def bootstrap(args):
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
                'host_jar_runtime_bundles': host_bundles,
                'rust_native_link_inputs': rust_inputs,
+               'license_metadata_readers': license_readers,
                'frontend': {**graph, **scalars, 'graph_receipt': graph,
                    'identity_commands': commands, 'buildinfo_environment': buildinfo,
                    'branding_keys': branding,

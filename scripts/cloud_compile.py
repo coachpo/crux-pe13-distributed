@@ -137,6 +137,14 @@ def validate_context(context: dict, shard_id: str, environment=None,
             raise CompileError("Fresh-build task has duplicate local_runtime_targets: " + identity)
         for path in local_runtime_targets:
             _validate_out_path(path, out_root, "local runtime target")
+        notice_sources = task.get("required_notice_sources", [])
+        if not isinstance(notice_sources, list) or any(
+                not isinstance(path, str) for path in notice_sources):
+            raise CompileError("Fresh-build task has invalid required_notice_sources: " + identity)
+        if len(notice_sources) != len(set(notice_sources)):
+            raise CompileError("Fresh-build task has duplicate required_notice_sources: " + identity)
+        for path in notice_sources:
+            _validate_source_path(path, source_root, out_root, "required NOTICE source")
         runtime_inputs = task.get("runtime_inputs", [])
         if not isinstance(runtime_inputs, list):
             raise CompileError("Fresh-build task has invalid runtime_inputs: " + identity)
@@ -175,6 +183,16 @@ def _validate_out_path(value, out_root: Path, label: str) -> Path:
     return candidate
 
 
+def _validate_source_path(value, source_root: Path, out_root: Path, label: str) -> Path:
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise CompileError(label + " path must be absolute")
+    candidate = Path(os.path.abspath(value))
+    if (str(candidate) != value or source_root not in candidate.parents
+            or candidate == out_root or out_root in candidate.parents):
+        raise CompileError(label + " path must be a normalized path inside source_root and outside OUT_DIR")
+    return candidate
+
+
 def _locate_capsule(directory: Path, archive_name: str) -> Path:
     matches = [path for path in directory.rglob(archive_name) if path.is_file() and not path.is_symlink()]
     if len(matches) != 1:
@@ -209,6 +227,22 @@ def _validate_restored_capsule(source_root: Path, out_root: Path, task: dict) ->
     return manifest_path, bundle_path
 
 
+def _verify_required_notice_sources(task: dict, source_root: Path, out_root: Path):
+    source_directory, output_directory = source_root.resolve(), out_root.resolve()
+    for value in task.get("required_notice_sources", []):
+        path = Path(value)
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            raise CompileError("Required NOTICE source is not a restored file: " + value) from error
+        # Source-relative license links are valid only with their bundled target;
+        # never satisfy a missing capsule input from an OUT or old host file.
+        if (source_directory not in resolved.parents
+                or output_directory == resolved or output_directory in resolved.parents
+                or not resolved.is_file()):
+            raise CompileError("Required NOTICE source is not a restored source file: " + value)
+
+
 def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
                            context: dict, fresh_identity: dict) -> dict:
     receipt_path = dependency_dir / "receipt.json"
@@ -230,19 +264,28 @@ def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
 def _verify_runtime_inputs(task: dict, dependency_receipts: dict,
                            dependency_directories: dict) -> list[dict]:
     admitted = []
+    producer_metadata, producer_receipt_shas = {}, {}
     for runtime in task.get("runtime_inputs", []):
         producer = runtime["producer"]
         receipt = dependency_receipts.get(producer)
         if receipt is None:
             raise CompileError("Runtime input producer was not imported: " + producer)
         path = runtime["path"]
-        additional_exports = receipt.get("additional_exports", [])
-        output_specs = receipt.get("outputs", [])
-        if not isinstance(additional_exports, list) or not isinstance(output_specs, list):
-            raise CompileError("Runtime input producer receipt has invalid output metadata: " + producer)
+        if producer not in producer_metadata:
+            additional_exports = receipt.get("additional_exports", [])
+            output_specs = receipt.get("outputs", [])
+            if not isinstance(additional_exports, list) or not isinstance(output_specs, list):
+                raise CompileError("Runtime input producer receipt has invalid output metadata: " + producer)
+            exports = {value for value in additional_exports if isinstance(value, str)}
+            output_index = {}
+            for spec in output_specs:
+                if isinstance(spec, dict) and isinstance(spec.get("path"), str):
+                    output_index.setdefault(spec["path"], []).append(spec)
+            producer_metadata[producer] = exports, output_index
+        additional_exports, output_index = producer_metadata[producer]
         if path not in additional_exports:
             raise CompileError("Runtime input is not declared as an additional producer export: " + path)
-        matches = [item for item in output_specs if isinstance(item, dict) and item.get("path") == path]
+        matches = output_index.get(path, [])
         if len(matches) != 1:
             raise CompileError("Runtime input has no unique producer receipt output: " + path)
         spec = matches[0]
@@ -250,8 +293,10 @@ def _verify_runtime_inputs(task: dict, dependency_receipts: dict,
                 or not isinstance(spec.get("sha256"), str)
                 or not re.fullmatch(r"[a-fA-F0-9]{64}", spec["sha256"])):
             raise CompileError("Runtime input producer output is not a nonempty regular file: " + path)
-        receipt_path = dependency_directories[producer] / "receipt.json"
-        admitted.append({**runtime, "producer_receipt_sha256": sha256(receipt_path),
+        if producer not in producer_receipt_shas:
+            receipt_path = dependency_directories[producer] / "receipt.json"
+            producer_receipt_shas[producer] = sha256(receipt_path)
+        admitted.append({**runtime, "producer_receipt_sha256": producer_receipt_shas[producer],
                          "size": spec["size"], "sha256": spec["sha256"]})
     return admitted
 
@@ -407,6 +452,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         archive.unlink()
         shutil.rmtree(capsule_dir)
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
+        _verify_required_notice_sources(task, source_root, out_root)
         if alias_enabled:
             kernel_source = _validate_short_kernel_source(context, shard_id, source_root)
             alias_record = _mount_short_source_alias(kernel_source)

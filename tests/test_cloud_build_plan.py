@@ -157,6 +157,37 @@ class BuildPlanTests(unittest.TestCase):
             plan.admit_rust_native_inputs(tasks, {'/OUT/apc.so': 'native'},
                 {'rust': [{'command': 'rustc -Clink-arg=/OUT/apc.so input.rs'}]}, '/SOURCE', '/OUT')
 
+    def test_notice_closure_admits_foreign_metadata_local_readiness_and_source_texts(self):
+        tasks = {'writer': {'wave': 0, 'depends_on': [], 'extra_exports': ['/OUT/native.so']},
+                 'notice': {'wave': 1, 'depends_on': [],
+                            'local_runtime_targets': ['/OUT/local.jar']}}
+        edges = {
+            'writer': [{'outputs': ['/OUT/child/meta_lic'],
+                        'command': 'build_license_metadata -o /OUT/child/meta_lic -n /SOURCE/LICENSE'}],
+            'notice': [{'outputs': ['/OUT/root.meta_lic'],
+                        'command': 'build_license_metadata -o /OUT/root.meta_lic -d /OUT/child/meta_lic:static'},
+                       {'outputs': ['/OUT/NOTICE.xml.gz'],
+                        'command': 'xmlnotice -o /OUT/NOTICE.xml.gz /OUT/root.meta_lic'},
+                       {'outputs': ['/OUT/NOTICE.html'],
+                        'command': 'htmlnotice -o /OUT/NOTICE.html /OUT/root.meta_lic'}],
+        }
+        owners = {path: task for task, rows in edges.items() for edge in rows for path in edge['outputs']}
+        readers = plan.admit_license_metadata_inputs(tasks, owners, edges, '/SOURCE', '/OUT')
+        self.assertEqual(len(readers), 2)
+        self.assertEqual(tasks['writer']['extra_exports'], ['/OUT/child/meta_lic', '/OUT/native.so'])
+        self.assertEqual(tasks['notice']['runtime_inputs'], [{'path': '/OUT/child/meta_lic', 'producer': 'writer'}])
+        self.assertEqual(tasks['notice']['depends_on'], ['writer'])
+        self.assertEqual(tasks['notice']['local_runtime_targets'], ['/OUT/local.jar', '/OUT/root.meta_lic'])
+        self.assertEqual(tasks['notice']['required_notice_sources'], ['/SOURCE/LICENSE'])
+
+    def test_notice_metadata_requires_ready_foreign_owner(self):
+        edges = {'writer': [{'outputs': ['/OUT/meta_lic'], 'command': 'build_license_metadata -o /OUT/meta_lic'}],
+                 'notice': [{'outputs': ['/OUT/NOTICE'], 'command': 'xmlnotice -o /OUT/NOTICE /OUT/meta_lic'}]}
+        for wave in (1, 2):
+            tasks = {'writer': {'wave': wave, 'depends_on': []}, 'notice': {'wave': 1, 'depends_on': []}}
+            with self.subTest(wave=wave), self.assertRaisesRegex(ValueError, 'earlier admitted wave'):
+                plan.admit_license_metadata_inputs(tasks, {'/OUT/meta_lic': 'writer'}, edges, '/SOURCE', '/OUT')
+
 
 if __name__ == '__main__':
     unittest.main()

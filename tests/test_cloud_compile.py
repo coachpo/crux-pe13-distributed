@@ -334,6 +334,77 @@ class CloudCompileTests(unittest.TestCase):
         with self.assertRaisesRegex(cloud_compile.CompileError, "inside OUT_DIR"):
             cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
 
+    def test_required_notice_sources_default_and_context_validation(self):
+        cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
+        source = str(self.source / "licenses/LICENSE")
+        task = self.fresh_context["tasks"][self.shard_id]
+        task["required_notice_sources"] = [source]
+        cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
+        invalid = [
+            (None, "invalid required_notice_sources"),
+            (source, "invalid required_notice_sources"),
+            ([17], "invalid required_notice_sources"),
+            ([source, source], "duplicate required_notice_sources"),
+            (["licenses/LICENSE"], "must be absolute"),
+            ([str(self.source)], "inside source_root"),
+            ([str(self.root / "LICENSE")], "inside source_root"),
+            ([str(self.out_root / "LICENSE")], "outside OUT_DIR"),
+            ([str(self.source) + "/licenses/../LICENSE"], "normalized path"),
+        ]
+        for value, message in invalid:
+            with self.subTest(value=value):
+                task["required_notice_sources"] = value
+                with self.assertRaisesRegex(cloud_compile.CompileError, message):
+                    cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
+
+    def test_missing_notice_source_fails_before_dependency_import_or_native_build(self):
+        self._prepare_runtime_input_context()
+        source = self.source / "licenses/LICENSE"
+        self.fresh_context["tasks"][self.shard_id]["required_notice_sources"] = [str(source)]
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        (self.root / "LICENSE").write_text("An old host file is not a capsule input.\n")
+        code, receipt = self.run_compile()
+        self.assertEqual(code, 1)
+        self.assertIn("Required NOTICE source is not a restored file", receipt["error"])
+        self.assertIn(str(source), receipt["error"])
+        self.assertEqual([item["name"] for item in self.downloads], ["cloud-capsule-" + self.shard_id])
+        self.assertEqual(self.worker_calls, [])
+
+    def test_restored_notice_source_and_bundled_relative_symlink_are_admitted(self):
+        license_dir = self.source / "licenses"
+        notice = license_dir / "LICENSE"
+        readme = license_dir / "README"
+        self.fresh_context["tasks"][self.shard_id]["required_notice_sources"] = [str(notice), str(readme)]
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        original = self.extracted_capsule
+
+        def restore_sources():
+            original()
+            license_dir.mkdir()
+            readme.write_text("Bundled source license.\n")
+            notice.symlink_to("README")
+
+        with mock.patch.object(self, "extracted_capsule", side_effect=restore_sources):
+            code, receipt = self.run_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertEqual(len(self.worker_calls), 1)
+
+    def test_notice_source_cannot_resolve_to_out_old_host_or_directory(self):
+        for destination in (self.root / "old-host-LICENSE", self.out_root / "LICENSE", self.source / "directory"):
+            with self.subTest(destination=destination):
+                notice = self.source / "LICENSE"
+                task = {"required_notice_sources": [str(notice)]}
+                self.source.mkdir(exist_ok=True)
+                if destination.name == "directory":
+                    destination.mkdir()
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text("Not an admitted source license.\n")
+                notice.symlink_to(os.path.relpath(destination, notice.parent))
+                with self.assertRaisesRegex(cloud_compile.CompileError, "not a restored source file"):
+                    cloud_compile._verify_required_notice_sources(task, self.source, self.out_root)
+                notice.unlink()
+
     def _prepare_runtime_input_context(self):
         producer_id, consumer_id = self.shard_id, "w001-s000"
         runtime_path = str(self.out_root / "host/linux-x86/framework/d8.jar")
@@ -404,6 +475,67 @@ class CloudCompileTests(unittest.TestCase):
         self.context_path.write_text(json.dumps(self.fresh_context))
         with self.assertRaisesRegex(cloud_compile.CompileError, "inside OUT_DIR"):
             cloud_compile.validate_context(self.fresh_context, consumer_id, self.runner_env)
+
+    def test_runtime_input_receipt_hash_and_metadata_are_cached_per_producer(self):
+        class CountedList(list):
+            iterations = 0
+
+            def __iter__(self):
+                self.iterations += 1
+                return super().__iter__()
+
+        inputs, receipts, directories = [], {}, {}
+        for producer in ("w000-s000", "w000-s001"):
+            directory = self.root / producer
+            directory.mkdir()
+            (directory / "receipt.json").write_text(json.dumps({"producer": producer}))
+            directories[producer] = directory
+            paths = [str(self.out_root / producer / f"license-{number}.meta_lic") for number in range(3)]
+            outputs = [{"path": path, "type": "file", "size": 160, "sha256": "a" * 64} for path in paths]
+            receipts[producer] = {"additional_exports": CountedList(paths + [{"unrelated": True}]),
+                                  "outputs": CountedList(outputs + [None, {"path": []}, {"path": "unused"}])}
+            inputs.extend({"path": path, "producer": producer} for path in paths)
+        with mock.patch.object(cloud_compile, "sha256", wraps=cloud_compile.sha256) as digest:
+            admitted = cloud_compile._verify_runtime_inputs({"runtime_inputs": inputs}, receipts, directories)
+        self.assertEqual(digest.call_args_list,
+                         [mock.call(directories[producer] / "receipt.json") for producer in receipts])
+        self.assertEqual([{key: value for key, value in item.items() if key in ("path", "producer")}
+                          for item in admitted], inputs)
+        for producer, receipt in receipts.items():
+            self.assertEqual(receipt["additional_exports"].iterations, 1)
+            self.assertEqual(receipt["outputs"].iterations, 1)
+            expected_hash = hashlib.sha256((directories[producer] / "receipt.json").read_bytes()).hexdigest()
+            self.assertEqual({item["producer_receipt_sha256"] for item in admitted
+                              if item["producer"] == producer}, {expected_hash})
+            self.assertTrue(all(item["size"] == 160 and item["sha256"] == "a" * 64
+                                for item in admitted if item["producer"] == producer))
+
+    def test_runtime_input_index_preserves_unique_nonempty_regular_file_contract(self):
+        producer, path = "w000-s000", str(self.out_root / "license.meta_lic")
+        task = {"runtime_inputs": [{"path": path, "producer": producer}]}
+        valid = {"path": path, "type": "file", "size": 160, "sha256": "a" * 64}
+        invalid = [
+            ([], "no unique producer receipt output"),
+            ([valid, dict(valid)], "no unique producer receipt output"),
+            ([{**valid, "type": "symlink"}], "nonempty regular file"),
+            ([{**valid, "size": 0}], "nonempty regular file"),
+            ([{**valid, "size": True}], "nonempty regular file"),
+            ([{**valid, "sha256": "invalid"}], "nonempty regular file"),
+        ]
+        for outputs, message in invalid:
+            with self.subTest(outputs=outputs):
+                receipts = {producer: {"additional_exports": [path], "outputs": outputs}}
+                with self.assertRaisesRegex(cloud_compile.CompileError, message):
+                    cloud_compile._verify_runtime_inputs(task, receipts, {})
+        with self.assertRaisesRegex(cloud_compile.CompileError, "producer was not imported"):
+            cloud_compile._verify_runtime_inputs(task, {}, {})
+        with self.assertRaisesRegex(cloud_compile.CompileError, "not declared as an additional producer export"):
+            cloud_compile._verify_runtime_inputs(task, {producer: {"outputs": [valid]}}, {})
+        for field in ("outputs", "additional_exports"):
+            with self.subTest(field=field):
+                receipt = {"additional_exports": [path], "outputs": [valid], field: {}}
+                with self.assertRaisesRegex(cloud_compile.CompileError, "invalid output metadata"):
+                    cloud_compile._verify_runtime_inputs(task, {producer: receipt}, {})
 
     def test_empty_context_and_non_cold_roots_are_rejected(self):
         self.context_path.write_text("{}")
