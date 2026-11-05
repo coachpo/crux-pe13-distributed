@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | ready for D5 cold restart | root + read-only observer | Cold `41965423848` is not accepted despite 38 native successes and real NOTICE success. SOURCE-only repack `42001383332` passed all 39 tasks and registry. All native tasks will start empty with the new inputs; no previous compiled output is admitted. |
+| V1 | active | root + read-only observer | New cold execution `42018017251`, worker `9300985475998818d5938a55d11ee9ed03732d83`, passed bootstrap and began wave 0 using R8-complete pack `42001383332`. All 39 native tasks, final R8/image actions and summary remain required. No previous compiled output is admitted. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -467,6 +467,13 @@ Do not insert historical source overlays or old compiled artifact bindings.
   `a5dbfab4c58e4005258d6bacd1c4cd463b1945b40feb3eded955f75ad95ca31b`;
   the slice manifest SHA and allowed-generated-inputs-empty contract remain
   unchanged. The separately reviewed registry becomes the compile default.
+- Comparing the latest pack registry to the D4 registry, only `w006-s000`
+  and `w007-s000` archive identities changed. Aggregate SOURCE inputs grew by
+  exactly 6,956 bytes; archived inputs total 40,835,238,357 bytes. Graph,
+  source, index, pruned-index and plan bindings are unchanged. New full cold
+  execution `42018017251` passed bootstrap on worker
+  `9300985475998818d5938a55d11ee9ed03732d83` and started all thirteen wave-0
+  tasks. It cannot use any compiled archive from the earlier attempts.
 
 ## Executor protocol
 
