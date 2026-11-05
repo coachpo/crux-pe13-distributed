@@ -77,6 +77,94 @@ class CapsuleTests(unittest.TestCase):
         specification = next(item for item in metadata["files"] if item["path"] == str(runtime))
         self.assertEqual(specification["sha256"], capsule.digest(runtime))
 
+    def test_compat_r8_capsule_includes_systemui_sibling_source_without_probing_out(self):
+        parent = 'vendor/pixel-framework/SystemUIGoogle/proguard.flags'
+        child = 'frameworks/base/packages/SystemUI/proguard.flags'
+        generated = self.out / 'aar/proguard.txt'
+        self.write(self.source / parent, '-include ../../../' + child + '\n')
+        self.write(self.source / child, '-keep class example.SystemUI { *; }\n')
+        self.write(generated, '-include ' + str(self.source / 'warm-only.flags') + '\n')
+        self.manifest['leaf_inputs'].append(parent)
+        self.manifest['external_inputs'].append(str(generated))
+        self.manifest['commands'] = ['r8-compat-proguard --min-api 33 -include ' + parent
+                                     + ' -include ' + str(generated)]
+        original = json.loads(json.dumps(self.manifest))
+        def guard(method):
+            def checked(path, *args, **kwargs):
+                if path == generated:
+                    raise AssertionError('R8 input collection probed a generated config')
+                return method(path, *args, **kwargs)
+            return checked
+        with patch.object(Path, 'is_file', guard(Path.is_file)), \
+                patch.object(Path, 'read_text', guard(Path.read_text)), \
+                patch.object(Path, 'resolve', guard(Path.resolve)):
+            _, metadata, archive = self.collect()
+        spec = next(item for item in metadata['files'] if item['path'] == str(self.source / child))
+        self.assertIn('r8-proguard-source', spec['reasons'])
+        self.assertEqual(archive.extractfile(str(self.source / child).lstrip('/')).read(),
+                         (self.source / child).read_bytes())
+        self.assertNotIn(str(generated).lstrip('/'), archive.getnames())
+        self.assertEqual(self.manifest, original)
+        self.assertEqual(metadata['manifest_sha256'], capsule.digest(self.slice / 'manifest.json'))
+
+    def test_compat_r8_uses_recorded_shell_script_and_actual_cwd(self):
+        package = self.source / 'working package'
+        self.write(package / 'rules/root.flags', '@"nested rules.flags"\n')
+        self.write(package / 'rules/nested rules.flags', '-dontshrink\n')
+        self.write(self.source / 'rules/root.flags', '-include unrelated-missing.flags\n')
+        rsp = str(self.out / 'native-script.rsp')
+        self.manifest['edges'] = [{'command': 'env -C ' + shlex.quote(str(package)) + ' /bin/bash ' + rsp,
+                                   'rspfile': rsp, 'rspfile_content':
+                                   'r8-compat-proguard -include rules/root.flags'}]
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertIn(str(package / 'rules/nested rules.flags'), files)
+        self.assertNotIn(str(self.source / 'rules/root.flags'), files)
+        self.assertNotIn(rsp, files)
+
+    def test_modern_r8_flagfile_distinguishes_source_inputs_from_outputs(self):
+        source_flags = self.source / 'rules with spaces/root.flags'
+        hidden = self.source / 'rules with spaces/child.flags'
+        output_flags = self.source / 'output-only.flags'
+        args = self.source / 'modern flags.rsp'
+        self.write(source_flags, '-include child.flags\n')
+        self.write(hidden, '-dontobfuscate\n')
+        self.write(output_flags, '-include must-not-be-read.flags\n')
+        self.write(args, '\n'.join(['  --pg-conf  ', str(source_flags), '\t--pg-conf-output\t', str(output_flags),
+                                    '--desugared-lib-pg-conf-output=' + str(output_flags)]) + '\n')
+        self.manifest['commands'] = ['java -cp r8.jar com.android.tools.r8.R8 ' + shlex.quote('@' + str(args))]
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertTrue({str(source_flags), str(hidden), str(args)} <= files)
+        self.assertNotIn(str(output_flags), files)
+
+    def test_non_r8_include_operand_is_not_scanned_as_proguard(self):
+        self.write(self.source / 'rules/root.flags', '-include hidden.flags\n')
+        self.write(self.source / 'rules/hidden.flags', '-dontshrink\n')
+        self.manifest['commands'] = ['another-tool r8-compat-proguard -include rules/root.flags']
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertIn(str(self.source / 'rules/root.flags'), files)
+        self.assertNotIn(str(self.source / 'rules/hidden.flags'), files)
+
+    def test_r8_source_link_to_generated_out_is_not_an_input(self):
+        generated = self.out / 'warm.flags'
+        self.write(generated, '-dontshrink\n')
+        (self.source / 'linked.flags').symlink_to(generated)
+        self.manifest['commands'] = ['r8-compat-proguard -include linked.flags']
+        with self.assertRaisesRegex(capsule.CapsuleError, 'Additional SOURCE input must not be generated'):
+            self.collect()
+
+    def test_r8_source_rooted_config_links_use_existing_capsule_link_guards(self):
+        target = self.base / 'pinned-source-project/rules.flags'
+        self.write(target, '-dontshrink\n')
+        link = self.source / 'linked.flags'
+        link.symlink_to(target)
+        self.manifest['commands'] = ['r8-compat-proguard -include linked.flags']
+        _, _, archive = self.collect()
+        self.assertTrue(archive.getmember(str(link).lstrip('/')).issym())
+        self.assertEqual(archive.extractfile(str(target).lstrip('/')).read(), target.read_bytes())
+
     def test_compiled_out_leaf_fails_instead_of_seeding_previous_build(self):
         stale = self.out / "libupstream.a"
         self.write(stale, b"!<arch>\nold")

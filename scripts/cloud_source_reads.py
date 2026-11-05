@@ -13,6 +13,9 @@ NOTICE_TOOLS = {"textnotice", "htmlnotice", "xmlnotice", "compliancenotice_shipp
                 "shippedlibs"}
 LICENSE_TOOL = "build_license_metadata"
 R8_CLASS = "com.android.tools.r8.R8"
+R8_COMPAT_CLASS = "com.android.tools.r8.compatproguard.CompatProguard"
+R8_CONFIG_OUTPUTS = {"--pg-conf-output", "--desugared-lib-pg-conf-output"}
+_R8_LAUNCHER = re.compile(r'''(?:^|[/\s"'\\;&()<>])(?:r8-compat-proguard|r8)(?=$|[\s"'\\;&()<>])''')
 
 
 class SourceReadError(ValueError):
@@ -111,7 +114,7 @@ def _shell_tokens(segment: str) -> list[str]:
     return list(lexer)
 
 
-def _shell_command_contexts(command: str, source_root: str, declared_scripts=None):
+def _shell_command_contexts(command: str, source_root: str, declared_scripts=None, strict_scripts=True):
     """Yield leaf contexts, optionally resolving only recorded shell scripts."""
     position = [0]
 
@@ -177,10 +180,14 @@ def _shell_command_contexts(command: str, source_root: str, declared_scripts=Non
                     if arguments[:1] == ["--"]:
                         arguments = arguments[1:]
                     if len(arguments) != 1 or arguments[0].startswith("-"):
-                        raise SourceReadError("unsupported recorded shell script invocation")
+                        if strict_scripts:
+                            raise SourceReadError("unsupported recorded shell script invocation")
+                        return []
                     path = _absolute(arguments[0], cwd)
                     if path not in declared_scripts:
-                        raise SourceReadError("unrecorded shell script: " + path)
+                        if strict_scripts:
+                            raise SourceReadError("unrecorded shell script: " + path)
+                        return []
                     content = declared_scripts[path]
                     if not isinstance(content, str):
                         raise SourceReadError("recorded shell script has no content: " + path)
@@ -205,10 +212,10 @@ def _shell_command_contexts(command: str, source_root: str, declared_scripts=Non
     yield from visit(command, source_root)
 
 
-def iter_invocations(metadata: dict, source_root: str, declared_scripts=None):
+def iter_invocations(metadata: dict, source_root: str, declared_scripts=None, strict_scripts=True):
     """Yield (argv, cwd) command contexts, unwrapping common shell launchers."""
     for argv, cwd, _, _ in _shell_command_contexts(
-            metadata.get("command", ""), source_root, declared_scripts):
+            metadata.get("command", ""), source_root, declared_scripts, strict_scripts):
         yield argv, cwd
 
 
@@ -389,6 +396,297 @@ def _graph_path_candidates(value: str, cwd: str, source_root: str) -> list[str]:
         if candidate.startswith("/") and _inside(posixpath.normpath(candidate), source_root):
             candidates.append(posixpath.relpath(posixpath.normpath(candidate), source_root))
     return list(dict.fromkeys(posixpath.normpath(item) for item in candidates))
+
+
+def r8_invocation(argv):
+    """Identify a real launcher/main class, not a mention in its arguments."""
+    index = 0
+    while index < len(argv) and posixpath.basename(argv[index]) in {"exec", "command", "time"}:
+        index += 1
+    if index == len(argv):
+        return None
+    program = posixpath.basename(argv[index])
+    index += 1
+    if program == "r8-compat-proguard":
+        return "compat", index
+    if program == "r8":
+        return "modern", index
+    if program != "java":
+        return None
+    while index < len(argv):
+        token = argv[index]
+        if token in {"-cp", "-classpath", "--class-path", "--module-path", "-p"}:
+            index += 2
+        elif token in {"-jar", "-m", "--module"}:
+            return None
+        elif token.startswith("-"):
+            index += 1
+        else:
+            return ({R8_CLASS: ("modern", index + 1), R8_COMPAT_CLASS: ("compat", index + 1)}
+                    .get(token))
+    return None
+
+
+def r8_config_argument_indices(argv):
+    """Config operands handled by the R8 reader, not generic file scanning."""
+    invocation = r8_invocation(argv)
+    if invocation is None:
+        return set()
+    kind, index = invocation
+    flags = ({"-include", "-basedirectory"} if kind == "compat" else
+             {"--pg-conf"} | R8_CONFIG_OUTPUTS)
+    indices = set()
+    while index < len(argv):
+        token = argv[index]
+        if kind == "modern":
+            token = token.strip()
+        elif token in _COMPAT_VALUE_FLAGS:
+            index += 2
+            continue
+        if token in flags or (kind == "compat" and token == "@"):
+            indices.update(range(index, min(index + 2, len(argv))))
+            index += 2
+        else:
+            if (token.partition("=")[0] in flags
+                    or (kind == "compat" and (token.startswith("@")
+                        or any(token.startswith(flag + " ") for flag in flags)))):
+                indices.add(index)
+            index += 1
+    return indices
+
+
+# CompatProguard in the pinned 3.3.20-dev+aosp6 launcher consumes these options
+# before reconstructing its remaining argv as ProGuard configuration text.
+_COMPAT_VALUE_FLAGS = {"--min-api", "--output", "--main-dex-list", "--map-id-template",
+                       "--source-file-template", "--deps-file"}
+_COMPAT_BOOLEAN_FLAGS = {"-h", "--help", "--debug", "--release", "--force-proguard-compatibility",
+                         "--no-data-resources", "--multi-dex", "--no-vertical-class-merging",
+                         "--minimal-main-dex", "--core-library", "--no-locals"}
+
+
+def _compat_config(argv):
+    lines, line = [], []
+    index = 0
+    while index < len(argv) and argv[index].startswith("-J"):
+        index += 1
+    while index < len(argv):
+        token = argv[index]
+        index += 1
+        if token in _COMPAT_VALUE_FLAGS:
+            if index == len(argv):
+                raise SourceReadError("missing R8 compatibility option value: " + token)
+            index += 1
+            continue
+        if token in _COMPAT_BOOLEAN_FLAGS or token.startswith("--main-dex-list="):
+            continue
+        if token.startswith("-") and line:
+            lines.append(" ".join(line))
+            line = []
+        line.append(token)
+    if line:
+        lines.append(" ".join(line))
+    return "\n".join(lines)
+
+
+_PROGUARD_TOKEN = re.compile(r'''\s+|#[^\r\n]*|(["'])(.*?)\1|[{}(),]|[^\s{}(),"']+''', re.DOTALL)
+_CLASS_OPTIONS = {"-if", "-assumenosideeffects", "-assumevalues", "-whyareyoukeeping",
+                  "-checkdiscard", "-identifiernamestring", "-assumenoexternalsideeffects",
+                  "-assumenoexternalreturnvalues", "-assumenoescapingparameters"}
+_CLASS_TYPES = {"class", "interface", "enum", "@interface"}
+_NO_ARGUMENT_OPTIONS = {"-dontshrink", "-dontoptimize", "-dontobfuscate", "-dontpreverify",
+                        "-allowaccessmodification", "-verbose", "-keepparameternames",
+                        "-useuniqueclassmembernames", "-dontusemixedcaseclassnames"}
+
+
+def _proguard_directives(text, origin):
+    """Extract literal file directives, not the full ProGuard rule language.
+
+    Match the pinned parser's file-name quoting and option boundaries. In
+    particular, @ inside a class header/member block is not an include. An @
+    after an opaque option is ambiguous and is rejected rather than guessed.
+    """
+    text = text.removeprefix("\ufeff")
+    tokens = []
+    offset = 0
+    while offset < len(text):
+        match = _PROGUARD_TOKEN.match(text, offset)
+        if match is None:
+            raise SourceReadError(f"invalid ProGuard token in {origin}:{text.count(chr(10), 0, offset) + 1}")
+        offset = match.end()
+        token = match.group()
+        if not token.isspace() and not token.startswith("#"):
+            tokens.append((match[2] if match[1] else token, bool(match[1]), match.start()))
+    index, stack, state = 0, [], "boundary"
+    while index < len(tokens):
+        token, quoted, start = tokens[index]
+        index += 1
+        if not quoted and token in {"{", "("}:
+            stack.append(token)
+            continue
+        if not quoted and token in {"}", ")"}:
+            if stack and stack[-1] == ({"}": "{", ")": "("}[token]):
+                stack.pop()
+                if token == "}" and not stack:
+                    state = "boundary"
+            continue
+        if stack:
+            continue
+        if not quoted and token.startswith(("-include", "-basedirectory")) and token not in {
+                "-include", "-basedirectory"}:
+            raise SourceReadError("unsupported joined ProGuard file directive in " + origin + ": " + token)
+        directive = None
+        if not quoted and token in {"-include", "-basedirectory"}:
+            directive = token
+        elif not quoted and token.startswith("@"):
+            if state == "class-type" and token == "@interface":
+                state = "class-name"
+                continue
+            if state in {"class-type", "parent-name"}:
+                if token == "@" and index < len(tokens):
+                    index += 1  # annotation name, not an include
+                continue
+            if state not in {"boundary", "class-tail"}:
+                raise SourceReadError("ambiguous ProGuard @ operand in " + origin + ": " + token)
+            directive = "-include"
+        if directive is not None:
+            if token.startswith("@") and len(token) > 1:
+                start += 1
+            else:
+                if index == len(tokens) or (not tokens[index][1] and tokens[index][0].startswith("-")):
+                    raise SourceReadError(f"missing {directive} path in {origin}")
+                start = tokens[index][2]
+            # Config syntax permits punctuation in an unquoted filename even
+            # though those same characters delimit class rules elsewhere.
+            if text[start] in "\"'":
+                end = text.index(text[start], start + 1) + 1
+                value = text[start + 1:end - 1]
+            else:
+                end = start
+                while end < len(text) and not text[end].isspace() and text[end] != "(":
+                    end += 1
+                value = text[start:end]
+            while index < len(tokens) and tokens[index][2] < end:
+                index += 1
+            if not value:
+                raise SourceReadError(f"missing {directive} path in {origin}")
+            yield directive, value
+            state = "boundary"
+            continue
+        if not quoted and token.startswith("-"):
+            if (token in _CLASS_OPTIONS or (token.startswith("-keep") and token not in {
+                    "-keepattributes", "-keeppackagenames", "-keepdirectories",
+                    "-keepparameternames", "-keepkotlinmetadata"})):
+                state = "class-type"
+            else:
+                state = "boundary" if token in _NO_ARGUMENT_OPTIONS else "opaque"
+        elif state == "class-type" and token.lstrip("!") in _CLASS_TYPES:
+            state = "class-name"
+        elif state in {"class-name", "parent-name"}:
+            state = "class-tail"
+        elif state == "class-tail" and token in {"extends", "implements", ","}:
+            state = "class-name" if token == "," else "parent-name"
+
+
+def _literal_r8_path(value, cwd):
+    path = value if value.startswith("/") else posixpath.join(cwd, value)
+    if not value or any(character in path for character in "$`*?[]<>\n\r"):
+        raise SourceReadError("unresolved R8 path: " + value)
+    return posixpath.normpath(path)
+
+
+def r8_flagfile_arguments(content):
+    """Pinned R8 FlagFile expands original @argv once, one argument per line."""
+    return content.splitlines()
+
+
+def r8_source_reads(metadata, source_root, out_root, read_source=None):
+    """Discover literal SOURCE ProGuard reads without probing OUT config files."""
+    command = metadata.get("command") or ""
+    content = metadata.get("rspfile_content")
+    if not any(_R8_LAUNCHER.search(text) or R8_CLASS in text or R8_COMPAT_CLASS in text
+               for text in (command, content or "")):
+        return None
+    source_root = posixpath.normpath(str(source_root))
+    out_root = posixpath.normpath(str(out_root))
+    response = metadata.get("rspfile")
+    response = _absolute(response, source_root) if isinstance(response, str) else None
+    scripts = {response: content} if response is not None else None
+    included, responses, active = set(), set(), []
+    found = False
+
+    def source_text(path):
+        if not _inside(path, source_root):
+            raise SourceReadError("R8 Proguard config is outside source_root: " + path)
+        if read_source is not None:
+            return read_source(path)
+        file = Path(path)
+        resolved = str(file.resolve())
+        if _inside(resolved, out_root) or not _inside(resolved, source_root):
+            raise SourceReadError("R8 Proguard config link escapes SOURCE: " + path)
+        if not file.is_file():
+            raise SourceReadError("R8 Proguard config is missing: " + path)
+        try:
+            return file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise SourceReadError("cannot read R8 Proguard config: " + path) from error
+
+    def visit(value, base):
+        path = _literal_r8_path(value, base)
+        if _inside(path, out_root):
+            return
+        if path in active:
+            raise SourceReadError("recursive R8 Proguard include: " + " -> ".join(active + [path]))
+        if path in included:
+            return
+        text = source_text(path)
+        included.add(path)
+        active.append(path)
+        follow(text, posixpath.dirname(path), path)
+        active.pop()
+
+    def follow(text, base, origin):
+        for directive, value in _proguard_directives(text, origin):
+            if directive == "-basedirectory":
+                base = _literal_r8_path(value, base)
+            else:
+                visit(value, base)
+
+    for argv, cwd in iter_invocations(metadata, source_root, scripts, strict_scripts=False):
+        invocation = r8_invocation(argv)
+        if invocation is None:
+            continue
+        found = True
+        kind, start = invocation
+        if kind == "compat":
+            follow(_compat_config(argv[start:]), cwd, "CompatProguard argv")
+            continue
+        expanded = []
+        for token in argv[start:]:
+            if not token.startswith("@"):
+                expanded.append(token)
+                continue
+            path = _literal_r8_path(token[1:], cwd)
+            if path == response and isinstance(content, str):
+                text = content
+            elif _inside(path, out_root) or path == response:
+                raise SourceReadError("unresolved response input: " + path)
+            else:
+                text = source_text(path)
+                responses.add(path)
+            expanded.extend(r8_flagfile_arguments(text))
+        index = 0
+        while index < len(expanded):
+            token = expanded[index].strip()
+            index += 1
+            if token == "--pg-conf" or token in R8_CONFIG_OUTPUTS:
+                if index == len(expanded):
+                    raise SourceReadError("missing R8 option path: " + token)
+                if token == "--pg-conf":
+                    visit(expanded[index], cwd)
+                index += 1
+            elif token.startswith("--pg-conf="):
+                visit(token.partition("=")[2], cwd)
+    return {"configs": sorted(included), "response_files": sorted(responses)} if found else None
 
 
 def derive_source_reads(g, records: dict, native: dict, source_root: str, out_root: str) -> dict:
@@ -602,84 +900,16 @@ def derive_source_reads(g, records: dict, native: dict, source_root: str, out_ro
         details["response_files"] = sorted(details["response_files"])
         notice_readers.append(details)
 
-    def proguard_config(path: str, cwd: str, edge_id: int, included: set[str], active: set[str], chain: list[str]):
-        absolute = _absolute(path, cwd)
-        if _inside(absolute, out_root):
-            return
-        if not _inside(absolute, source_root):
-            raise SourceReadError("R8 Proguard config is outside source_root: " + absolute)
-        if absolute in active:
-            raise SourceReadError("recursive R8 Proguard include: " + " -> ".join(chain + [absolute]))
-        if absolute in included:
-            return
-        if not Path(absolute).is_file():
-            raise SourceReadError("R8 Proguard config is missing: " + absolute)
-        included.add(absolute)
-        active.add(absolute)
-        add(edge_id, absolute)
-        try:
-            lines = Path(absolute).read_text().splitlines()
-        except UnicodeDecodeError as error:
-            raise SourceReadError("R8 Proguard config is not UTF-8: " + absolute) from error
-        for line_number, line in enumerate(lines, 1):
-            try:
-                tokens = shlex.split(line, comments=True, posix=True)
-            except ValueError as error:
-                raise SourceReadError(f"invalid Proguard config {absolute}:{line_number}: {error}") from error
-            index = 0
-            while index < len(tokens):
-                token = tokens[index]
-                include = None
-                if token == "-include":
-                    if index + 1 >= len(tokens):
-                        raise SourceReadError(f"missing -include path at {absolute}:{line_number}")
-                    include = tokens[index + 1]
-                    index += 2
-                elif token.startswith("-include="):
-                    include = token[len("-include="):]
-                    index += 1
-                elif token.startswith("@") and len(token) > 1:
-                    include = token[1:]
-                    index += 1
-                else:
-                    index += 1
-                if include:
-                    proguard_config(include, posixpath.dirname(absolute), edge_id,
-                                    included, active, chain + [absolute])
-        active.remove(absolute)
-
     for edge_id in selected_edge_ids:
-        record = records[edge_id]
-        if R8_CLASS not in edge_native(edge_id).get("command", ""):
+        try:
+            reads = r8_source_reads(edge_native(edge_id), source_root, out_root)
+        except SourceReadError as error:
+            raise SourceReadError(f"R8 edge {edge_id}: {error}") from error
+        if reads is None:
             continue
-        for argv, cwd, expanded, source_responses, unresolved, _, _ in invocations(edge_id):
-            if R8_CLASS not in expanded:
-                continue
-            if unresolved:
-                response_path = unresolved[0]
-                raise SourceReadError(f"R8 edge {edge_id} has unresolved response input: {response_path}")
-            for response_file in source_responses:
-                add(edge_id, response_file)
-            configs = []
-            index = 0
-            while index < len(expanded):
-                token = expanded[index]
-                if token == "--pg-conf":
-                    if index + 1 >= len(expanded):
-                        raise SourceReadError("missing --pg-conf path for R8 edge " + str(edge_id))
-                    configs.append(expanded[index + 1])
-                    index += 2
-                elif token.startswith("--pg-conf="):
-                    configs.append(token[len("--pg-conf="):])
-                    index += 1
-                else:
-                    index += 1
-            included = set()
-            for config in configs:
-                proguard_config(config, cwd, edge_id, included, set(), [])
-            r8_embedded_includes.append({"edge": edge_id, "outputs": record["outputs"],
-                                         "configs": sorted(included),
-                                         "response_files": sorted(source_responses)})
+        for path in reads["configs"] + reads["response_files"]:
+            add(edge_id, path)
+        r8_embedded_includes.append({"edge": edge_id, "outputs": records[edge_id]["outputs"], **reads})
 
     return {"additions": {edge_id: sorted(paths) for edge_id, paths in sorted(additions.items())},
             "notice_readers": sorted(notice_readers, key=lambda item: item["edge"]),

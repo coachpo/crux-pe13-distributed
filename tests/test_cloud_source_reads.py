@@ -62,7 +62,7 @@ class CloudSourceReadsTests(unittest.TestCase):
                                     f'-d "{self.out}/child metadata.meta_lic:static"')
         if source_r8_rsp:
             (self.config_dir / "extra.pro").write_text("-dontoptimize\n")
-            r8_args.write_text(f'--pg-conf "{self.config_dir / "extra.pro"}"')
+            r8_args.write_text(f'--pg-conf\n{self.config_dir / "extra.pro"}\n')
         nested_config = "missing.pro" if missing_include else "deep rules.pro"
         if not preserve_configs:
             (self.config_dir / "nested/child.pro").write_text(f'-include "{nested_config}"\n')
@@ -400,6 +400,69 @@ class CloudSourceReadsTests(unittest.TestCase):
         with self.assertRaisesRegex(cloud_source_reads.SourceReadError, "recursive R8 Proguard include"):
             cloud_source_reads.derive_source_reads(self.index, records, native,
                                                    str(self.source), str(self.out))
+
+    def test_compat_proguard_base_and_option_boundary_annotations(self):
+        source, out = str(self.source), str(self.out)
+        base = source + '/rules/with spaces'
+        texts = {
+            base + '/parent.flags': '-basedirectory "nested folder"\n'
+                '@"child #1.flags" # @ignored-comment.flags\n'
+                '-basedirectory later\n-include tail.flags\n',
+            base + '/nested folder/child #1.flags': '-keep\n  @example.ClassMark public class *\n'
+                '  implements @example.ParentMark example.Parent {\n'
+                '    @example.MemberMark <methods>;\n}\n'
+                '-keep @interface example.Marker\n@"child sibling.flags"\n',
+            base + '/nested folder/child sibling.flags': '\ufeff-include comma,name).flags\n',
+            base + '/nested folder/comma,name).flags': '-dontshrink\n',
+            base + '/nested folder/later/tail.flags': '-dontoptimize\n',
+            base + '/second.flags': '-include ' + out + '/generated-rules.flags\n',
+        }
+        inner = "r8-compat-proguard -JXX:OnError=log --min-api 33 --output ignored.flags " \
+                "-basedirectory '\"with spaces\"' -include parent.flags @second.flags"
+        edge = {'command': '/bin/bash ' + out + '/unrelated-script && env -C '
+                           + shlex.quote(source + '/rules') + ' /bin/bash ' + out + '/run.rsp',
+                'rspfile': out + '/run.rsp', 'rspfile_content': inner}
+        opened = []
+        def source_text(path):
+            opened.append(path)
+            return texts[path]
+        with mock.patch.object(Path, 'is_file', side_effect=AssertionError('unexpected filesystem probe')):
+            result = cloud_source_reads.r8_source_reads(edge, source, out, source_text)
+        self.assertEqual(result, {'configs': sorted(texts), 'response_files': []})
+        self.assertEqual(sorted(opened), sorted(texts))
+
+    def test_modern_r8_reads_only_config_operands_and_single_pass_flagfile(self):
+        source, out = str(self.source), str(self.out)
+        source_flags = source + '/rules with spaces.flags'
+        args = out + '/r8.rsp'
+        edge = {'command': 'java -cp tool.jar com.android.tools.r8.R8 @' + args,
+                'rspfile': args, 'rspfile_content': '\n'.join([
+                    '  --pg-conf  ', source_flags, '\t--pg-conf-output\t', source + '/output-only.flags',
+                    '--desugared-lib-pg-conf-output=' + source + '/other-output.flags',
+                    '@' + out + '/unexpanded-nested-flagfile',
+                ])}
+        reader = mock.Mock(return_value='-dontshrink')
+        self.assertEqual(cloud_source_reads.r8_source_reads(edge, source, out, reader),
+                         {'configs': [source_flags], 'response_files': []})
+        reader.assert_called_once_with(source_flags)
+
+    def test_r8_mentions_in_other_tools_are_not_config_invocations(self):
+        reader = mock.Mock(side_effect=AssertionError('not an R8 read'))
+        for command in ('echo r8-compat-proguard -include absent.flags',
+                        'java -cp com.android.tools.r8.R8 Example --pg-conf absent.flags',
+                        'java Example com.android.tools.r8.R8 --pg-conf absent.flags'):
+            with self.subTest(command=command):
+                self.assertIsNone(cloud_source_reads.r8_source_reads(
+                    {'command': command}, self.source, self.out, reader))
+
+    def test_ambiguous_or_unresolved_proguard_paths_fail_without_guessing(self):
+        edge = {'command': 'r8-compat-proguard -include root.flags'}
+        for text, error in [('-keepattributes SourceFile\n@maybe-an-operand.flags', 'ambiguous ProGuard @'),
+                            ('-include <java.home>/rules.flags', 'unresolved R8 path'),
+                            ('-include=not-a-literal-option.flags', 'unsupported joined'),
+                            ('-include # missing operand', 'missing -include path')]:
+            with self.subTest(text=text), self.assertRaisesRegex(cloud_source_reads.SourceReadError, error):
+                cloud_source_reads.r8_source_reads(edge, self.source, self.out, lambda _: text)
 
 
 if __name__ == "__main__":

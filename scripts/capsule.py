@@ -43,6 +43,21 @@ AIDL_PACKAGE_RE = re.compile(r'^[ \t]*package[ \t]+([A-Za-z_][\w]*(?:\.[A-Za-z_]
                             re.MULTILINE)
 
 
+_SOURCE_READS = None
+
+
+def source_reads_module():
+    """Load the sibling collector for direct script and file-based imports."""
+    global _SOURCE_READS
+    if _SOURCE_READS is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "crux_capsule_source_reads", Path(__file__).with_name("cloud_source_reads.py"))
+        _SOURCE_READS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SOURCE_READS)
+    return _SOURCE_READS
+
+
 def aidl_package_name(text):
     match = AIDL_PACKAGE_RE.search(text)
     return match.group(1) if match else None
@@ -198,9 +213,17 @@ def command_invocations(tokens):
             program += 1
         if program < end and Path(tokens[program]).name == "env":
             program += 1
-            while program < end and (tokens[program].startswith("-")
-                                     or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[program])):
-                program += 1
+            while program < end:
+                option = tokens[program]
+                if option == "--":
+                    program += 1
+                    break
+                if option in {"-u", "--unset", "-C", "--chdir"}:
+                    program += 2
+                elif option.startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", option):
+                    program += 1
+                else:
+                    break
         if program < end:
             yield program, end
         start = end + 1
@@ -240,6 +263,11 @@ def response_context(command, response=None):
                 token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
                 for token in tokens[position + 1:end])):
             return name
+        invocation = source_reads_module().r8_invocation(tokens[position:end]) if "r8" in command else None
+        if invocation and invocation[0] == "modern" and any(
+                token.startswith("@") and (response is None or os.path.normpath(token[1:]) == os.path.normpath(response))
+                for token in tokens[position + 1:end]):
+            return "r8"
         if tokens[position] in {".", "source"} and (response is None or any(
                 os.path.normpath(token) == os.path.normpath(response) for token in tokens[position + 1:end])):
             return "shell-source"
@@ -305,7 +333,9 @@ def rsp_callers(command, response):
                         after_dash = dash is not None and index > dash
                         callers.append((name + " --" if name in {"header-abi-dumper", "clang-tidy"} and after_dash else name, True))
             else:
-                callers.append((Path(tokens[program]).name, False))
+                invocation = source_reads_module().r8_invocation(tokens[program:end]) if "r8" in command else None
+                reader = {"compat": "r8-compat-proguard", "modern": "r8"}[invocation[0]] if invocation else name
+                callers.append((reader, False))
         if Path(tokens[program]).name in {"bash", "sh", "dash"}:
             for index in range(program + 1, end - 1):
                 if tokens[index].startswith("-") and "c" in tokens[index][1:]:
@@ -940,6 +970,7 @@ class Collector:
         self.aidl_frontend_inputs = set()
         self.aidl_search_paths = []
         self.rust_scan_cache = set()
+        self.r8_source_texts = {}
         self.compiler_search_paths = []
         self.command_temporaries = None
         self.cpp_reader = False
@@ -1134,24 +1165,49 @@ class Collector:
                 elif "python" in names:
                     self.require_python2(resolved, native_default=True)
 
+    def source_input_file(self, value, require_selected=True):
+        path = self.path(value)
+        if not beneath(path, self.source_root) or beneath(path, self.out_root) or self.produced(path):
+            raise CapsuleError("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
+        resolved = path.resolve()
+        if beneath(resolved, self.out_root) or self.produced(resolved):
+            raise CapsuleError("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
+        if self.excluded(path) or self.excluded(resolved) or (require_selected and not self.selected(path)):
+            raise CapsuleError("Additional SOURCE input is excluded: %s" % path)
+        if not path.exists():
+            raise CapsuleError("Missing additional SOURCE input: %s" % path)
+        if not path.is_file():
+            raise CapsuleError("Additional SOURCE input must be a file or symlink to a file: %s" % path)
+        return path
+
     def add_source_input(self, value):
         """Admit a required explicit SOURCE file without widening input roots."""
-        path = self.path(value)
-        resolved = path.resolve()
-        if (not beneath(path, self.source_root) or beneath(path, self.out_root)
-                or beneath(resolved, self.out_root) or self.produced(path) or self.produced(resolved)):
-            self.errors.add("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
-            return
-        if self.excluded(path) or self.excluded(resolved) or not self.selected(path):
-            self.errors.add("Additional SOURCE input is excluded: %s" % path)
-            return
-        if not path.exists():
-            self.errors.add("Missing additional SOURCE input: %s" % path)
-            return
-        if not path.is_file():
-            self.errors.add("Additional SOURCE input must be a file or symlink to a file: %s" % path)
+        try:
+            path = self.source_input_file(value)
+        except CapsuleError as error:
+            self.errors.add(str(error))
             return
         self.add(path, "notice-license-source")
+
+    def read_r8_source(self, value):
+        if value not in self.r8_source_texts:
+            path = self.source_input_file(value, require_selected=False)
+            if self.selected(path):
+                self.add(path, "r8-proguard-source")
+            try:
+                self.r8_source_texts[value] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise CapsuleError("Cannot read R8 SOURCE configuration: %s" % path) from error
+        return self.r8_source_texts[value]
+
+    def collect_r8_sources(self, edge):
+        if "r8" not in (edge.get("command") or "") and "r8" not in (edge.get("rspfile_content") or ""):
+            return
+        source_reads = source_reads_module()
+        try:
+            source_reads.r8_source_reads(edge, self.source_root, self.out_root, self.read_r8_source)
+        except source_reads.SourceReadError as error:
+            raise CapsuleError("R8 source input audit failed: " + str(error)) from error
 
     def require_python2(self, source_script=None, native_default=False):
         executable = self.source_root / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
@@ -2326,10 +2382,13 @@ class Collector:
     def command(self, command, context=None, cpp_reader=None, evaluated_shell=None, abi_reader=None):
         if evaluated_shell is None:
             evaluated_shell = context is None or context == "shell-source"
-        command = expand_shell_variables(command, shell_assignment_values(command))
-        analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
-        if context and not evaluated_shell:
-            tokens = command_tokens(context) + tokens
+        if context == "r8":
+            analyzed, tokens, children = command, ["r8", *source_reads_module().r8_flagfile_arguments(command)], {}
+        else:
+            command = expand_shell_variables(command, shell_assignment_values(command))
+            analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
+            if context and not evaluated_shell:
+                tokens = command_tokens(context) + tokens
         previous = self.command_temporaries
         previous_reader = self.cpp_reader
         previous_binding = self.cpp_binding
@@ -2343,7 +2402,7 @@ class Collector:
         temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
         self.command_temporaries = temporary_outputs
         try:
-            self.inspect_command(analyzed, tokens, temporary_outputs)
+            self.inspect_command(analyzed, tokens, temporary_outputs, r8_flagfile=context == "r8")
         finally:
             self.command_temporaries = previous
             self.cpp_reader = previous_reader
@@ -2364,7 +2423,7 @@ class Collector:
         finally:
             self.command_temporaries = previous
 
-    def inspect_command(self, command, tokens, temporary_outputs):
+    def inspect_command(self, command, tokens, temporary_outputs, r8_flagfile=False):
         # `bash -c '<script>'` bodies carry real tool invocations (Sbox wraps
         # commands this way); analyze each body like the shell would run it.
         for program, end in command_invocations(tokens):
@@ -2405,6 +2464,12 @@ class Collector:
         self.command_temporaries = temporary_outputs
         _, literal_tokens = self.tool_output_operands(tokens)
         literal_tokens.update(self.semantic_operands(tokens, response_literals))
+        if "r8" in command or r8_flagfile:
+            r8_config_indices = source_reads_module().r8_config_argument_indices
+            for program, end in command_invocations(tokens):
+                literal_tokens.update(program + index for index in r8_config_indices(tokens[program:end]))
+            if r8_flagfile:
+                literal_tokens.update(index for index, token in enumerate(tokens) if token.startswith("@"))
         source_invocations = {position for position, _ in command_invocations(tokens)
                               if self.evaluated_shell and tokens[position] in {".", "source"}}
         compiler_positions = set()
@@ -2634,7 +2699,12 @@ class Collector:
             self.tool_package(path)
         commands = [(command, None, command in self.compiler_commands, True, command in self.abi_commands) for command in self.manifest.get("commands", [])]
         commands.extend((command, None, False, True, False) for command in self.embedded_commands())
+        edge_commands = {edge.get("command") for edge in self.manifest.get("edges", [])}
+        for command in dict.fromkeys(entry[0] for entry in commands):
+            if command not in edge_commands:
+                self.collect_r8_sources({"command": command})
         for edge in self.manifest.get("edges", []):
+            self.collect_r8_sources(edge)
             if edge.get("command"):
                 commands.append((edge["command"], None, edge["command"] in self.compiler_commands, True, edge["command"] in self.abi_commands))
             if edge.get("rspfile_content"):
@@ -2645,7 +2715,7 @@ class Collector:
                 for reader, cpp_rsp in callers:
                     # These callers expand their arguments inline. Another
                     # reader of the same file still needs its own tool context.
-                    if reader in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"}:
+                    if reader in {"protoc", "aprotoc", "build_license_metadata", "soong_zip", "r8-compat-proguard"}:
                         continue
                     commands.append((edge["rspfile_content"], reader,
                                      cpp_rsp and edge.get("command") in self.compiler_commands,
@@ -2656,6 +2726,7 @@ class Collector:
             if not command or "sbox" not in command:
                 continue
             for inner in self.sandbox_inner_commands(command):
+                self.collect_r8_sources({"command": inner})
                 self.command(inner, evaluated_shell=True)
         # A leaf source can be declared by an edge without appearing in a command
         # line. Follow its own includes with the shard's declared search paths.

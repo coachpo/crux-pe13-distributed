@@ -98,7 +98,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 | D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
 | D4 | done | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | All 39 source capsules repacked, then real `41965423848` final task passed local metadata prebuild, both NOTICE XML outputs and system/vendor NOTICE files. This proves NOTICE, not the later final R8/image actions. |
-| D5 | active | rust_graph_review, rust_dependency_audit + root | Recognize actual R8 config-reader roles and close nested SOURCE ProGuard includes at packing, without reading warm OUT or changing native args. Preserve all graph/index/slice identities. Root will use full existing 39-capsule SOURCE-only repack and a new empty native cohort; no previous compiled diagnostic/production outputs. |
+| D5 | implemented, hosted source repack pending | rust_graph_review, rust_dependency_audit + root | Shared R8 config reader handles actual compatibility/modern invocations and recursively packs literal SOURCE includes, distinguishing annotations and output arguments. Frozen graph/slice/native args are unchanged; no OUT contents are used for this closure. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -448,6 +448,15 @@ Do not insert historical source overlays or old compiled artifact bindings.
   also checks final `SHA256SUMS`, decoder success, and the decompressed system
   image's size/SHA against its pre-compression identity. Scoped unit checks and
   synthetic transport cases passed; no actual PE image was processed locally.
+- D5 reuses a single R8 SOURCE config walker for source-read analysis and
+  capsule packing, including actual recorded/embedded invocation scopes. It
+  separates compatibility config arguments from modern input/output flags,
+  respects declared response grammar and base directories, and excludes OUT
+  contents and class/member annotations. Integrated 517 tests (16 environment
+  skips), actionlint and whitespace checks passed. Full hosted SOURCE-only
+  repack is next; graph/index/slices remain frozen and all native tasks will
+  start empty again. No diagnostic or production archive from earlier failed
+  executions will enter the new native cohort.
 
 ## Executor protocol
 
