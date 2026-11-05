@@ -46,6 +46,7 @@ TWRP_SLOT = {"lba": 0x34000, "blocks": 0x2924}
 DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
                   "rom-cepheus.itb", "recovery-cepheus.itb", "system.img.zst",
                   "vendor.img")
+DELIVERY_ASSET_NAMES = frozenset(DELIVERY_NAMES) - {"delivery-record.json", "SHA256SUMS"}
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = REPO_ROOT.parents[2]
@@ -97,18 +98,25 @@ def parse_tag(tag):
 
 
 def discover(repository):
-    releases = gh_json("api", "repos/%s/releases?per_page=100" % repository)
+    pages = gh_json("api", "--paginate", "--slurp",
+                    "repos/%s/releases?per_page=100" % repository)
+    releases = [release for page in pages for release in page]
     result = []
     for release in releases:
         parsed = parse_tag(release.get("tag_name", ""))
-        if not release.get("prerelease") or parsed is None:
+        if (release.get("draft") is not False or release.get("prerelease") is not True
+                or not release.get("published_at") or parsed is None):
             continue
-        names = {asset.get("name") for asset in release.get("assets", [])}
-        if not {"delivery-record.json", "SHA256SUMS"} <= names:
+        assets = release.get("assets", [])
+        by_name = {asset.get("name"): asset for asset in assets}
+        if not set(DELIVERY_NAMES) <= by_name.keys():
+            continue
+        if any(by_name[name].get("state") != "uploaded"
+               or type(by_name[name].get("size")) is not int
+               or by_name[name]["size"] <= 0 for name in DELIVERY_NAMES):
             continue
         result.append({"tag": release["tag_name"], **parsed,
-                       "published_at": release.get("published_at") or release.get("created_at"),
-                       "assets": release.get("assets", [])})
+                       "published_at": release["published_at"], "assets": assets})
     return result
 
 
@@ -150,8 +158,15 @@ def load_record(release, directory):
     download(release["tag"], ("delivery-record.json", "SHA256SUMS"), directory)
     record_path = directory / "delivery-record.json"
     sums_path = directory / "SHA256SUMS"
+    by_name = {asset["name"]: asset for asset in release["assets"]}
+    record_digest = sha256(record_path)
+    for path, digest in ((record_path, record_digest), (sums_path, sha256(sums_path))):
+        asset = by_name[path.name]
+        require(asset["size"] == path.stat().st_size, "release size differs for " + path.name)
+        if asset.get("digest"):
+            require(asset["digest"] == "sha256:" + digest, "release digest differs for " + path.name)
     sums = parse_sums(sums_path.read_text())
-    require(sums.get("delivery-record.json") == sha256(record_path),
+    require(sums.get("delivery-record.json") == record_digest,
             "delivery-record.json digest differs from SHA256SUMS")
     record = json.loads(record_path.read_text())
     validate_record(release, record, sums)
@@ -170,6 +185,8 @@ def validate_record(release, record, sums):
             "delivery is not the dev test-keys identity: " + fingerprint)
     delivery = record.get("delivery")
     require(isinstance(delivery, dict) and delivery, "delivery record has no assets")
+    require(set(delivery) == DELIVERY_ASSET_NAMES,
+            "delivery record asset set differs from the standard delivery")
     require(set(sums) == set(delivery) | {"delivery-record.json"},
             "SHA256SUMS and delivery assets differ")
     for name, identity in delivery.items():
@@ -220,7 +237,7 @@ def check(args):
     releases = discover(REPOSITORY)
     release = select_head(releases, args.tag)
     record, _ = load_record(release, args.cache / release["tag"])
-    device = device_state(args.serial)
+    device = None if args.no_device else device_state(args.serial)
     current = bool(device and device["incremental"] == release["build"])
     summary = {"channel": "dev", "repository": REPOSITORY, "tag": release["tag"],
                "build": release["build"], "fingerprint":
@@ -555,6 +572,8 @@ def main():
     check_parser = sub.add_parser("check")
     check_parser.add_argument("--tag")
     check_parser.add_argument("--json", action="store_true")
+    check_parser.add_argument("--no-device", action="store_true",
+                              help="verify channel discovery without querying ADB")
     check_parser.set_defaults(func=check)
 
     for name, function in (("plan", plan_command), ("update", update_command),

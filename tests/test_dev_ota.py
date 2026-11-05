@@ -1,6 +1,10 @@
 import json
+import contextlib
+import io
 import sys
+import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
@@ -22,7 +26,11 @@ def record_for(fingerprint="Xiaomi/crux/crux:13/TQ3A.230901.001.B1/2026101105:us
         "source_selection": {"env": {"BUILD_FINGERPRINT": fingerprint}},
         "delivery": {
             "boot.img": {"size": 10, "sha256": "a" * 64},
+            "recovery.img": {"size": 11, "sha256": "c" * 64},
+            "rom-cepheus.itb": {"size": 12, "sha256": "d" * 64},
+            "recovery-cepheus.itb": {"size": 13, "sha256": "e" * 64},
             "system.img.zst": {"size": 20, "sha256": "b" * 64},
+            "vendor.img": {"size": 14, "sha256": "f" * 64},
         },
         "fit_validation": {"release_ready": False, "development_adb": True},
         "gates": {"images": {"boot": {"failures": []}, "recovery": {"failures": []}}},
@@ -37,6 +45,8 @@ def release_for(record):
         "build": "2026101105",
         "version": 3,
         "published_at": "2026-10-21T20:25:31Z",
+        "draft": False,
+        "prerelease": True,
         "assets": [
             {"name": name, "size": identity["size"],
              "digest": "sha256:" + identity["sha256"]}
@@ -46,6 +56,24 @@ def release_for(record):
 
 
 class DevOtaTests(unittest.TestCase):
+    @staticmethod
+    def release_payload(tag="dev-pe13-2026101105-v3", **overrides):
+        names = (*dev_ota.DELIVERY_NAMES, "extra-not-used.bin")
+        payload = {
+            "tag_name": tag, "draft": False, "prerelease": True,
+            "published_at": "2026-10-21T20:25:31Z",
+            "assets": [{"name": name, "size": 100, "state": "uploaded"} for name in names],
+        }
+        payload.update(overrides)
+        return payload
+
+    def discover_payloads(self, *pages):
+        with mock.patch.object(dev_ota, "gh_json", return_value=list(pages)) as gh:
+            result = dev_ota.discover("owner/repo")
+        gh.assert_called_once_with("api", "--paginate", "--slurp",
+                                   "repos/owner/repo/releases?per_page=100")
+        return result
+
     def test_parse_tag(self):
         self.assertEqual(dev_ota.parse_tag("dev-pe13-2026101105-v3"),
                          {"build": "2026101105", "version": 3})
@@ -64,6 +92,63 @@ class DevOtaTests(unittest.TestCase):
         self.assertEqual(dev_ota.select_head(releases)["tag"], "dev-pe13-2026101105-v3")
         self.assertEqual(dev_ota.select_head(releases, "dev-pe13-2026101104-v9")["build"],
                          "2026101104")
+
+    def test_discover_requires_published_non_draft_complete_release_and_orders_numerically(self):
+        draft = self.release_payload("dev-pe13-2026101105-v99", draft=True)
+        starter = self.release_payload("dev-pe13-2026101106-v1",
+                                       assets=self.release_payload()["assets"][:2])
+        eligible_newer = self.release_payload("dev-pe13-2026101105-v10")
+        eligible_older = self.release_payload("dev-pe13-2026101105-v9")
+        releases = self.discover_payloads([draft, starter, eligible_older],
+                                          [eligible_newer])
+        self.assertEqual([item["tag"] for item in releases],
+                         ["dev-pe13-2026101105-v9", "dev-pe13-2026101105-v10"])
+        self.assertEqual(dev_ota.select_head(releases)["tag"],
+                         "dev-pe13-2026101105-v10")
+
+    def test_discover_rejects_zero_sized_required_asset(self):
+        release = self.release_payload()
+        release["assets"][dev_ota.DELIVERY_NAMES.index("vendor.img")]["size"] = 0
+        self.assertEqual(self.discover_payloads([release]), [])
+
+    def test_discover_rejects_unfinished_required_asset(self):
+        release = self.release_payload()
+        release["assets"][dev_ota.DELIVERY_NAMES.index("vendor.img")]["state"] = "starter"
+        self.assertEqual(self.discover_payloads([release]), [])
+
+    def test_load_record_checks_cached_metadata_against_release(self):
+        record = record_for()
+        release = release_for(record)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "delivery-record.json"
+            manifest.write_text(json.dumps(record))
+            sums = sums_for(record)
+            sums[manifest.name] = dev_ota.sha256(manifest)
+            checksums = root / "SHA256SUMS"
+            checksums.write_text("".join(f"{digest}  {name}\n" for name, digest in sums.items()))
+            for path in (manifest, checksums):
+                release["assets"].append({"name": path.name, "size": path.stat().st_size,
+                                          "digest": "sha256:" + dev_ota.sha256(path)})
+            self.assertEqual(dev_ota.load_record(release, root), (record, sums))
+            checksums.write_text(checksums.read_text().replace("\n", "\r"))
+            with self.assertRaisesRegex(dev_ota.DevOtaError, "release digest differs for SHA256SUMS"):
+                dev_ota.load_record(release, root)
+
+    def test_check_no_device_skips_adb(self):
+        release = {"tag": "dev-pe13-2026101105-v3", "build": "2026101105",
+                   "version": 3, "published_at": "2026-10-21T20:25:31Z"}
+        record = {"source_selection": {"env": {"BUILD_FINGERPRINT": "fingerprint"}}}
+        args = type("Args", (), {"tag": None, "cache": Path("cache"),
+                                  "serial": "serial", "no_device": True,
+                                  "json": True})()
+        with mock.patch.object(dev_ota, "discover", return_value=[release]), \
+                mock.patch.object(dev_ota, "load_record", return_value=(record, {})), \
+                mock.patch.object(dev_ota, "device_state") as device_state, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(dev_ota.check(args), 0)
+        device_state.assert_not_called()
+        self.assertIsNone(json.loads(output.getvalue())["device"])
 
     def test_parse_sums(self):
         text = "a" * 64 + "  boot.img\n" + "b" * 64 + "  system.img.zst\n"
@@ -92,6 +177,13 @@ class DevOtaTests(unittest.TestCase):
         record = record_for()
         sums = sums_for(record)
         sums["boot.img"] = "d" * 64
+        with self.assertRaises(dev_ota.DevOtaError):
+            dev_ota.validate_record(release_for(record), record, sums)
+
+    def test_validate_record_rejects_incomplete_delivery_asset_set(self):
+        record = record_for()
+        record["delivery"].pop("vendor.img")
+        sums = sums_for(record)
         with self.assertRaises(dev_ota.DevOtaError):
             dev_ota.validate_record(release_for(record), record, sums)
 

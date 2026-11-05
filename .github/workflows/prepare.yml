@@ -46,7 +46,7 @@ on:
         default: ""
         type: string
       output_tag:
-        description: Release tag for full mode (created when missing)
+        description: Build-input release tag for full mode (dev-pe13-* is reserved for ROM deliveries)
         required: false
         default: ""
         type: string
@@ -74,6 +74,12 @@ jobs:
       PROBE_SHARDS: ${{ inputs.probe_shards }}
       PACK_SHARDS: ${{ inputs.pack_shards }}
     steps:
+      - name: Reject a Dev ROM tag for build inputs
+        if: inputs.mode == 'full' && startsWith(inputs.output_tag, 'dev-pe13-')
+        run: |
+          echo "::error::dev-pe13-* tags are reserved for release-dev.yml; choose a build-input tag."
+          exit 1
+
       - name: Record disk space before cleanup
         shell: bash
         run: |

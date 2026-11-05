@@ -1,10 +1,8 @@
 name: Assemble the PE13 development delivery
 run-name: PE13 dev delivery ${{ inputs.build_number }}
 
-# Packages the four development images and both U-Boot FITs from the successful
-# distributed producer artifacts, runs the AVB/v1/cpio/FIT gates, and (when
-# publish=true) creates the immutable development prerelease after verifying the
-# uploaded GitHub asset digests against SHA256SUMS. No feed change is made.
+# Historical frozen-input path: packages four development images and two
+# U-Boot FITs and retains the delivery and gate evidence as an Actions artifact.
 on:
   workflow_dispatch:
     inputs:
@@ -28,20 +26,9 @@ on:
         required: true
         default: inputs/dev-source-revisions-2026101105.json
         type: string
-      release_tag:
-        description: Prerelease tag for the development delivery
-        required: true
-        default: dev-pe13-2026101105
-        type: string
-      publish:
-        description: Publish the verified delivery as a prerelease
-        required: true
-        default: "false"
-        type: choice
-        options: ["false", "true"]
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -59,7 +46,6 @@ jobs:
       PRODUCERS: ${{ github.workspace }}/${{ inputs.producers }}
       IDENTITY: ${{ github.workspace }}/${{ inputs.identity }}
       SOURCE_SELECTION: ${{ github.workspace }}/${{ inputs.source_selection }}
-      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Record disk space before cleanup
         shell: bash
@@ -132,48 +118,6 @@ jobs:
             --identity "$IDENTITY" \
             --build-number "$BUILD_NUMBER" \
             --source-selection "$SOURCE_SELECTION"
-      - name: Publish the verified development prerelease
-        if: ${{ inputs.publish == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          exec > >(tee "$RUNNER_TEMP/result/publish.log") 2>&1
-          python3 - <<'PY'
-          import hashlib, json, os, subprocess
-          from pathlib import Path
-          delivery = Path(os.environ['RUNNER_TEMP']) / 'result' / 'delivery'
-          tag = os.environ['RELEASE_TAG']
-          sums = {}
-          for line in (delivery / 'SHA256SUMS').read_text().splitlines():
-              digest, name = line.split('  ', 1)
-              sums[name] = digest
-          assets = sorted(path.name for path in delivery.iterdir()
-                          if path.is_file() and path.name != 'SHA256SUMS')
-          if set(assets) != set(sums):
-              raise SystemExit('delivery files and SHA256SUMS differ')
-          view = subprocess.run(['gh', 'release', 'view', tag, '--repo', os.environ['GH_REPO'],
-                                 '--json', 'tagName'], capture_output=True, text=True)
-          if view.returncode != 0:
-              subprocess.run(['gh', 'release', 'create', tag, '--repo', os.environ['GH_REPO'],
-                              '--prerelease', '--title', 'Crux PE13 development delivery ' + os.environ['BUILD_NUMBER'],
-                              '--notes', 'Cloud-built aosp_crux-userdebug images and U-Boot FITs. '
-                                         'Assets were verified against the job SHA256SUMS before publication. '
-                                         'No OTA feed change; this is a development delivery.'],
-                             check=True)
-          subprocess.run(['gh', 'release', 'upload', tag,
-                          *[str(delivery / name) for name in assets],
-                          str(delivery / 'SHA256SUMS'), '--repo', os.environ['GH_REPO'], '--clobber'],
-                         check=True)
-          published = json.loads(subprocess.run(['gh', 'release', 'view', tag, '--repo', os.environ['GH_REPO'],
-                                                 '--json', 'assets'], capture_output=True, text=True, check=True).stdout)
-          actual = {asset['name']: asset['digest'].removeprefix('sha256:') for asset in published['assets']}
-          failures = [name for name, digest in sums.items() if actual.get(name) != digest]
-          if failures:
-              raise SystemExit('uploaded asset digests differ: ' + ' '.join(failures))
-          (Path(os.environ['RUNNER_TEMP']) / 'result' / 'published.json').write_text(
-              json.dumps({'tag': tag, 'assets': assets, 'verified': sorted(sums)}, indent=2) + '\n')
-          print(json.dumps({'tag': tag, 'assets': len(assets), 'verified': len(sums)}, indent=2))
-          PY
       - name: Upload the delivery and assembly evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
