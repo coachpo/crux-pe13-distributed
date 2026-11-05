@@ -86,8 +86,8 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | New cold execution `42018017251`, worker `9300985475998818d5938a55d11ee9ed03732d83`, passed bootstrap and began wave 0 using R8-complete pack `42001383332`. All 39 native tasks, final R8/image actions and summary remain required. No previous compiled output is admitted. |
-| V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
+| V1 | done | root + read-only observer | Cold execution `42018017251`, worker `9300985475998818d5938a55d11ee9ed03732d83`, passed attempt 1: all 39 native jobs, all eight waves, final R8/NOTICE/images and successful producer summary. No previous compiled output was admitted. |
+| V2 | active | root + read-only observer | Assembly/validation `42059779500` uses only the verified `42018017251` context, summary and producer artifacts. Real gates, unpublished artifact, compact evidence and usage report remain required. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
@@ -98,7 +98,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 | D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
 | D4 | done | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | All 39 source capsules repacked, then real `41965423848` final task passed local metadata prebuild, both NOTICE XML outputs and system/vendor NOTICE files. This proves NOTICE, not the later final R8/image actions. |
-| D5 | implemented, real R8 pending | rust_graph_review, rust_dependency_audit + root | Hosted `42001383332` successfully repacked all 39; verified final capsule adds exactly the required pinned SystemUI config and no OUT data. The real native R8 and following final image actions remain required. |
+| D5 | done | rust_graph_review, rust_dependency_audit + root | Hosted source-only `42001383332` added the pinned SystemUI config. Actual final native task `127336015735` of `42018017251` passed R8, NOTICE and remaining system/vendor image actions. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -474,6 +474,17 @@ Do not insert historical source overlays or old compiled artifact bindings.
   execution `42018017251` passed bootstrap on worker
   `9300985475998818d5938a55d11ee9ed03732d83` and started all thirteen wave-0
   tasks. It cannot use any compiled archive from the earlier attempts.
+- V1 completed successfully in `42018017251`, attempt 1, at 15:51:12 UTC
+  on 2026-11-05. All 49 workflow jobs passed, including 39 native tasks and
+  the summary. Final native job `127336015735` passed the complete task.
+  Root downloaded and checked summary artifact `13431450207`: all 39 bindings
+  refer to this exact execution and worker, using pack `42001383332` and the
+  unchanged source/graph/index/slice identities. No rerun, prior compiled
+  outputs, local build or larger/self-hosted runner entered this cohort.
+- V2 assembly/validation `42059779500` was dispatched after V1 was confirmed
+  completed/success, with `build_run=42018017251`. It must finish with all
+  image, property, AVB/v1, cpio, FIT and delivery integrity gates and a verified
+  Actions artifact; the compile success alone does not accept the delivery.
 
 ## Executor protocol
 
