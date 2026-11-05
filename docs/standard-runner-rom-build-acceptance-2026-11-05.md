@@ -65,7 +65,8 @@ host-only result.
 ## Re-run without a local build environment
 
 In the repository's **Actions** page, run **Compile fresh PE13 on standard
-runners** with `pack_run=42001383332`, `shard_run=41769467686`, and
+runners** (`build-standard.yml`) with the defaults
+`pack_run=42001383332`, `shard_run=41769467686`, and
 `build_number=2026110303`. Wait for the successful 39-task summary. Then run
 **Assemble and verify a fresh PE13 build without publication** with `build_run`
 equal to the new successful compile run ID. Download
@@ -87,13 +88,20 @@ gh run download ASSEMBLY_RUN --repo coachpo/crux-pe13-distributed \
   --name cloud-fresh-rom-BUILD_RUN
 ```
 
-The defaults are for this admitted snapshot. For a different source or build
-identity, run [standard preparation](standard-runner-freeze.md) again and
-review the new graph/manifest/plan and capsule registry before admitting it.
-Do not point this build at historical incomplete capsule revisions or a legacy
-reuse-state. SOURCE artifacts are time-limited (currently seven days), prep
-artifacts fourteen days, and compile/assembly artifacts thirty days. Standard
-runner compute and artifact storage are separate considerations; refer to
+The defaults require the live graph artifact from `41677764699`, the shard
+artifact from `41769467686`, and the registry and all 39 capsules from
+`42001383332`. A compact receipt in Git is not a replacement for an Actions
+payload. The graph artifact is scheduled to expire on **2026-11-17**.
+Check availability before dispatch.
+For expired preparation inputs or a new build identity, follow
+[standard preparation and admission](standard-runner-freeze.md#3-admit-preparation-for-a-cold-compile).
+Entering a new run ID alone does not admit it. Do not use an incomplete
+historical registry or a legacy reuse-state.
+
+SOURCE artifacts are retained seven days, prep artifacts fourteen days, and
+compile/assembly artifacts thirty days. Assemble before the compile inputs
+expire. Standard runner compute and artifact storage are separate
+considerations; refer to
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 for account-specific storage allowances.
 

@@ -214,10 +214,13 @@ graph, index, shard and pack run IDs, and the relevant receipts/logs. An unverif
 required gate leaves acceptance pending; an intentionally skipped stage with a
 compatible accepted upstream run is a supported resume, not a missing gate.
 The accepted build `2026110303` uses graph/source run `41677764699`, index run
-`41685367061`, successful shard job `126375516290` in `41769467686`, and final
-pack run `41779197896`. All 39 capsules and its aggregate registry passed.
-See [acceptance](standard-runner-preparation-acceptance-2026-11-04.md) and
-[the execution record](standard-runner-freeze-plan.md) for exact identities.
+`41685367061`, and successful shard job `126375516290` in `41769467686`.
+Pack run `41779197896` passed the original
+[preparation acceptance](standard-runner-preparation-acceptance-2026-11-04.md),
+but later native runs exposed additional SOURCE reads. The final admitted pack
+is **`42001383332`**, with the same graph/index/shard identity and all 39
+repacked cold capsules. See the [ROM acceptance](standard-runner-rom-build-acceptance-2026-11-05.md)
+for the complete cold compile and assembly evidence.
 
 Artifacts are temporary Actions records: `cloud-source-<nn>` and
 `failure-source-<nn>` are retained for 7 days; `cloud-graph-<build>`,
@@ -227,3 +230,19 @@ Artifacts are temporary Actions records: `cloud-source-<nn>` and
 These artifacts can be regenerated from the pinned source manifest, workflow
 code and run inputs, subject to continued availability of their pinned public
 source revisions and required archive sources.
+
+## 3. Admit preparation for a cold compile
+
+Preparing a new graph or repacking an expired snapshot does not automatically
+admit a new pack run in `build-standard.yml`. Review the resulting graph and
+index receipts, source manifest, plan, 39 capsule identities and registry.
+For a replacement, record the reviewed registry and update its entry in
+`scripts/cloud_build_plan.py` (`PACK_REGISTRIES`) and the workflow defaults.
+If the graph is regenerated, also review and update the pinned graph summary
+and index receipt read by bootstrap; they bind the exact graph receipt and the
+independent image identity. If source or graph shape changes, review the
+runtime/kernel policy, slice and producer requirements and image/FIT
+expectations against the new inputs. Do not bypass the admission checks.
+
+Once the replacement is admitted, follow the
+[compile → assemble runbook](standard-runner-rom-build-acceptance-2026-11-05.md#re-run-without-a-local-build-environment).

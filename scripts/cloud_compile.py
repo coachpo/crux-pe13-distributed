@@ -59,8 +59,7 @@ def _absolute(value, name):
     return Path(os.path.abspath(value))
 
 
-def validate_context(context: dict, shard_id: str, environment=None,
-                     check_runner=True) -> tuple[dict, dict]:
+def validate_context(context: dict, shard_id: str, environment=None) -> tuple[dict, dict]:
     if not isinstance(context, dict) or context.get("schema_version") != 1:
         raise CompileError("Unsupported fresh-build context schema")
     required = set(CONTEXT_IDENTITY_FIELDS) | {"waves", "tasks"}
@@ -166,10 +165,9 @@ def validate_context(context: dict, shard_id: str, environment=None,
     environment = os.environ if environment is None else environment
     expected_runner = {"execution_id": "GITHUB_RUN_ID", "worker_commit": "GITHUB_SHA",
                        "repository": "GITHUB_REPOSITORY"}
-    if check_runner:
-        for field, variable in expected_runner.items():
-            if environment.get(variable) != str(context[field]):
-                raise CompileError(f"Fresh-build context {field} differs from this Actions run")
+    for field, variable in expected_runner.items():
+        if environment.get(variable) != str(context[field]):
+            raise CompileError(f"Fresh-build context {field} differs from this Actions run")
     identity = {field: context[field] for field in FRESH_BUILD_FIELDS}
     return context, identity
 
@@ -301,38 +299,6 @@ def _verify_runtime_inputs(task: dict, dependency_receipts: dict,
     return admitted
 
 
-def _validate_diagnostic_parent(current: dict, parent: dict, shard_id: str,
-                                environment: dict) -> tuple[dict, dict]:
-    parent, parent_identity = validate_context(parent, shard_id, environment, check_runner=False)
-    compare_fields = ("repository", "build_number", "source_root", "out_root",
-                      "pack_run", "shard_run", "graph_run", "index_run", "source_run",
-                      "source_manifest_sha256", "plan_sha256", "graph_index", "waves", "tasks")
-    for field in compare_fields:
-        if parent.get(field) != current.get(field):
-            raise CompileError("Diagnostic parent differs from current lineage at " + field)
-    if parent["execution_id"] == current["execution_id"]:
-        raise CompileError("Diagnostic parent must be a distinct prior execution")
-    return parent, parent_identity
-
-
-def _diagnostic_process_limits(environment: dict) -> dict:
-    def getconf(name):
-        result = subprocess.run(["getconf", name], capture_output=True, text=True)
-        return result.stdout.strip() if result.returncode == 0 else None
-    values = [os.fsencode(key) + b"=" + os.fsencode(value) + b"\0"
-              for key, value in environment.items()]
-    return {
-        "argv_bytes": sum(len(os.fsencode(arg)) + 1 for arg in sys.argv),
-        "argv_max_string_bytes": max((len(os.fsencode(arg)) + 1 for arg in sys.argv), default=0),
-        "environment_bytes": sum(map(len, values)),
-        "environment_max_string_bytes": max((len(value) for value in values), default=0),
-        "arg_max": getconf("ARG_MAX"),
-        "page_size": getconf("PAGESIZE"),
-        "stack_limit": subprocess.run(["bash", "-lc", "ulimit -s"], capture_output=True,
-                                       text=True).stdout.strip(),
-    }
-
-
 def _validate_short_kernel_source(context: dict, shard_id: str, source_root: Path) -> Path:
     kernel_output = str(Path(context["out_root"]) / "target/product/crux/obj/KERNEL_OBJ")
     if context.get("assembly_exports", {}).get(kernel_output) != shard_id:
@@ -372,26 +338,16 @@ def _unmount_short_source_alias():
 
 
 def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
-                  staging: Path, environment=None, diagnostic_context_path=None,
-                  short_kernel_source=False) -> tuple[int, dict]:
+                  staging: Path, environment=None) -> tuple[int, dict]:
     environment = dict(os.environ if environment is None else environment)
     context = worker.read_json(context_path)
     context, fresh_identity = validate_context(context, shard_id, environment)
-    diagnostic_parent = diagnostic_identity = None
-    if diagnostic_context_path is not None:
-        diagnostic_parent, diagnostic_identity = _validate_diagnostic_parent(
-            context, worker.read_json(diagnostic_context_path), shard_id, environment)
     kernel_output = str(Path(context["out_root"]) / "target/product/crux/obj/KERNEL_OBJ")
     owns_kernel_output = context.get("assembly_exports", {}).get(kernel_output) == shard_id
     alias_policy = context.get("kernel_source_alias")
     if alias_policy is not None and alias_policy != SHORT_KERNEL_SOURCE_POLICY:
         raise CompileError("Context kernel_source_alias policy is not the validated probe policy")
-    if short_kernel_source and diagnostic_parent is None and alias_policy is None:
-        raise CompileError("Production short-source mode requires the validated context policy")
-    if short_kernel_source and not owns_kernel_output:
-        raise CompileError("Short-source mode is restricted to the task owning the kernel output")
-    alias_enabled = bool((alias_policy is not None and owns_kernel_output)
-                         or (short_kernel_source and diagnostic_parent is not None))
+    alias_enabled = alias_policy is not None and owns_kernel_output
     task = context["tasks"][shard_id]
     source_root = Path(context["source_root"])
     out_root = Path(context["out_root"])
@@ -410,14 +366,6 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         raise CompileError("Worker receipt already exists; refusing to overwrite")
     receipt = {"schema_version": 1, "id": shard_id, "status": "failed",
                "fresh_build": fresh_identity}
-    if diagnostic_parent is not None:
-        receipt["diagnostic_only"] = True
-        receipt["diagnostic_parent"] = {
-            "execution_id": diagnostic_parent["execution_id"],
-            "worker_commit": diagnostic_parent["worker_commit"],
-            "fresh_build": diagnostic_identity,
-        }
-    diagnostic_process_limits = None
     source_alias_mounted = False
     runtime_source_alias = None
     admitted_runtime_inputs = []
@@ -466,27 +414,25 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
 
         dependency_dirs, bindings = [], []
         dependency_receipts, dependency_directories = {}, {}
-        dependency_context = diagnostic_parent or context
-        dependency_identity = diagnostic_identity or fresh_identity
         for dependency_id in task["depends_on"]:
             dependency_dir = staging / "dependencies" / dependency_id
             dependency_dir.mkdir(parents=True, exist_ok=False)
             dependency_artifact = "shard-" + dependency_id
             downloaded = cloud_artifacts.download_artifacts(
-                str(dependency_context["execution_id"]), dependency_context["repository"], dependency_dir,
+                str(context["execution_id"]), context["repository"], dependency_dir,
                 token=token, name=dependency_artifact)
             if len(downloaded) != 1 or downloaded[0]["name"] != dependency_artifact:
                 raise CompileError("Current build run did not return dependency artifact: " + dependency_id)
             dependency_directory = Path(downloaded[0]["destination"])
             dependency_receipt = _read_fresh_dependency(dependency_id, dependency_directory,
-                                                        dependency_context, dependency_identity)
+                                                        context, fresh_identity)
             dependency_receipts[dependency_id] = dependency_receipt
             dependency_directories[dependency_id] = dependency_directory
             dependency_dirs.append(dependency_directory)
-            bindings.append({"id": dependency_id, "run_id": str(dependency_context["execution_id"]),
+            bindings.append({"id": dependency_id, "run_id": str(context["execution_id"]),
                              "artifact": dependency_artifact,
-                             "expected_worker_commit": dependency_context["worker_commit"],
-                             "expected_manifest_sha256": dependency_context["tasks"][dependency_id]["manifest_sha256"]})
+                             "expected_worker_commit": context["worker_commit"],
+                             "expected_manifest_sha256": context["tasks"][dependency_id]["manifest_sha256"]})
 
         admitted_runtime_inputs = _verify_runtime_inputs(task, dependency_receipts, dependency_directories)
 
@@ -498,27 +444,18 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         for name in auth_names:
             os.environ.pop(name, None)
         previous_makeflags = os.environ.get("MAKEFLAGS", "")
-        makeflags_modified = diagnostic_parent is not None or alias_enabled
-        if makeflags_modified:
+        if alias_enabled:
             flags = previous_makeflags.split()
-            if diagnostic_parent is not None and "--trace" not in flags:
-                flags.append("--trace")
-            if alias_enabled and "srctree=/k" not in flags:
+            if "srctree=/k" not in flags:
                 flags.append("srctree=/k")
-            os.environ["MAKEFLAGS"] = " ".join(flags)
-            if alias_enabled:
-                runtime_source_alias["makeflags"] = os.environ["MAKEFLAGS"]
-                receipt["runtime_source_alias"] = runtime_source_alias
-        if diagnostic_parent is not None:
-            diagnostic_process_limits = _diagnostic_process_limits(os.environ)
-            receipt["diagnostic_process_limits"] = diagnostic_process_limits
+            runtime_source_alias["makeflags"] = os.environ["MAKEFLAGS"] = " ".join(flags)
         try:
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
                                       dependency_dirs, jobs=4, dependency_bindings=bindings,
                                       extra_exports=task.get("extra_exports", []),
                                       prebuild_targets=admitted_local_runtime_targets)
         finally:
-            if makeflags_modified:
+            if alias_enabled:
                 if previous_makeflags:
                     os.environ["MAKEFLAGS"] = previous_makeflags
                 else:
@@ -540,16 +477,7 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         receipt["fresh_build"] = fresh_identity
         receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
         receipt["admitted_local_runtime_targets"] = admitted_local_runtime_targets
-        if diagnostic_parent is not None:
-            receipt["diagnostic_only"] = True
-            receipt["diagnostic_parent"] = {
-                "execution_id": diagnostic_parent["execution_id"],
-                "worker_commit": diagnostic_parent["worker_commit"],
-                "fresh_build": diagnostic_identity,
-            }
-            receipt["diagnostic_process_limits"] = diagnostic_process_limits
-        if alias_enabled:
-            runtime_source_alias["makeflags"] = " ".join(flags)
+        if runtime_source_alias is not None:
             receipt["runtime_source_alias"] = runtime_source_alias
         receipt["status"] = result.get("status", "failed")
         if receipt["status"] != "success" and "error" not in receipt:
@@ -562,14 +490,6 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 pass
         receipt.update({"schema_version": 1, "id": shard_id, "status": "failed",
                        "fresh_build": fresh_identity, "error": str(error)})
-        if diagnostic_parent is not None:
-            receipt.update({"diagnostic_only": True, "diagnostic_parent": {
-                "execution_id": diagnostic_parent["execution_id"],
-                "worker_commit": diagnostic_parent["worker_commit"],
-                "fresh_build": diagnostic_identity,
-            }})
-            if diagnostic_process_limits is not None:
-                receipt["diagnostic_process_limits"] = diagnostic_process_limits
         if runtime_source_alias is not None:
             receipt["runtime_source_alias"] = runtime_source_alias
         receipt["admitted_runtime_inputs"] = admitted_runtime_inputs
@@ -591,13 +511,10 @@ def main(argv=None) -> int:
     parser.add_argument("--id", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--staging", required=True)
-    parser.add_argument("--dependency-context")
-    parser.add_argument("--short-kernel-source", action="store_true")
     args = parser.parse_args(argv)
     try:
         code, receipt = compile_shard(Path(args.context), args.id, Path(args.output),
-                                      Path(args.staging), diagnostic_context_path=args.dependency_context,
-                                      short_kernel_source=args.short_kernel_source)
+                                      Path(args.staging))
     except (CompileError, OSError, ValueError, json.JSONDecodeError) as error:
         print("cloud_compile: " + str(error), file=sys.stderr)
         return 1

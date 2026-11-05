@@ -2,6 +2,9 @@
 
 Plan: standard-runner-build / revision 13 / complete (2026-11-05).
 
+Historical execution record. For current dispatch and admitted inputs, see the
+[standard-runner runbook](standard-runner-rom-build-acceptance-2026-11-05.md).
+
 ## Authority, baseline and acceptance
 
 The owner explicitly authorized modifying/pushing workflows and triggering Actions
@@ -54,13 +57,16 @@ If repairs require a later fresh lineage, root must revise the explicit resume
 contract before using any earlier output; that permission is not implicit.
 
 The first execution produced 15 successful fresh tasks, then its kernel failed.
-A probe-only exception now permits those same-task fresh dependencies from
+A one-off probe exception permitted those same-task fresh dependencies from
 execution `41789247344` / worker `17f59f6` for a diagnostic kernel execution with
 identical capsule/plan/manifest/source identities. This does not admit any output
 from before this task or any legacy reuse-state. The probe records its parent,
 is marked diagnostic-only, uploads a probe artifact rather than `shard-ID`, and
 cannot satisfy the production summary/assembly guards. Default production
 compilation remains empty/current-run-only; no general resume permission is added.
+The one-off workflow and its cross-run worker branch are archived in
+[`2bbdb90` Git history](https://github.com/coachpo/crux-pe13-distributed/tree/2bbdb906c210451413bb69b7be852d72f57c1ced);
+the tested `/k` alias remains in the production runtime policy.
 
 A worker downloads only its admitted `cloud-capsule-ID` artifact, verifies the
 tar.zst byte identity against the registry, restores the cold capsule, and downloads

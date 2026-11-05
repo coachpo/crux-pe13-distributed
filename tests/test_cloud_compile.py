@@ -73,7 +73,6 @@ class CloudCompileTests(unittest.TestCase):
         self.staging = self.root / "staging"
         self.downloads = []
         self.worker_calls = []
-        self.active_dependency_context = self.fresh_context
         self.runner_env = {"GITHUB_RUN_ID": self.fresh_context["execution_id"],
                            "GITHUB_RUN_ATTEMPT": "1",
                            "GITHUB_SHA": self.fresh_context["worker_commit"],
@@ -107,17 +106,15 @@ class CloudCompileTests(unittest.TestCase):
             archive_path.write_bytes(self.archive)
             return [{"name": name, "id": 701, "destination": str(target)}]
         dependency_id = name.removeprefix("shard-")
-        dependency_context = {field: self.active_dependency_context[field]
-                              for field in cloud_compile.FRESH_BUILD_FIELDS}
-        task = self.active_dependency_context["tasks"][dependency_id]
+        task = self.fresh_context["tasks"][dependency_id]
         exported_paths = task.get("extra_exports", [])
         receipt = {"schema_version": 1, "id": dependency_id, "status": "success",
-                   "run_id": self.active_dependency_context["execution_id"],
-                   "run_attempt": "1", "worker_commit": self.active_dependency_context["worker_commit"],
+                   "run_id": self.fresh_context["execution_id"],
+                   "run_attempt": "1", "worker_commit": self.fresh_context["worker_commit"],
                    "manifest_sha256": task["manifest_sha256"],
                    "source_root": self.fresh_context["source_root"],
                    "out_root": self.fresh_context["out_root"],
-                   "fresh_build": dependency_context,
+                   "fresh_build": self.identity(),
                    "additional_exports": list(exported_paths),
                    "outputs": [{"path": path, "type": "file", "mode": 0o644,
                                 "size": 4, "sha256": "9" * 64} for path in exported_paths],
@@ -158,12 +155,11 @@ class CloudCompileTests(unittest.TestCase):
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
 
-    def run_compile(self, diagnostic_context_path=None, short_kernel_source=False):
+    def run_compile(self):
         with mock.patch.dict(os.environ, self.runner_env, clear=True), \
                 mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts", side_effect=self.fake_download), \
                 mock.patch.object(cloud_compile.subprocess, "run", side_effect=self.fake_tar), \
                 mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker), \
-                mock.patch.object(cloud_compile, "_diagnostic_process_limits", return_value={"arg_max": "2097152"}), \
                 mock.patch.object(cloud_compile, "_mount_short_source_alias",
                                   return_value={"source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
                                                 "alias": "/k", "mount": "bind"}) as mount, \
@@ -171,9 +167,7 @@ class CloudCompileTests(unittest.TestCase):
             self.mount_calls = mount
             self.unmount_calls = unmount
             return cloud_compile.compile_shard(self.context_path, self.shard_id,
-                                                self.output, self.staging,
-                                                diagnostic_context_path=diagnostic_context_path,
-                                                short_kernel_source=short_kernel_source)
+                                               self.output, self.staging)
 
     def test_fresh_capsule_worker_records_context_and_disables_auth_in_build_child(self):
         code, receipt = self.run_compile()
@@ -551,56 +545,7 @@ class CloudCompileTests(unittest.TestCase):
         self.assertIn("source_root must be cold", receipt["error"])
         download.assert_not_called()
 
-    def test_diagnostic_parent_accepts_only_same_fresh_lineage_and_marks_probe(self):
-        dependency_id = self.shard_id
-        consumer_id = "w001-s000"
-        self.fresh_context["waves"] = [[dependency_id], [consumer_id]]
-        self.fresh_context["tasks"][consumer_id] = {
-            "id": consumer_id, "wave": 1, "depends_on": [dependency_id],
-            "manifest_sha256": self.manifest_sha, "archive": consumer_id + ".tar.zst",
-            "archive_bytes": len(b"consumer capsule"),
-            "archive_sha256": hashlib.sha256(b"consumer capsule").hexdigest(),
-        }
-        self.fresh_context["tasks"][dependency_id]["wave"] = 0
-        self.shard_id = consumer_id
-        self.archive = b"consumer capsule"
-        self.fresh_context["tasks"][consumer_id]["archive_bytes"] = len(self.archive)
-        self.fresh_context["tasks"][consumer_id]["archive_sha256"] = hashlib.sha256(self.archive).hexdigest()
-        self.context_path.write_text(json.dumps(self.fresh_context))
-        parent = dict(self.fresh_context)
-        parent["execution_id"] = "41789247344"
-        parent["worker_commit"] = "e" * 40
-        parent_path = self.root / "parent.json"
-        parent_path.write_text(json.dumps(parent))
-        self.active_dependency_context = parent
-        self.runner_env["GITHUB_RUN_ID"] = self.fresh_context["execution_id"]
-        code, receipt = self.run_compile(parent_path)
-        self.assertEqual(code, 0, receipt.get("error"))
-        self.assertTrue(receipt["diagnostic_only"])
-        self.assertEqual(receipt["diagnostic_parent"]["execution_id"], parent["execution_id"])
-        download = next(item for item in self.downloads if item["name"] == "shard-" + dependency_id)
-        self.assertEqual(download["run"], parent["execution_id"])
-        self.assertEqual(self.worker_calls[0]["bindings"][0]["run_id"], parent["execution_id"])
-        self.assertEqual(self.worker_calls[0]["bindings"][0]["expected_worker_commit"], parent["worker_commit"])
-        self.assertIn("--trace", self.worker_calls[0]["makeflags"])
-        self.assertEqual(receipt["diagnostic_process_limits"]["arg_max"], "2097152")
-
-    def test_diagnostic_parent_rejects_changed_shared_lineage(self):
-        parent = dict(self.fresh_context)
-        parent["execution_id"] = "41789247344"
-        parent["pack_run"] = "11111111111"
-        parent_path = self.root / "parent.json"
-        parent_path.write_text(json.dumps(parent))
-        self.runner_env["GITHUB_RUN_ID"] = self.fresh_context["execution_id"]
-        with mock.patch.dict(os.environ, self.runner_env, clear=True), \
-                mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts") as download:
-            with self.assertRaisesRegex(cloud_compile.CompileError, "Diagnostic parent differs"):
-                cloud_compile.compile_shard(self.context_path, self.shard_id,
-                                            self.output, self.staging,
-                                            diagnostic_context_path=parent_path)
-        download.assert_not_called()
-
-    def test_default_mode_still_rejects_old_context_and_probe_trace_is_opt_in(self):
+    def test_compile_context_must_match_the_current_actions_run(self):
         old = dict(self.fresh_context)
         old["execution_id"] = "41789247344"
         with self.assertRaises(cloud_compile.CompileError):
@@ -615,46 +560,13 @@ class CloudCompileTests(unittest.TestCase):
             "path": cloud_compile.SHORT_KERNEL_SOURCE_PROJECT,
             "revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
         }]}
-        self.context_path.write_text(json.dumps(self.fresh_context))
-        parent = dict(self.fresh_context)
-        parent["execution_id"] = "41789247344"
-        parent_path = self.root / "parent.json"
-        parent_path.write_text(json.dumps(parent))
-        self.active_dependency_context = parent
-        return parent_path
+        self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
 
-    def test_short_source_experiment_is_pinned_opt_in_and_cleans_mount(self):
-        parent_path = self._prepare_short_source_context()
-        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
-        self.assertEqual(code, 0, receipt.get("error"))
-        self.mount_calls.assert_called_once()
-        self.unmount_calls.assert_called_once()
-        self.assertEqual(receipt["runtime_source_alias"], {
-            "source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
-            "alias": "/k", "mount": "bind",
-            "source_revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
-            "makeflags_addition": "srctree=/k",
-            "validation_policy": None,
-            "makeflags": "--trace srctree=/k",
-        })
-        self.assertIn("srctree=/k", self.worker_calls[0]["makeflags"])
-
-    def test_short_source_rejects_wrong_task_and_revision(self):
-        parent_path = self._prepare_short_source_context()
-        self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = "w000-s999"
-        self.context_path.write_text(json.dumps(self.fresh_context))
-        with mock.patch.dict(os.environ, self.runner_env, clear=True):
-            with self.assertRaisesRegex(cloud_compile.CompileError, "task owning the kernel output"):
-                cloud_compile.compile_shard(self.context_path, self.shard_id,
-                                            self.root / "result-owner", self.root / "staging-owner",
-                                            diagnostic_context_path=parent_path, short_kernel_source=True)
-
-        self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = self.shard_id
+    def test_short_source_rejects_unpinned_revision(self):
+        self._prepare_short_source_context()
         self.fresh_context["source_selection"]["projects"][0]["revision"] = "0" * 40
         self.context_path.write_text(json.dumps(self.fresh_context))
-        self.output = self.root / "result-revision"
-        self.staging = self.root / "staging-revision"
-        code, receipt = self.run_compile(parent_path, short_kernel_source=True)
+        code, receipt = self.run_compile()
         self.assertEqual(code, 1)
         self.assertIn("pinned kernel source revision", receipt["error"])
         self.mount_calls.assert_not_called()
@@ -669,21 +581,25 @@ class CloudCompileTests(unittest.TestCase):
 
     def test_validated_policy_auto_enables_only_kernel_owner_in_production(self):
         self._prepare_short_source_context()
-        self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
         self.context_path.write_text(json.dumps(self.fresh_context))
         code, receipt = self.run_compile()
         self.assertEqual(code, 0, receipt.get("error"))
         self.assertNotIn("diagnostic_only", receipt)
         self.assertEqual(receipt["fresh_build"], self.identity())
-        self.assertEqual(receipt["runtime_source_alias"]["validation_policy"],
-                         cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
+        self.assertEqual(receipt["runtime_source_alias"], {
+            "source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
+            "alias": "/k", "mount": "bind",
+            "source_revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
+            "makeflags_addition": "srctree=/k",
+            "validation_policy": cloud_compile.SHORT_KERNEL_SOURCE_POLICY,
+            "makeflags": "srctree=/k",
+        })
         self.assertEqual(self.worker_calls[0]["makeflags"], "srctree=/k")
         self.mount_calls.assert_called_once()
         self.unmount_calls.assert_called_once()
 
     def test_validated_policy_does_not_mount_for_nonowner_and_wrong_policy_fails(self):
         self._prepare_short_source_context()
-        self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
         self.fresh_context["assembly_exports"][str(self.out_root / "target/product/crux/obj/KERNEL_OBJ")] = "w009-s009"
         self.context_path.write_text(json.dumps(self.fresh_context))
         code, receipt = self.run_compile()

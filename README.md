@@ -1,100 +1,52 @@
 # Distributed Crux PixelExperience 13 development build
 
 This repository owns the GitHub Actions pipeline for the **development** Crux
-PE13 product (`aosp_crux-userdebug`): the four development images and the two
-U-Boot FITs, plus the single-user host-side dev OTA channel. It does not build,
-sign or publish the public release product. The former release/signing/public
-OTA pipeline is no longer part of this repository; its history remains in git.
+PE13 product (`aosp_crux-userdebug`): four development images and two U-Boot
+FITs. It does not build, sign or publish the public release product. The
+public `coachpo/crux-pe13-ota` R6 feed is frozen and is not read or written here.
 
-The public `coachpo/crux-pe13-ota` R6 feed is frozen/legacy and is not read or
-written by anything here.
+## Standard-runner build baseline
 
-## Pipeline
+Start at the [PE13 `2026110303` acceptance and rerun guide](docs/standard-runner-rom-build-acceptance-2026-11-05.md).
+Dispatch `build-standard.yml` with its defaults while the admitted inputs are
+available. After its 39-task summary succeeds, pass that **new compile run ID**
+as `build_run` to `assemble-standard.yml`. The verified
+`cloud-fresh-rom-<build_run>` is an Actions artifact, not a prerelease or an
+installation. The entire path uses public-repository standard `ubuntu-22.04`
+runners.
 
-The [standard-runner preparation workflow](docs/standard-runner-freeze.md)
-now covers complete cloud source acquisition, fresh Soong/Kati graph generation,
-canonical indexing, slicing and parallel cold-input capsule packing. The
-[accepted run chain](docs/standard-runner-preparation-acceptance-2026-11-04.md)
-passed all stages, including 39/39 capsules and the aggregate registry, using
-only this public repository's standard Linux runners. Start a new preparation
-with `freeze-standard.yml`, then `prepare-standard.yml` (`stage=full`). No local
-PE build-preparation input or larger/self-hosted runner is required.
+| Stage | Maintained inputs and handoff |
+| --- | --- |
+| [Prepare](docs/standard-runner-freeze.md) | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a reviewed registry and 39 cold capsules. |
+| Compile | `build-standard.yml` admits the graph, shard plan, reviewed registry and runtime policy, creates `cloud-build-context` and drives eight calls to `compile-standard-wave.yml`. Shards import only declared predecessor outputs from this execution; the final summary verifies all 39 fresh receipts. |
+| Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both FITs, writes `delivery-record.json` and `SHA256SUMS`, and checks that the compressed system payload decodes to the native system image identity. |
 
-The [accepted fresh ROM path](docs/standard-runner-rom-build-acceptance-2026-11-05.md)
-continues from reviewed capsules through `build-standard.yml` and
-`assemble-standard.yml`. Both run on the same public repository's standard
-Linux runners, admit only newly compiled outputs within one execution, and
-retain the verified images in Actions without publishing or installing them.
+The [preparation evidence](docs/evidence/standard-preparation-2026110303/) and
+[fresh build evidence](docs/evidence/standard-fresh-build-2026110303/) are
+not payload backups. The bootstrap also reads the pinned graph summary,
+index receipt and current pack registry from those directories: those three
+records are **build inputs**, not just documentation. See the
+[execution record](docs/standard-runner-build-plan.md) for historical attempts
+and the reason for the production kernel short-source policy.
 
-### Existing development prerelease path
+## Separate prerelease and device channel
 
-The accepted frozen development delivery and host-side dev OTA remain unchanged.
-Use the fresh path above when no prior compiled producer may be used.
-
-1. **Frozen inputs** retain the accepted development graph and source capsules
-   in their pinned registry.
-2. **Prepare** (`prepare.yml`) reconstructs the frozen source tree, restores the
-   toolchains, re-slices the graph and re-packs every capsule. `mode=full`
-   verifies the complete set against the registry; it does not need to publish
-   when `output_tag` is empty.
-3. **Controller** (`controller.yml`) consolidates the cold inputs, drives the
-   dependency-ordered waves (`wave.yml`, `controller-wave.yml`) and records a
-   producer for every shard. It has no signing or publication stage.
-4. **Assemble** (`assemble-dev.yml`) packages the four images and the two FITs
-   from the verified producers, runs the AVB/v1/cpio/FIT gates, and publishes
-   the immutable development prerelease.
-5. **Dev OTA** (`scripts/dev_ota.py`, [docs/dev-ota.md](docs/dev-ota.md))
-   discovers the newest `dev-pe13-<build>-v<n>` prerelease, verifies
-   `delivery-record.json`/`SHA256SUMS`, prepares the raw images and padded FITs,
-   and drives the U-Boot/TWRP install. `check`, `plan` and `verify` are
-   read-only; `update --execute` is the only device-writing command.
-
-The development product is `userdebug/test-keys` with `ro.adb.secure=0`. It is
-not a release payload and must never be recommended to the public release feed.
-
-## Inputs and evidence
-
-- `inputs/frozen-inputs-2026101105-dev.json` — frozen graph, toolchain, capsule
-  and payload identities.
-- `inputs/hosted-plan-2026101105-dev.json` — 39 shards across eight waves.
-- `inputs/reuse-state-dev-2026101105-v3.json` — accepted producers and the
-  approved `w002-s001` supplement for the terminal shard.
-- `inputs/dev-producers-2026101105-v3.json` — the seven role bindings used by
-  `assemble-dev.yml`.
-- `scripts/graph.py`, `scripts/capsule.py`, `scripts/finalize_slices.py`,
-  `scripts/prune-index.py` and `scripts/source_archives.py` implement the
-  frozen graph/capsule machinery.
-- `scripts/controller.py`, `scripts/worker.py`, `scripts/package_fits.py`,
-  `scripts/verify_properties.py` and `scripts/assemble_dev.py` implement the
-  dev build/assembly chain.
-- `scripts/dev_ota.py` and `scripts/dev_ota_fits.py` implement the dev OTA
-  channel.
-
-The current accepted dev delivery is `dev-pe13-2026101105-v3` in
-`coachpo/crux-pe13-distributed`; the device acceptance is recorded in the
-workspace at
-`out/crux-pe13-devcloud-2026-10-16/device-install-2026-10-19/ACCEPTANCE-2026-10-21-cloud-v3.md`.
+The `2026101105` frozen path (`prepare.yml`, `controller.yml`,
+`controller-wave.yml`, `wave.yml`, `assemble-dev.yml` and its `inputs/`
+records) is retained separately from the standard-runner build. It is not a
+fallback or an input to it; `assemble-dev.yml` can publish a development
+prerelease. The [host-driven dev OTA](docs/dev-ota.md) consumes prereleases
+and has its own device-write authorization. The standard-runner artifact
+does not replace the accepted `dev-pe13-2026101105-v3` device delivery or
+the R6 rollback. This `userdebug/test-keys` product with `ro.adb.secure=0`
+is not a public release payload.
 
 ## Checks
-
-The repository uses the Python standard library `unittest` suite:
 
 ```sh
 python3 -m unittest discover -s tests
 ```
 
-Host prerequisites for the dev OTA are listed in
-[docs/dev-ota.md](docs/dev-ota.md). The device writes require explicit
-`--execute`, per-write range/image checks and the U-Boot console bridge.
-
-## Source and dependencies
-
-The accepted v3 delivery uses its frozen October 2026 Crux source selection and
-graph. New preparation uses `config/cloud-source-manifest.json` to reconstruct
-all pinned source projects in Actions and generate a new graph. In either case,
-compilation is performed from source in cold runner tasks; an installed ROM
-binary is never a substitute for a successful distributed build.
-
-Android source/toolchain revisions stay pinned to the PE13 build configuration.
-Current Actions dependencies are `actions/checkout@v7.0.1` and
-`actions/upload-artifact@v7.0.2`, both using Node.js 24.
+For hosted diagnostics, `probe.yml` measures runner resources and
+`test-artifact-retention.yml` exercises the live retry/failure contract of
+`retain-artifact`. Neither produces compilation inputs.
