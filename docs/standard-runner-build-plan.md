@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 11 / active (2026-11-05).
+Plan: standard-runner-build / revision 12 / active (2026-11-05).
 
 ## Authority, baseline and acceptance
 
@@ -86,17 +86,19 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | New cold execution `41965423848`, worker `11d1a111305b5ae2bac53dfabab60cc7a97402ed`, passed bootstrap and began wave 0 using complete SOURCE pack `41953667023`. All 39 native tasks, final NOTICE and summary remain required. No previous compiled output is admitted. |
+| V1 | pending D5 source repack | root + read-only observer | Cold `41965423848` passed 38 tasks and all final NOTICE actions but failed the final SystemUIGoogle R8 compile. Native output remains unaccepted. D5 will repack SOURCE only and restart all 39 empty; no previous compiled output is admitted. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
 | A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
+| A4 | implemented, real gate pending V2 | artifact_retry + root | Property report mismatches now fail assembly rather than being only recorded. Standard assembly verifies all delivered SHA256SUMS and streams decompression to compare native system-image byte size/SHA before artifact retention. Existing image and FIT gates remain required. |
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
 | D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
-| D4 | implemented, real NOTICE pending | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | Exact recorded license closure, foreign/current-run metadata transport, local metadata prebuild and cold-source guards implemented. All 39 SOURCE-only capsules passed hosted repack with the same graph/index/slices. New registry admitted separately; actual final NOTICE and all image gates remain required. |
+| D4 | done | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | All 39 source capsules repacked, then real `41965423848` final task passed local metadata prebuild, both NOTICE XML outputs and system/vendor NOTICE files. This proves NOTICE, not the later final R8/image actions. |
+| D5 | active | rust_graph_review, rust_dependency_audit + root | Recognize actual R8 config-reader roles and close nested SOURCE ProGuard includes at packing, without reading warm OUT or changing native args. Preserve all graph/index/slice identities. Root will use full existing 39-capsule SOURCE-only repack and a new empty native cohort; no previous compiled diagnostic/production outputs. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -419,6 +421,33 @@ Do not insert historical source overlays or old compiled artifact bindings.
   `w003-s002` extra export and matching `w007-s000` runtime import. All source,
   graph, index, slice, plan and native command identities remain pinned;
   native compilation starts empty for the complete 39-task cohort.
+- `41965423848` passed all 38 earlier jobs on attempt 1. Final `w007-s000`
+  job `127129322030` passed 856/856 prebuild actions and generated the system
+  and Vendor NOTICE artifacts, proving D4. At main action 470/484, the frozen
+  SystemUIGoogle `r8-compat-proguard` command then failed reading the nested
+  SOURCE include `frameworks/base/packages/SystemUI/proguard.flags`. Its
+  parent vendor config is present, but the exact 6,956-byte child is absent
+  from the admitted final capsule. No later system image is accepted.
+- D5 read-only audit inspected all 39 manifests and actual pinned config bytes:
+  89 compat invocations, 1,444 literal `-include` operands, 51 SOURCE roots
+  and 53 config files. The final task needs 12 SOURCE configs and has 11.
+  Only the SystemUI child is absent; it has no further include. All generated
+  direct configs have selected owners and the failing invocation parsed its
+  65 OUT configs before reaching the vendor SOURCE config. Native reader
+  arguments/ownership stay unchanged. No additional missing input is evidenced
+  among the 14 unreported actions; they still require real native verification.
+- Existing SOURCE analysis recognized only Java R8 main with `--pg-conf`,
+  while packing treated top-level `-include` as generic C/C++ input without
+  following the config's own directives. Repair actual reader scopes, not a
+  hardcoded filename. The [pinned R8 parser](https://r8.googlesource.com/r8/+/464c2760a67392dacdd4c0b327fb46127278f014/src/main/java/com/android/tools/r8/shaking/ProguardConfigurationParser.java#405)
+  resolves include relative to current base and initializes each child at its
+  own parent; class/member annotations are not configuration includes.
+- Independent assembly review found that `verify_images()` returns a failed
+  property report on mismatch while `gate_images()` previously only recorded
+  it. A4 rejects that status with the mismatch details. The standard workflow
+  also checks final `SHA256SUMS`, decoder success, and the decompressed system
+  image's size/SHA against its pre-compression identity. Scoped unit checks and
+  synthetic transport cases passed; no actual PE image was processed locally.
 
 ## Executor protocol
 

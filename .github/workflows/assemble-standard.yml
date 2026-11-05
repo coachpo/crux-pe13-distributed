@@ -67,6 +67,31 @@ jobs:
           /usr/bin/time -v python3 scripts/cloud_assemble.py --context "$RUNNER_TEMP/context/context.json" \
             --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/assembly" \
             2>&1 | tee "$RUNNER_TEMP/result/assembly.log"
+      - name: Verify final delivery and decompressed system image identity
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/result/delivery"
+          log="$RUNNER_TEMP/result/delivery-integrity.log"
+          sha256sum -c --strict SHA256SUMS 2>&1 | tee "$log"
+          python3 - <<'PY' 2>&1 | tee -a "$log"
+          import hashlib, json, subprocess
+          from pathlib import Path
+
+          record = json.loads(Path("delivery-record.json").read_text())
+          expected = record["system_image"]["uncompressed"]
+          digest = hashlib.sha256()
+          size = 0
+          with subprocess.Popen(["zstd", "-dc", "--", "system.img.zst"], stdout=subprocess.PIPE) as decoder:
+              for chunk in iter(lambda: decoder.stdout.read(4 * 1024 * 1024), b""):
+                  size += len(chunk)
+                  digest.update(chunk)
+              if decoder.wait() != 0:
+                  raise SystemExit("system.img.zst: decompression failed")
+          actual = {"size": size, "sha256": digest.hexdigest()}
+          if actual != expected:
+              raise SystemExit(f"system.img.zst: expected uncompressed identity {expected}, got {actual}")
+          print("system.img.zst: verified uncompressed identity " + json.dumps(actual, sort_keys=True))
+          PY
       - name: Retain unpublished ROM images and validation evidence
         if: always()
         uses: ./.github/actions/retain-artifact

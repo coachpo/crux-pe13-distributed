@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import assemble_dev
@@ -81,6 +82,17 @@ class AssembleDevTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_failed_image_property_report_stops_assembly(self):
+        identity = {"required_final_keys": {"ro.build.fingerprint": "expected-fingerprint"}}
+        report = {"status": "failed", "errors": [{"key": "ro.build.fingerprint",
+                   "expected": "expected-fingerprint", "actual": "wrong-fingerprint"}]}
+        with patch.object(assemble_dev.verify_properties, "verify_images", return_value=report), \
+                patch.object(assemble_dev, "parse_android_boot") as parse_boot:
+            with self.assertRaisesRegex(ValueError, "Image property verification failed: .*wrong-fingerprint"):
+                assemble_dev.gate_images(self.root, identity, self.root / "build_thumbprint.txt",
+                                         "debugfs", "simg2img", "dumpimage", self.root, {})
+        parse_boot.assert_not_called()
 
     def test_avb_hash_footer_and_property_descriptors(self):
         image = self.root / "recovery.img"

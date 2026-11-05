@@ -244,6 +244,8 @@ def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage
     property_report = verify_properties.verify_images(
         identity, product / "obj/PACKAGING/system_build_prop_intermediates/buildinfo.prop",
         thumbprint_path, images, debugfs, simg2img)
+    if property_report["status"] != "success":
+        raise ValueError("Image property verification failed: " + json.dumps(property_report["errors"]))
     gates["property_verification"] = property_report
     expected_fingerprint = identity["required_final_keys"]["ro.build.fingerprint"]
     for role, name in (("boot", "boot.img"), ("recovery", "recovery.img")):
