@@ -382,6 +382,24 @@ Do not insert historical source overlays or old compiled artifact bindings.
   after its registry is reviewed, native compilation restarts all 39 empty.
   Integrated fixture validation currently passes 506 tests (16 skips), actionlint
   and whitespace checks. This is not real NOTICE or ROM acceptance.
+- SOURCE repack `41953667023`, worker
+  `1f5e55886094f853c9ae799e8c7e63189ef816b8`, passed real standard-runner
+  metadata preflight before source mounts. Whole `w007-s000` has twelve readers
+  (two XML plus ten HTML), requiring 14,320 metadata inputs, 715 local metadata
+  targets and 894 SOURCE texts. The earlier 13,051/449/843 counts refer only to
+  the two-XML diagnostic scope; the additional HTML texts already existed, so
+  the missing SOURCE byte count is unchanged. All seven notice-bearing shards
+  passed the selected-owner/wave checks, and the unchanged 39-job pack matrix
+  started without a failure.
+- The new final SOURCE capsule is already verified: 9,265 entries (465 new
+  entries for 464 missing logical paths and the relative symlink target),
+  350,432,341 archive bytes, SHA
+  `d5e094c9cdb710570611a6c1590df8e6f315e4ee97dd38dc5f5582e2dabc2678`.
+  Its slice manifest SHA remains
+  `d161f2966f2c07b3e885333b41f368035ebcb5f4a6fb26e1487ad7c8a2d312cb`.
+  Pack receipt lists all 894 notice sources. Root inspected this cloud receipt;
+  the remaining pack jobs and aggregate registry are still required before
+  admitting the new inputs to native compilation.
 
 ## Executor protocol
 
