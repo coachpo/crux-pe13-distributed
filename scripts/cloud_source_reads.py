@@ -58,13 +58,13 @@ def _read_rsp_tokens(content: str) -> list[str]:
     return values
 
 
-def _raw_shell_segments(command: str):
+def _raw_shell_segments(command: str, newlines: bool = False):
     """Yield raw shell command segments while preserving quote provenance."""
     current = []
     quote = None
     escaped = False
     index = 0
-    separators = ";|&()"
+    separators = ";|&()" + ("\n" if newlines else "")
     while index < len(command):
         char = command[index]
         if escaped:
@@ -111,11 +111,11 @@ def _shell_tokens(segment: str) -> list[str]:
     return list(lexer)
 
 
-def _shell_command_contexts(command: str, source_root: str):
-    """Yield leaf argv/cwd/position, restoring cwd at enclosing subshells."""
+def _shell_command_contexts(command: str, source_root: str, declared_scripts=None):
+    """Yield leaf contexts, optionally resolving only recorded shell scripts."""
     position = [0]
 
-    def visit(script: str, initial_cwd: str):
+    def visit(script: str, initial_cwd: str, active_scripts=frozenset()):
         cwd_stack = [initial_cwd]
 
         def flush(raw):
@@ -170,15 +170,30 @@ def _shell_command_contexts(command: str, source_root: str):
                 for arg_index, option in enumerate(argv[1:], 1):
                     if option.startswith("-") and not option.startswith("--") and "c" in option[1:]:
                         if arg_index + 1 < len(argv):
-                            return list(visit(argv[arg_index + 1], cwd))
+                            return list(visit(argv[arg_index + 1], cwd, active_scripts))
                         return []
+                if declared_scripts is not None:
+                    arguments = argv[1:]
+                    if arguments[:1] == ["--"]:
+                        arguments = arguments[1:]
+                    if len(arguments) != 1 or arguments[0].startswith("-"):
+                        raise SourceReadError("unsupported recorded shell script invocation")
+                    path = _absolute(arguments[0], cwd)
+                    if path not in declared_scripts:
+                        raise SourceReadError("unrecorded shell script: " + path)
+                    content = declared_scripts[path]
+                    if not isinstance(content, str):
+                        raise SourceReadError("recorded shell script has no content: " + path)
+                    if path in active_scripts:
+                        raise SourceReadError("recursive recorded shell script: " + path)
+                    return list(visit(content, cwd, active_scripts | {path}))
                 return []
             command_position = position[0]
             position[0] += 1
             return [(argv, cwd, command_position, raw)]
 
         contexts = []
-        for raw, separator in _raw_shell_segments(script):
+        for raw, separator in _raw_shell_segments(script, newlines=declared_scripts is not None):
             if raw is not None:
                 contexts.extend(flush(raw))
             elif separator == "(":
@@ -190,9 +205,10 @@ def _shell_command_contexts(command: str, source_root: str):
     yield from visit(command, source_root)
 
 
-def iter_invocations(metadata: dict, source_root: str):
+def iter_invocations(metadata: dict, source_root: str, declared_scripts=None):
     """Yield (argv, cwd) command contexts, unwrapping common shell launchers."""
-    for argv, cwd, _, _ in _shell_command_contexts(metadata.get("command", ""), source_root):
+    for argv, cwd, _, _ in _shell_command_contexts(
+            metadata.get("command", ""), source_root, declared_scripts):
         yield argv, cwd
 
 
@@ -201,9 +217,9 @@ def _response_target(token: str, cwd: str, response_path: str) -> bool:
 
 
 def _make_argument_file(command: str, source_root: str, response_path: str,
-                        license_position: int) -> str:
+                        license_position: int, declared_scripts=None) -> str:
     """Reconstruct Kati dump-words-to-file from literal writes in this edge."""
-    contexts = list(_shell_command_contexts(command, source_root))
+    contexts = list(_shell_command_contexts(command, source_root, declared_scripts))
     matching = [(argv, cwd, position) for argv, cwd, position, _ in contexts
                 if position == license_position
                 and any(posixpath.basename(token) == LICENSE_TOOL for token in argv)

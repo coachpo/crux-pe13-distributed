@@ -21,6 +21,10 @@ import time
 
 
 CAPSULE_PATH = Path(__file__).resolve().with_name("capsule.py")
+sys.path.insert(0, str(CAPSULE_PATH.parent))
+from cloud_license_inputs import LicenseMetadataReads
+from cloud_source_reads import NOTICE_TOOLS
+
 spec = importlib.util.spec_from_file_location("crux_capsule", CAPSULE_PATH)
 capsule = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(capsule)
@@ -150,6 +154,37 @@ def _archive_name(value: str) -> str:
     if normalized in ("", ".") or normalized == ".." or normalized.startswith("../"):
         raise PackError("Unsafe archive member path: " + value)
     return normalized
+
+
+def notice_source_inputs(shards: Path, manifest: dict, inventory_path: Path,
+                         source_root: Path, out_root: Path) -> list[str]:
+    """Recover notice SOURCE texts from hash-bound selected writer metadata."""
+    reader_edges = [edge for edge in manifest.get('edges', [])
+                    if any(tool in edge.get('command', '') or tool in edge.get('rspfile_content', '')
+                           for tool in NOTICE_TOOLS)]
+    if not reader_edges:
+        return []
+    entries = json.loads(inventory_path.read_text())['shards']
+    edges = []
+    root = shards.resolve()
+    for name, entry in sorted(entries.items()):
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name):
+            raise PackError('Unsafe notice writer shard ID: ' + name)
+        path = root / name / 'manifest.json'
+        if (path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root)
+                or sha256(path) != entry.get('manifest_sha256')):
+            raise PackError('Notice writer manifest differs from the slice inventory: ' + name)
+        writer = json.loads(path.read_text())
+        if writer.get('source_root') != str(source_root):
+            raise PackError('Notice writer source_root differs from the selected source view: ' + name)
+        edges.extend(writer.get('edges', []))
+    resolver = LicenseMetadataReads(edges, str(source_root), str(out_root))
+    sources = set()
+    for edge in reader_edges:
+        reads = resolver.notice_reads(edge)
+        if reads is not None:
+            sources.update(reads['source_inputs'])
+    return sorted(sources)
 
 
 def verify_tar_stream(stream, metadata: dict) -> dict:
@@ -331,10 +366,13 @@ def pack_shard(shards: Path, shard_id: str, inventory_path: Path,
                         "plan_sha256": identity["plan_sha256"],
                         "graph_index": {"bytes": identity["graph_index_bytes"],
                                         "sha256": identity["graph_index_sha256"]}})
+        notice_sources = notice_source_inputs(shards, identity['shard_manifest'], inventory_path,
+                                              source_root, out_root)
+        receipt['notice_source_inputs'] = notice_sources
         _, metadata = capsule.pack(
             slice_manifest, source_root, archive_path, out_root,
             allowed_generated=(), digest_cache=None, shared_manifest=None,
-            graph_index=graph_index.resolve())
+            graph_index=graph_index.resolve(), additional_source_inputs=notice_sources)
         if metadata.get("source_root") != str(source_root) or metadata.get("out_root") != str(out_root):
             raise PackError("Capsule metadata source/out roots differ from the shard receipt")
         if metadata.get("manifest_sha256") != identity["slice_manifest_sha256"]:

@@ -270,8 +270,10 @@ jobs:
             --name "cloud-shards-$BUILD_NUMBER" --destination "$input"
           tar --zstd -xf "$input/shards.tar.zst" -C "$expanded"
           python3 - <<'PY'
-          import hashlib, json, os, re
+          import hashlib, json, os, re, sys
           from pathlib import Path, PurePosixPath
+          sys.path.insert(0, 'scripts')
+          from cloud_license_inputs import LicenseMetadataReads
           root = Path(os.environ['RUNNER_TEMP'])
           selected = root / 'selected-shards'
           expanded = root / 'selected-shards-expanded'
@@ -345,6 +347,29 @@ jobs:
                   raise SystemExit('export_producers disagrees with its owner manifest: ' + str(path))
           if not set(plan.get('terminal_outputs', [])) <= set(producers):
               raise SystemExit('export_producers is missing a terminal output owner')
+          owners = {path: name for name, item in shard_manifests.items() for path in item['outputs']}
+          waves = {job['id']: number for number, wave in enumerate(plan['waves']) for job in wave}
+          notice = LicenseMetadataReads(
+              (edge for item in shard_manifests.values() for edge in item['edges']),
+              receipt['source_root'], receipt['out_root'])
+          notice_summary = {}
+          for name, item in shard_manifests.items():
+              metadata_inputs, source_inputs = set(), set()
+              for edge in item['edges']:
+                  reads = notice.notice_reads(edge)
+                  if reads is not None:
+                      metadata_inputs.update(reads['metadata_inputs'])
+                      source_inputs.update(reads['source_inputs'])
+              if not metadata_inputs and not source_inputs:
+                  continue
+              for path in metadata_inputs:
+                  owner = owners.get(path)
+                  if owner is None or (owner != name and waves[owner] >= waves[name]):
+                      raise SystemExit('Notice metadata needs an unavailable selected producer: ' + path)
+              notice_summary[name] = {'metadata_inputs': len(metadata_inputs),
+                                      'source_inputs': len(source_inputs),
+                                      'local_metadata_inputs': sum(owners[path] == name for path in metadata_inputs)}
+          print(json.dumps({'license_read_preflight': notice_summary}, sort_keys=True))
           matrix = json.dumps({'shard': sorted(ids)}, separators=(',', ':'))
           outputs = {
               'matrix': matrix,

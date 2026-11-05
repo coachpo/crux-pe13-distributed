@@ -47,9 +47,10 @@ class CapsuleTests(unittest.TestCase):
         path.write_bytes(content if isinstance(content, bytes) else content.encode())
         path.chmod(mode)
 
-    def collect(self):
+    def collect(self, additional_source_inputs=()):
         (self.slice / "manifest.json").write_text(json.dumps(self.manifest))
-        collector = capsule.Collector(self.manifest, self.source, self.out)
+        collector = capsule.Collector(self.manifest, self.source, self.out,
+                                      additional_source_inputs=additional_source_inputs)
         task_path = collector.collect(self.slice)
         metadata = collector.metadata(self.slice / "manifest.json", task_path)
         stream = io.BytesIO()
@@ -106,6 +107,76 @@ class CapsuleTests(unittest.TestCase):
         self.assertEqual(link.linkname, str(external))
         self.assertIn(str(external / "include/kernel.h").lstrip("/"), archive.getnames())
         self.assertNotIn(str(self.source / "kernel/include/kernel.h").lstrip("/"), archive.getnames())
+
+    def test_additional_source_inputs_default_does_not_collect_unreferenced_license_texts(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, "Unreferenced source license\n")
+        _, default_metadata, default_archive = self.collect()
+        _, empty_metadata, empty_archive = self.collect(additional_source_inputs=())
+        self.assertEqual(default_metadata, empty_metadata)
+        self.assertEqual(default_archive.getnames(), empty_archive.getnames())
+        self.assertNotIn(str(license_path).lstrip("/"), default_archive.getnames())
+        self.assertEqual(default_metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_preserve_license_bytes_modes_and_link_targets(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, b"Copyright \xc2\xa9 Example\nLicense terms\n", 0o640)
+        readme = self.source / "external/wpa_supplicant_8/README"
+        self.write(readme, "WPA supplicant license and documentation\n", 0o644)
+        link = readme.parent / "LICENSE"
+        link.symlink_to("README")
+        self.write(self.out / "unit.o", b"\x7fELFstale-object")
+        _, metadata, archive = self.collect([license_path, "external/wpa_supplicant_8/LICENSE"])
+        for path, mode in [(license_path, 0o640), (readme, 0o644)]:
+            member = archive.getmember(str(path).lstrip("/"))
+            self.assertEqual(member.mode, mode)
+            self.assertEqual(archive.extractfile(member).read(), path.read_bytes())
+            spec = next(item for item in metadata["files"] if item["path"] == str(path))
+            self.assertIn("notice-license-source", spec["reasons"])
+        member = archive.getmember(str(link).lstrip("/"))
+        self.assertTrue(member.issym())
+        self.assertEqual(member.linkname, "README")
+        self.assertEqual(member.mode, link.lstat().st_mode & 0o7777)
+        spec = next(item for item in metadata["files"] if item["path"] == str(link))
+        self.assertIn("notice-license-source:symlink", spec["reasons"])
+        self.assertNotIn(str(self.out / "unit.o").lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_allow_source_rooted_external_symlink_targets(self):
+        target = self.base / "external-library/LICENSE"
+        self.write(target, "Pinned external source license\n")
+        link = self.source / "external/library"
+        link.parent.mkdir()
+        link.symlink_to(target.parent, target_is_directory=True)
+        _, metadata, archive = self.collect(["external/library/LICENSE"])
+        self.assertTrue(archive.getmember(str(link).lstrip("/")).issym())
+        self.assertEqual(archive.extractfile(str(target).lstrip("/")).read(), target.read_bytes())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_reject_missing_generated_out_unrooted_and_directories(self):
+        out_text = self.out / "notice/approved.txt"
+        compiled = self.out / "notice/compiled.jar"
+        generated_source = self.source / "generated/LICENSE"
+        external = self.base / "unrooted/LICENSE"
+        directory = self.source / "external/library"
+        self.write(out_text, "Old generated text\n")
+        self.write(compiled, b"PK\x03\x04old generated binary")
+        self.write(generated_source, "Generated SOURCE-path text\n")
+        self.write(external, "Unrooted external text\n")
+        self.write(directory / "LICENSE", "Source text\n")
+        out_link = self.source / "out-license"
+        out_link.symlink_to(out_text)
+        directory_link = self.source / "directory-license"
+        directory_link.symlink_to(directory, target_is_directory=True)
+        broken_link = self.source / "broken-license"
+        broken_link.symlink_to("missing-target")
+        self.manifest["outputs"].append(str(generated_source))
+        self.manifest["allowed_generated_inputs"] = [{"path": str(out_text), "reason": "frozen metadata"}]
+        for path in [self.source / "missing/LICENSE", broken_link, out_text, compiled, generated_source,
+                     external, "../unrooted/LICENSE", directory, directory_link, out_link]:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(capsule.CapsuleError, "(?:Additional|Missing additional) SOURCE input"):
+                    self.collect([path])
 
     def test_two_hop_python_link_restores_logical_script_and_sibling_import(self):
         target = self.source / "build/make/tools/fs_config/fs_config_generator.py"
@@ -1308,6 +1379,26 @@ class CapsuleTests(unittest.TestCase):
         compressed = subprocess.run(["zstd", "-q", "-dc", str(output)], check=True, stdout=subprocess.PIPE).stdout
         with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:") as archive:
             self.assertIn(str(self.source / ".crux-task/graph/bundle.json").lstrip("/"), archive.getnames())
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_pack_additional_source_inputs_preserve_frozen_manifest_bytes_and_identity(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, "Source license required by generated metadata\n", 0o640)
+        manifest_path = self.slice / "manifest.json"
+        original = ("\n" + json.dumps(self.manifest, indent=3) + "\n\n").encode()
+        manifest_path.write_bytes(original)
+        manifest_identity = capsule.digest(manifest_path)
+        output = self.base / "inputs.tar.zst"
+        _, metadata = capsule.pack(manifest_path, self.source, output, self.out,
+                                   additional_source_inputs=["external/library/LICENSE"])
+        self.assertEqual(manifest_path.read_bytes(), original)
+        self.assertEqual(metadata["manifest_sha256"], manifest_identity)
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        compressed = subprocess.run(["zstd", "-q", "-dc", str(output)], check=True, stdout=subprocess.PIPE).stdout
+        with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:") as archive:
+            frozen_manifest = self.source / ".crux-task/graph/manifest.json"
+            self.assertEqual(archive.extractfile(str(frozen_manifest).lstrip("/")).read(), original)
+            self.assertEqual(archive.extractfile(str(license_path).lstrip("/")).read(), license_path.read_bytes())
 
     @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
     def test_shared_layer_and_task_capsule_restore_verified_complete_inputs(self):

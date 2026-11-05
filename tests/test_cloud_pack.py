@@ -254,6 +254,42 @@ class CloudPackTests(unittest.TestCase):
         self.assertTrue((self.output / (self.shard_id + ".json")).is_file())
         self.assertEqual((self.output / "workflow.log").read_text(), "allowed pre-existing runner log")
 
+    def test_pack_derives_notice_sources_from_hash_bound_other_shard_metadata(self):
+        other = self.shards / 'w000-s001'
+        other.mkdir()
+        metadata_path = str(self.out_root / 'module/meta_lic')
+        notice_source = str(self.source / 'NOTICE')
+        (self.source / 'NOTICE').write_text('Pinned source license text\n')
+        writer = {'source_root': str(self.source), 'edges': [
+            {'outputs': [metadata_path],
+             'command': 'build_license_metadata -o ' + metadata_path + ' -n ' + notice_source}]}
+        path = other / 'manifest.json'
+        path.write_text(json.dumps(writer))
+        self.slice_manifest['edges'] = [{'outputs': [str(self.out_root / 'final')],
+            'command': 'xmlnotice -o ' + str(self.out_root / 'final') + ' ' + metadata_path}]
+        self.write_slice_manifest()
+        self.write_inventory()
+        inventory = json.loads(self.inventory_path.read_text())
+        inventory['shards']['w000-s001'] = {'manifest_sha256': cloud_pack.sha256(path)}
+        self.inventory_path.write_text(json.dumps(inventory))
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(self.calls[0][3]['additional_source_inputs'], [notice_source])
+        receipt = json.loads((self.output / 'pack-receipt.json').read_text())
+        self.assertEqual(receipt['notice_source_inputs'], [notice_source])
+
+    def test_notice_source_lookup_rejects_changed_writer_manifest(self):
+        other = self.shards / 'w000-s001'
+        other.mkdir()
+        path = other / 'manifest.json'
+        path.write_text(json.dumps({'source_root': str(self.source), 'edges': []}))
+        inventory = json.loads(self.inventory_path.read_text())
+        inventory['shards']['w000-s001'] = {'manifest_sha256': '0' * 64}
+        self.inventory_path.write_text(json.dumps(inventory))
+        with self.assertRaisesRegex(cloud_pack.PackError, 'differs from the slice inventory'):
+            cloud_pack.notice_source_inputs(self.shards,
+                {'edges': [{'command': 'xmlnotice /OUT/meta_lic'}]}, self.inventory_path,
+                self.source, self.out_root)
+
     def test_corrupt_regular_file_is_rejected(self):
         self.archive_variant = "file"
         self.assertEqual(self.invoke(), 1)

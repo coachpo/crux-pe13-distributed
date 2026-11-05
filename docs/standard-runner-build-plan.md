@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 10 / active (2026-11-04).
+Plan: standard-runner-build / revision 11 / active (2026-11-05).
 
 ## Authority, baseline and acceptance
 
@@ -86,7 +86,7 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
 | A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
 | A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
-| V1 | active | root + read-only observer | New cold execution `41920576338`, worker `9b37b3140ba9792a79105956d711beaa1c8dddd0`, passed bootstrap and started all 13 wave-0 jobs. D3 runtime admission and automatic transport retries are active; all 39 tasks and final summary remain required. No compiled outputs from previous executions are used. |
+| V1 | pending D4 source repack | root + read-only observer | Cold execution `41920576338` passed 38 native tasks without a retry, including the real D3 keystore2 link, then final Vendor NOTICE generation exposed D4. The execution is not accepted. After source-only repacking and metadata admission, all 39 tasks restart empty again. |
 | V2 | draft | root + acceptance_audit | New image assembly and validation, compact evidence, usage and acceptance report. Requires V1 and usable A1. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
@@ -95,7 +95,8 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
-| D3 | implemented, real build pending | rust_graph_review, rust_dependency_audit + root | Pure Rust native-file operand reader and C0 typed declared-owner admission pass 476 integrated tests (16 skips). Foreign native inputs use existing current-run export/import verification; same-task native ordering stays unchanged. Frozen source/graph/index/slice/Ninja/capsule identities remain unchanged. |
+| D3 | done | rust_graph_review, rust_dependency_audit + root | New cold `41920576338` passed all prior native stages and the formerly failing `w006-s001` keystore2 link. Declared-owner Rust native-file transport is verified; no native source, flags or frozen graph changes were needed. |
+| D4 | active | rust_graph_review, rust_dependency_audit, license_source_pack, notice_source_guard + root | Exact recorded license writer/copy/script closure; C0 foreign metadata exports/imports and local metadata prebuilds; SOURCE-only license-text capsule supplements and cold-source guards. Preserve graph/index/slice/Ninja identities and all error checks. Root owns full hosted repack, registry admission and another empty native execution. |
 
 All actual source graph/index/slice/capsule regeneration, if a diagnosed input
 closure defect requires it, also stays on standard runners and derives from the
@@ -348,6 +349,39 @@ Do not insert historical source overlays or old compiled artifact bindings.
   cloud-generated context and verified all three formerly missing Soong native
   libraries have both declared-owner extra exports and matching current-run
   consumer runtime imports. Original Ninja/local ordering remains unchanged.
+- Execution `41920576338` passed all 38 tasks through wave 6, including D3, on
+  attempt 1 without transport failures. Final `w007-s000` job `126984058689`
+  failed at Vendor NOTICE generation: xmlnotice recursively opened missing
+  `group_gen_odm/meta_lic`, selected and built by `w003-s002` but not exported.
+  The full recorded command matches the native failure. No NOTICE check is
+  disabled and no prior generated metadata may supplement the failed task.
+- D4 audits identify 17,650 selected metadata outputs and 28 actual notice
+  readers. Three image metadata writers execute exact declared Bash rsp scripts;
+  command-only source-read analysis treated them as terminals and also missed
+  copied metadata content provenance. The two XML readers require 13,051
+  unique metadata files: 12,602 foreign and 449 local. All owners are selected,
+  all foreign owners are earlier direct dependencies; 2,226 paths need exports.
+  Therefore graph/index/slicing and native command bytes need not change.
+- The same XML closure needs 843 SOURCE license texts. The admitted final cold
+  capsule contains only 379: 464 logical paths are missing, including LICENSE
+  -> README for wpa_supplicant. The additional pinned bytes are 4,330,867;
+  repacking must preserve the relative link and its target. SOURCE file hashes
+  and full archive verification remain mandatory, with no generated OUT seed.
+  Current receipt inspection found 13,192 exported metadata files all regular
+  and nonempty; no runtime type/empty-file exception is needed.
+- D4 contracts: the pure license resolver follows recorded Go/Make arguments,
+  exact declared shell scripts, copy content provenance and recursive -d;
+  descriptive fields do not become reads. Packing validates every consulted
+  writer manifest against the accepted inventory before adding SOURCE texts.
+  C0 admits foreign metadata through existing current-run byte-verified runtime
+  imports and prebuilds same-task metadata targets before original full Ninja
+  targets. C1 validates required notice sources immediately after cold restore
+  and caches per-producer receipt/spec lookup without relaxing existing checks.
+  Real metadata preflight runs on the standard pack-plan job before any source
+  mounts. Full SOURCE-only repack uses the existing 39-job hosted workflow;
+  after its registry is reviewed, native compilation restarts all 39 empty.
+  Integrated fixture validation currently passes 506 tests (16 skips), actionlint
+  and whitespace checks. This is not real NOTICE or ROM acceptance.
 
 ## Executor protocol
 

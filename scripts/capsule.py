@@ -884,13 +884,15 @@ class ActionTemporaries:
 
 class Collector:
     def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
-                 selection_roots=None, scan_cache=None, graph_index=None):
+                 selection_roots=None, scan_cache=None, graph_index=None,
+                 additional_source_inputs=()):
         self.manifest = manifest
         self.graph_index = Path(graph_index).resolve() if graph_index else None
         self.graph_module = None
         self.graph_database = None
         self.source_root = Path(source_root).resolve()
         self.out_root = Path(out_root).resolve()
+        self.additional_source_inputs = tuple(additional_source_inputs)
         # Sbox substitutes __SBOX_SANDBOX_DIR__ with a temporary runtime tree in
         # OUT; nothing under it is a frozen source input.
         self.sandbox_root = self.out_root / ".crux-sbox"
@@ -1131,6 +1133,25 @@ class Collector:
                     self.require_python2(resolved)
                 elif "python" in names:
                     self.require_python2(resolved, native_default=True)
+
+    def add_source_input(self, value):
+        """Admit a required explicit SOURCE file without widening input roots."""
+        path = self.path(value)
+        resolved = path.resolve()
+        if (not beneath(path, self.source_root) or beneath(path, self.out_root)
+                or beneath(resolved, self.out_root) or self.produced(path) or self.produced(resolved)):
+            self.errors.add("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
+            return
+        if self.excluded(path) or self.excluded(resolved) or not self.selected(path):
+            self.errors.add("Additional SOURCE input is excluded: %s" % path)
+            return
+        if not path.exists():
+            self.errors.add("Missing additional SOURCE input: %s" % path)
+            return
+        if not path.is_file():
+            self.errors.add("Additional SOURCE input must be a file or symlink to a file: %s" % path)
+            return
+        self.add(path, "notice-license-source")
 
     def require_python2(self, source_script=None, native_default=False):
         executable = self.source_root / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
@@ -2602,6 +2623,8 @@ class Collector:
             index += 1
 
     def collect(self, slice_dir, include_task=True):
+        for value in self.additional_source_inputs:
+            self.add_source_input(value)
         for value in self.manifest.get("leaf_inputs", []):
             self.add(value, "graph-leaf")
             path = self.path(value)
@@ -2823,7 +2846,7 @@ def shared_inputs(metadata, shared_manifest, digester=digest):
 
 
 def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None,
-         shared_manifest=None, graph_index=None):
+         shared_manifest=None, graph_index=None, additional_source_inputs=()):
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != 1:
@@ -2832,7 +2855,7 @@ def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_gener
         raise CapsuleError("--source-root differs from manifest source_root")
     digester = DigestCache(digest_cache)
     collector = Collector(manifest, source_root, out_root, allowed_generated, digester,
-                          graph_index=graph_index)
+                          graph_index=graph_index, additional_source_inputs=additional_source_inputs)
     task_path = collector.collect(manifest_path.parent)
     metadata = collector.metadata(manifest_path, task_path)
     omitted = shared_inputs(metadata, shared_manifest, digester)
