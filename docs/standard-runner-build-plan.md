@@ -1,6 +1,6 @@
 # Fresh standard-runner PE13 build
 
-Plan: standard-runner-build / revision 12 / active (2026-11-05).
+Plan: standard-runner-build / revision 13 / complete (2026-11-05).
 
 ## Authority, baseline and acceptance
 
@@ -82,17 +82,17 @@ Actions dispatch and final acceptance; subagents never mutate remote state.
 
 | ID | State | Owner | Allowed paths / deliverable / validation |
 | --- | --- | --- | --- |
-| C0 | done | root | `cloud_build_plan.py` and artifact-only workflows passed fixture/static checks and real bootstrap in run `41789247344`. Final all-task summary remains part of V1. |
-| C1 | done | frontend_decomposition + root | `cloud_compile.py` validates cold roots, admitted capsule bytes, current-execution dependency receipts and manifest/worker pins, then calls native worker with cache disabled. Six fixtures and initial real native tasks passed; V1 covers the complete build. |
-| A1 | done | source_footprint | `scripts/cloud_assemble.py`, `tests/test_cloud_assemble.py`. Artifact-backed fresh producer admission and independently derived identity, with graph scalar date separate from PE branding time. Six fixture tests passed; real assembly remains V2. |
-| A2 | done | source_footprint + root review | Source-declarative boot contract route implemented, legacy default preserved. Policy/output equivalence and no-old-DTB-read fixtures passed; fresh assembly always selects this route. Actual FITs remain part of V2. |
+| C0 | done | root | Real `42018017251` bootstrap admitted the final 39-capsule registry and final summary verified all 39 successful current-run producer bindings. |
+| C1 | done | frontend_decomposition + root | All 39 real tasks in `42018017251` passed cold input, exact current-run dependency, manifest/worker and no-ccache gates before retaining native artifacts. |
+| A1 | done | source_footprint | Real `42059779500` admitted all fresh receipts and seven selected producer artifacts; independently derived graph/branding identity passed actual image-property gates. |
+| A2 | done | source_footprint + root review | Both real FITs passed the source-declarative contract and embedded-content checks. Legacy default remains separate; fresh validation records no compiled reference DTB input. |
 | V1 | done | root + read-only observer | Cold execution `42018017251`, worker `9300985475998818d5938a55d11ee9ed03732d83`, passed attempt 1: all 39 native jobs, all eight waves, final R8/NOTICE/images and successful producer summary. No previous compiled output was admitted. |
-| V2 | active | root + read-only observer | Assembly/validation `42059779500` uses only the verified `42018017251` context, summary and producer artifacts. Real gates, unpublished artifact, compact evidence and usage report remain required. |
+| V2 | done | root + read-only observer | `42059779500` passed all actual image, property, AVB/v1, cpio, FIT and delivery integrity gates. Artifact `13431937735` retained, compact evidence and runbook committed. No release, OTA or device action. |
 | K1 | done | frontend_decomposition + root | Per-string overflow measured; identical source alias experiment passed complete kernel build. Validated pinned adapter promoted to production. Diagnostic artifacts are excluded from production summary and assembly. |
 | D1 | done | source_footprint + root | Declared-output host JAR transport and same-task prebuild ordering passed all seven real wave-2 tasks in `41819689572`. These outputs are not reusable by a later empty-state production execution. |
 | D2 | done | source_footprint + root | AIDL source closure repaired and all 39 capsules passed real cloud repacking in `41835375815`. Root verified the new registry preserves every source/graph/index/shard/plan identity and retained it separately from the immutable original. Native validation of the repaired inputs remains V1. |
-| A3 | done, real gate pending V2 | acceptance_audit + root | Existing Recovery cpio gates now consume the verified fresh recovery image's extracted ramdisk when no standalone `ramdisk-recovery.img` was produced. Reuses the supported extraction helper; valid/invalid synthetic cpio regressions pass without weakening the fstab requirement. |
-| A4 | implemented, real gate pending V2 | artifact_retry + root | Property report mismatches now fail assembly rather than being only recorded. Standard assembly verifies all delivered SHA256SUMS and streams decompression to compare native system-image byte size/SHA before artifact retention. Existing image and FIT gates remain required. |
+| A3 | done | acceptance_audit + root | Real Recovery cpio extracted from fresh `recovery.img`; 472 entries and required `system/etc/recovery.fstab` verified. |
+| A4 | done | artifact_retry + root | Actual property report passed with zero mismatches; all seven delivered SHA256SUMS and streamed system image size/SHA comparison passed before retention. |
 | D2-perf | done | source_footprint + root | Optimized replacement pack `41857485715` passed all 39 tasks and registry, with unchanged source/graph/index/plan pins. It is preparation evidence, not the production ROM input: compile `41866735013` uses the first repaired registry `41835375815`. |
 | T1 | done | frontend_decomposition + root | Bounded transport-only retry/backoff passes fixtures. Same-execution attempt 2 recovered `w002-s003` on a clean standard runner, preserving worker/context and importing only this run's fresh parents. Wave-3 scheduling resumed; no cross-run output reuse. |
 | T2 | done | artifact_retry + root | Shared local composite retries artifact upload once after ten seconds, preserving terminal upload/native failures. Applied across the standard preparation/build chain. Real standard-runner fixture `41902415401` passed retry/replacement-byte verification and propagation when both uploads fail. |
@@ -485,6 +485,22 @@ Do not insert historical source overlays or old compiled artifact bindings.
   completed/success, with `build_run=42018017251`. It must finish with all
   image, property, AVB/v1, cpio, FIT and delivery integrity gates and a verified
   Actions artifact; the compile success alone does not accept the delivery.
+- V2 `42059779500` completed successfully at 16:09:49 UTC on 2026-11-05.
+  Actual job `127357916533` used the standard `ubuntu-22.04` GitHub Actions
+  runner and admitted seven producers only from `42018017251`. Image-property
+  mismatches: zero. Both v1/AVB and cpio gates passed; native Recovery cpio
+  was extracted from its current `recovery.img`. Both fresh FITs passed using
+  the declarative contract and the same-run paired kernel, symbols, DTBs and
+  overlay. All seven final checksum entries and the streamed decompressed
+  system image's 2,785,252,244-byte native identity passed. Verified artifact
+  `13431937735` (2,698,205,767 bytes) is an Actions-only delivery. No release,
+  OTA publication, device write or runtime acceptance was performed.
+- Final handoff: [acceptance/runbook](standard-runner-rom-build-acceptance-2026-11-05.md)
+  and [compact evidence](evidence/standard-fresh-build-2026110303/). Root checked
+  the 39 fresh receipts, native-versus-delivered image identities, actual
+  assembly receipt, both FIT validation records, SHA256SUMS and job integrity
+  log. Actual PE image processing remained on standard runners; local evidence
+  inspection used metadata ranges, not downloaded ROM image bytes.
 
 ## Executor protocol
 

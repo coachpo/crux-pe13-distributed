@@ -1,0 +1,590 @@
+{
+  "hardware_verified": false,
+  "source_build_verified": false,
+  "classification": "development-adb",
+  "development_adb": true,
+  "rom_boot_type": "native-first-stage-ramdisk",
+  "recovery_only": false,
+  "recovery_fstab_profile": "crux_uboot",
+  "release_ready": false,
+  "release_limitations": [
+    "Native init/FBE/runtime policy require device verification",
+    "Source provenance/build and device behavior require separate verification",
+    "Explicit development ADB profile permits RSA authentication overrides; not a release profile"
+  ],
+  "kernel": {
+    "file_size": 43714576,
+    "image_size": 52920320,
+    "text_offset": 524288,
+    "flags": 10,
+    "sha256": "73d2806aaad2a643609f9ae5739f5eedeb15672648fbde6a20c52544b822af09"
+  },
+  "recovery_ramdisk": {
+    "sha256": "bb3defcdd20788e7eb01e22ec1c7fa4a4d85e1c633a5a4b943cf74b36d9dd097",
+    "file_size": 12786741,
+    "classification": "development-adb",
+    "adb_authentication_profile": "development",
+    "runtime_adb_authentication_verified": false,
+    "property_files": [
+      "prop.default"
+    ],
+    "security_properties_from_system_at_runtime": false,
+    "dualboot_fstab": {
+      "sha256": "76a3241ec67c2d05bfe91de545f92eeea5db44815a9ee8cc8b1173f34a9f9d58",
+      "mounts": {
+        "/system": {
+          "device": "/dev/block/by-name/pesystem",
+          "filesystem": "ext4",
+          "mount_options": [
+            "ro",
+            "barrier=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "first_stage_mount"
+          ]
+        },
+        "/vendor": {
+          "device": "/dev/block/by-name/pevendor",
+          "filesystem": "ext4",
+          "mount_options": [
+            "ro",
+            "barrier=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "first_stage_mount"
+          ]
+        },
+        "/metadata": {
+          "device": "/dev/block/by-name/pemetadata",
+          "filesystem": "ext4",
+          "mount_options": [
+            "noatime",
+            "nosuid",
+            "nodev",
+            "discard",
+            "data=journal",
+            "commit=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "check",
+            "formattable",
+            "first_stage_mount"
+          ]
+        },
+        "/data": {
+          "device": "/dev/block/bootdevice/by-name/peuserdata",
+          "filesystem": "ext4",
+          "mount_options": [
+            "noatime",
+            "nosuid",
+            "nodev",
+            "barrier=1",
+            "noauto_da_alloc",
+            "inlinecrypt"
+          ],
+          "fs_mgr_flags": [
+            "latemount",
+            "wait",
+            "check",
+            "formattable",
+            "fileencryption=ice::v2",
+            "keydirectory=/metadata/vold/metadata_encryption",
+            "quota",
+            "reservedsize=128M"
+          ]
+        }
+      },
+      "native_fbe_flags_present": true,
+      "device_encryption_verified": false,
+      "path": "system/etc/recovery.fstab",
+      "checked_alias_paths": [
+        "fstab.crux_uboot",
+        "system/etc/recovery.fstab"
+      ],
+      "resolved_alias_paths": {
+        "fstab.crux_uboot": "fstab.crux_uboot",
+        "system/etc/recovery.fstab": "system/etc/recovery.fstab"
+      }
+    },
+    "security_properties": {
+      "ro.build.type": "userdebug",
+      "ro.secure": "1",
+      "ro.debuggable": "1",
+      "ro.adb.secure": "0",
+      "ro.adb.secure.recovery": "0",
+      "persist.sys.usb.config": "adb"
+    },
+    "embedded_adb_key_paths": [],
+    "validation_scope": "gzip/newc, prop.default authentication properties and ADB key paths; does not certify runtime policy or device behavior"
+  },
+  "boot_ramdisk": {
+    "sha256": "3c944259a8b4d8bf2852b941a7a8f9150d05d2c4bb7440c9def95871102fb266",
+    "file_size": 1361113,
+    "classification": "development-adb",
+    "adb_authentication_profile": "development",
+    "runtime_adb_authentication_verified": false,
+    "property_files": [
+      "system/etc/ramdisk/build.prop"
+    ],
+    "security_properties_from_system_at_runtime": true,
+    "dualboot_fstab": {
+      "sha256": "76a3241ec67c2d05bfe91de545f92eeea5db44815a9ee8cc8b1173f34a9f9d58",
+      "mounts": {
+        "/system": {
+          "device": "/dev/block/by-name/pesystem",
+          "filesystem": "ext4",
+          "mount_options": [
+            "ro",
+            "barrier=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "first_stage_mount"
+          ]
+        },
+        "/vendor": {
+          "device": "/dev/block/by-name/pevendor",
+          "filesystem": "ext4",
+          "mount_options": [
+            "ro",
+            "barrier=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "first_stage_mount"
+          ]
+        },
+        "/metadata": {
+          "device": "/dev/block/by-name/pemetadata",
+          "filesystem": "ext4",
+          "mount_options": [
+            "noatime",
+            "nosuid",
+            "nodev",
+            "discard",
+            "data=journal",
+            "commit=1"
+          ],
+          "fs_mgr_flags": [
+            "wait",
+            "check",
+            "formattable",
+            "first_stage_mount"
+          ]
+        },
+        "/data": {
+          "device": "/dev/block/bootdevice/by-name/peuserdata",
+          "filesystem": "ext4",
+          "mount_options": [
+            "noatime",
+            "nosuid",
+            "nodev",
+            "barrier=1",
+            "noauto_da_alloc",
+            "inlinecrypt"
+          ],
+          "fs_mgr_flags": [
+            "latemount",
+            "wait",
+            "check",
+            "formattable",
+            "fileencryption=ice::v2",
+            "keydirectory=/metadata/vold/metadata_encryption",
+            "quota",
+            "reservedsize=128M"
+          ]
+        }
+      },
+      "native_fbe_flags_present": true,
+      "device_encryption_verified": false,
+      "path": "fstab.crux_uboot",
+      "checked_alias_paths": [
+        "fstab.crux_uboot",
+        "fstab.qcom"
+      ],
+      "resolved_alias_paths": {
+        "fstab.crux_uboot": "fstab.crux_uboot",
+        "fstab.qcom": "fstab.qcom"
+      }
+    },
+    "security_properties": {},
+    "embedded_adb_key_paths": [],
+    "validation_scope": "gzip/newc, prop.default authentication properties and ADB key paths; does not certify runtime policy or device behavior"
+  },
+  "inputs": {
+    "image": "/home/runner/work/_temp/result/fit-stage/fit-inputs/Image",
+    "base_dir": "/home/runner/work/_temp/result/fit-stage/fit-inputs/base-dtbs",
+    "overlay": "/home/runner/work/_temp/result/fit-stage/fit-inputs/crux-sm8150-overlay.dtbo",
+    "ramdisk": "/home/runner/work/_temp/result/fit-stage/fit-inputs/ramdisk-recovery.img",
+    "boot_ramdisk": "/home/runner/work/_temp/result/fit-stage/fit-inputs/ramdisk.img",
+    "packager_sha256": "9d8bea7702f116c670311fdf690d053f0f996bec15569fed9a7a8e616457e29d"
+  },
+  "reference_sha256": null,
+  "source_contract": {
+    "mode": "source-declarative",
+    "path": "/home/runner/work/crux-pe13-distributed/crux-pe13-distributed/references/pe13-boot-contracts/source-declarative-boot-contract.json",
+    "sha256": "f4d39447e9ffe592405b46716b5d06eb0f17295084217d0dc9fef5cb4f5ca811",
+    "schema_version": 1,
+    "legacy_oracle_sha256": {
+      "rom-pstore.dtb": "0786c26214617bcd3b5002062003426be847820e89fe614207dea6d01b2e3790",
+      "recovery-pstore.dtb": "e70ab2f59216877b14c04c0b64ffc8e3174425377ece8230bb2b27a0144461c3"
+    }
+  },
+  "overlay_sha256": "0208d513a30315b073cc24f458dec5b1059f8a7eb5fdb6609f575c2d1d3f8e46",
+  "bases": {
+    "sm8150": {
+      "msm_id": [
+        339,
+        65536
+      ],
+      "base_sha256": "8fa7ac5002bfe7bcc52e95dc06d240d7aad5afc30312df5df161b68fb649b65a",
+      "merged_sha256": "32ade575f509f30f84f500f64cf4cf2dbe237111bb7348d02462b1527d07366f",
+      "single_overlay_applied": true
+    },
+    "sm8150-v2": {
+      "msm_id": [
+        339,
+        131072
+      ],
+      "base_sha256": "c51c194bde705b5d6828c285cb50b03bde0d7933a33749b6202a039d8b15fc98",
+      "merged_sha256": "3f2b4a682c719ded960032b73a781bb6e45b728197dd630055c78beedff4df14",
+      "single_overlay_applied": true
+    },
+    "sm8150p": {
+      "msm_id": [
+        361,
+        65536
+      ],
+      "base_sha256": "2199b5f80c77668b9a70df5d2544110d8f48cbee9107f7fee64327b0ad6b259b",
+      "merged_sha256": "3862bfb795bbd8bd5a5fc53a964c4eebfef9190ba70152afaedb38debf7b726a",
+      "single_overlay_applied": true
+    },
+    "sm8150p-v2": {
+      "msm_id": [
+        361,
+        131072
+      ],
+      "base_sha256": "30cabd53a4e800bd73c7e88009b2f28bbb97424ab020a1cec17cecdd5164ced0",
+      "merged_sha256": "5b2e59cb8810f0edaaa7224e1106474c683c48768449399e888c5c58b4644171",
+      "single_overlay_applied": true
+    }
+  },
+  "selected_base": "sm8150-v2",
+  "fits": {
+    "rom": {
+      "file_size": 45798412,
+      "cache_read_blocks": 12544,
+      "cache_read_bytes": 51380224,
+      "sha256": "a2b63d0465575f7913f8a4d6d70ddf80d1f9c938136a2e12a0f61f1a4ee6cd0f",
+      "loads": {
+        "kernel": 2148007936,
+        "fdt": 2222981120,
+        "ramdisk": 2197815296
+      },
+      "embedded_sha256": {
+        "kernel": "73d2806aaad2a643609f9ae5739f5eedeb15672648fbde6a20c52544b822af09",
+        "fdt": "7736fd7bd4955e49237098c9080af4f7630430efd05a6780f871654cbc54614d",
+        "ramdisk": "3c944259a8b4d8bf2852b941a7a8f9150d05d2c4bb7440c9def95871102fb266"
+      },
+      "extra_fixed_reservations": [
+        "ramdump_fb_region",
+        "xbl_dump_mem"
+      ],
+      "omitted_legacy_dynamic_reservations": [
+        "mem_dump_region"
+      ],
+      "reserved_memory_child_count": 32,
+      "reserved_regions": [
+        {
+          "name": "pil_buffer_p1_region@0a1000000",
+          "address": 2701131776,
+          "size": 46137344
+        },
+        {
+          "name": "pil_buffer_p2_region@a0000000",
+          "address": 2684354560,
+          "size": 16777216
+        },
+        {
+          "name": "hyp_mem",
+          "address": 2238709760,
+          "size": 6291456
+        },
+        {
+          "name": "xbl_aop_mem",
+          "address": 2246049792,
+          "size": 1310720
+        },
+        {
+          "name": "smem",
+          "address": 2248146944,
+          "size": 2097152
+        },
+        {
+          "name": "removed_regions",
+          "address": 2250244096,
+          "size": 89128960
+        },
+        {
+          "name": "camera_region",
+          "address": 2339373056,
+          "size": 5242880
+        },
+        {
+          "name": "pil_wlan_fw_region",
+          "address": 2344615936,
+          "size": 1572864
+        },
+        {
+          "name": "pil_npu_region",
+          "address": 2346188800,
+          "size": 524288
+        },
+        {
+          "name": "pil_adsp_region",
+          "address": 2346713088,
+          "size": 35651584
+        },
+        {
+          "name": "modem_region",
+          "address": 2382364672,
+          "size": 157286400
+        },
+        {
+          "name": "pil_video_region",
+          "address": 2539651072,
+          "size": 5242880
+        },
+        {
+          "name": "pil_slpi_region",
+          "address": 2544893952,
+          "size": 20971520
+        },
+        {
+          "name": "pil_ipa_fw_region",
+          "address": 2565865472,
+          "size": 65536
+        },
+        {
+          "name": "pil_ipa_gsi_region",
+          "address": 2565931008,
+          "size": 20480
+        },
+        {
+          "name": "pil_gpu_region",
+          "address": 2565951488,
+          "size": 8192
+        },
+        {
+          "name": "pil_spss_region",
+          "address": 2566914048,
+          "size": 1048576
+        },
+        {
+          "name": "cdsp_regions",
+          "address": 2567962624,
+          "size": 20971520
+        },
+        {
+          "name": "qseecom_region",
+          "address": 2654994432,
+          "size": 20971520
+        },
+        {
+          "name": "cdsp_sec_regions",
+          "address": 2764046336,
+          "size": 62914560
+        },
+        {
+          "name": "cont_splash_region",
+          "address": 2617245696,
+          "size": 37748736
+        },
+        {
+          "name": "ramoops@b0000000",
+          "address": 2952790016,
+          "size": 4194304
+        },
+        {
+          "name": "ramdump_fb_region@af000000",
+          "address": 2936012800,
+          "size": 16777216
+        },
+        {
+          "name": "xbl_dump_mem@85d00000",
+          "address": 2245001216,
+          "size": 1048576
+        }
+      ],
+      "bootargs": "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 cgroup.memory=nokmem,nosocket console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xa90000 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 buildvariant=userdebug androidboot.verifiedbootstate=orange androidboot.keymaster=1 androidboot.vbmeta.device_state=unlocked androidboot.veritymode=enforcing androidboot.bootdevice=1d84000.ufshc androidboot.serialno=8bd37df4 androidboot.ramdump=disable androidboot.secureboot=1 androidboot.hwversion=7.9.2 androidboot.cpuid=0x5958f3e7 androidboot.hwc=CN androidboot.hwlevel=MP androidboot.baseband=mdm msm_drm.dsi_display0=dsi_samsung_fhd_ea8076_f1s_cmd_display: androidboot.oled_wp=01b90bb50c5a androidboot.ufsid=0x145 androidboot.dp=0x0 androidboot.fstab_suffix=crux_uboot androidboot.init_fatal_reboot_target=bootloader kpti=off androidboot.boot_devices=soc/1d84000.ufshc",
+      "classification": "development-adb",
+      "boot_type": "native-first-stage-ramdisk",
+      "boot_command": "scsi dev 0; scsi read 0xC0000000 0x3c000 0x3100; setenv fdt_high; setenv initrd_high; bootm start 0xC0000000; bootm loados; bootm ramdisk; bootm prep; run boot_go",
+      "staging_and_kernel_file_ranges_disjoint": true,
+      "staging_overlaps_bss": {
+        "fdt": false,
+        "ramdisk": true
+      },
+      "required_uboot_contract": {
+        "reserve_arm64_image_size": true,
+        "fixup_memory_banks_from_previous_bootloader": true,
+        "initrd_high_unset": true,
+        "fdt_high_unset": true,
+        "relocate_initrd_and_fdt_before_kernel_entry": true
+      }
+    },
+    "recovery": {
+      "file_size": 57223928,
+      "cache_read_blocks": 15104,
+      "cache_read_bytes": 61865984,
+      "sha256": "838fbb37f636bf37b611983e8c8f1ab3649861b6744419146529cffea81fe410",
+      "loads": {
+        "kernel": 2148007936,
+        "fdt": 2222981120,
+        "ramdisk": 2197815296
+      },
+      "embedded_sha256": {
+        "kernel": "73d2806aaad2a643609f9ae5739f5eedeb15672648fbde6a20c52544b822af09",
+        "fdt": "841cdf489b25be222168997d068375954e272ddf8f91ee6f2300a264c4ffecba",
+        "ramdisk": "bb3defcdd20788e7eb01e22ec1c7fa4a4d85e1c633a5a4b943cf74b36d9dd097"
+      },
+      "extra_fixed_reservations": [],
+      "omitted_legacy_dynamic_reservations": [
+        "mem_dump_region"
+      ],
+      "reserved_memory_child_count": 30,
+      "reserved_regions": [
+        {
+          "name": "pil_buffer_p1_region@0a1000000",
+          "address": 2701131776,
+          "size": 46137344
+        },
+        {
+          "name": "pil_buffer_p2_region@a0000000",
+          "address": 2684354560,
+          "size": 16777216
+        },
+        {
+          "name": "hyp_mem",
+          "address": 2238709760,
+          "size": 6291456
+        },
+        {
+          "name": "xbl_aop_mem",
+          "address": 2246049792,
+          "size": 1310720
+        },
+        {
+          "name": "smem",
+          "address": 2248146944,
+          "size": 2097152
+        },
+        {
+          "name": "removed_regions",
+          "address": 2250244096,
+          "size": 89128960
+        },
+        {
+          "name": "camera_region",
+          "address": 2339373056,
+          "size": 5242880
+        },
+        {
+          "name": "pil_wlan_fw_region",
+          "address": 2344615936,
+          "size": 1572864
+        },
+        {
+          "name": "pil_npu_region",
+          "address": 2346188800,
+          "size": 524288
+        },
+        {
+          "name": "pil_adsp_region",
+          "address": 2346713088,
+          "size": 35651584
+        },
+        {
+          "name": "modem_region",
+          "address": 2382364672,
+          "size": 157286400
+        },
+        {
+          "name": "pil_video_region",
+          "address": 2539651072,
+          "size": 5242880
+        },
+        {
+          "name": "pil_slpi_region",
+          "address": 2544893952,
+          "size": 20971520
+        },
+        {
+          "name": "pil_ipa_fw_region",
+          "address": 2565865472,
+          "size": 65536
+        },
+        {
+          "name": "pil_ipa_gsi_region",
+          "address": 2565931008,
+          "size": 20480
+        },
+        {
+          "name": "pil_gpu_region",
+          "address": 2565951488,
+          "size": 8192
+        },
+        {
+          "name": "pil_spss_region",
+          "address": 2566914048,
+          "size": 1048576
+        },
+        {
+          "name": "cdsp_regions",
+          "address": 2567962624,
+          "size": 20971520
+        },
+        {
+          "name": "qseecom_region",
+          "address": 2654994432,
+          "size": 20971520
+        },
+        {
+          "name": "cdsp_sec_regions",
+          "address": 2764046336,
+          "size": 62914560
+        },
+        {
+          "name": "cont_splash_region",
+          "address": 2617245696,
+          "size": 37748736
+        },
+        {
+          "name": "ramoops@b0000000",
+          "address": 2952790016,
+          "size": 4194304
+        }
+      ],
+      "bootargs": "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 cgroup.memory=nokmem,nosocket console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xa90000 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=2048 loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 buildvariant=userdebug androidboot.verifiedbootstate=orange androidboot.keymaster=1 androidboot.vbmeta.device_state=unlocked androidboot.veritymode=enforcing androidboot.bootdevice=1d84000.ufshc androidboot.serialno=8bd37df4 androidboot.ramdump=disable androidboot.secureboot=1 androidboot.hwversion=7.9.2 androidboot.cpuid=0x5958f3e7 androidboot.hwc=CN androidboot.hwlevel=MP androidboot.baseband=mdm msm_drm.dsi_display0=dsi_samsung_fhd_ea8076_f1s_cmd_display: androidboot.oled_wp=01b90bb50c5a androidboot.ufsid=0x145 androidboot.dp=0x0 androidboot.fstab_suffix=crux_uboot androidboot.init_fatal_reboot_target=bootloader kpti=off androidboot.boot_devices=soc/1d84000.ufshc",
+      "classification": "development-adb",
+      "boot_type": "recovery-ramdisk",
+      "boot_command": "scsi dev 0; scsi read 0xC0000000 0x38000 0x3b00; setenv fdt_high; setenv initrd_high; bootm start 0xC0000000; bootm loados; bootm ramdisk; bootm prep; run boot_go",
+      "staging_and_kernel_file_ranges_disjoint": true,
+      "staging_overlaps_bss": {
+        "fdt": false,
+        "ramdisk": true
+      },
+      "required_uboot_contract": {
+        "reserve_arm64_image_size": true,
+        "fixup_memory_banks_from_previous_bootloader": true,
+        "initrd_high_unset": true,
+        "fdt_high_unset": true,
+        "relocate_initrd_and_fdt_before_kernel_entry": true
+      }
+    }
+  },
+  "board_identity_from_dtbo_metadata": true
+}

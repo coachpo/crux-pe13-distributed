@@ -1,0 +1,213 @@
+{
+  "artifact": {
+    "digest": "sha256:d53e85f790c8b6919b9b453a982c367df2a144f5a5093db3f9f56dd697fa2efb",
+    "expires_at": "2026-12-05T16:09:28Z",
+    "id": 13431937735,
+    "name": "cloud-fresh-rom-42018017251",
+    "size_in_bytes": 2698205767
+  },
+  "assembly": {
+    "conclusion": "success",
+    "created_at": "2026-11-05T15:54:50Z",
+    "head_sha": "163639464a3cf35813c9fd574211bdd40fc7910d",
+    "id": 42059779500,
+    "job_id": 127357916533,
+    "producer_bindings": [
+      {
+        "artifact": "shard-w000-s000",
+        "expected_manifest_sha256": "5e1e435b0a911306dc8e2afe6480b30fee9e3a2d0079b1c86b00cc1c27f156c8",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w000-s000",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w000-s012",
+        "expected_manifest_sha256": "f8db7dd37f168dd83158ba6928562fcc0672730e70ccb93d93c28ef55317937f",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w000-s012",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w001-s000",
+        "expected_manifest_sha256": "05fbca69fb06e3edbec906e4f1d8d55f2f3bd2c333e3e43f0967be815475df2d",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w001-s000",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w001-s001",
+        "expected_manifest_sha256": "fd7dbb8f9d84952cb9529af054f9c4c88987e80996261d801cd2f989d942d6c4",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w001-s001",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w004-s000",
+        "expected_manifest_sha256": "f80e7c0fe786bbceb0250b3eb5c24bbf6f83b4f96fbcf4e38adb235500869f12",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w004-s000",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w006-s000",
+        "expected_manifest_sha256": "78b6e97bb72379e9873483372fc160d9cf3542cb4beab6ec8e885893889e8666",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w006-s000",
+        "run_id": "42018017251"
+      },
+      {
+        "artifact": "shard-w007-s000",
+        "expected_manifest_sha256": "d161f2966f2c07b3e885333b41f368035ebcb5f4a6fb26e1487ad7c8a2d312cb",
+        "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+        "id": "w007-s000",
+        "run_id": "42018017251"
+      }
+    ],
+    "run_attempt": 1,
+    "updated_at": "2026-11-05T16:09:49Z"
+  },
+  "build_number": "2026110303",
+  "compile": {
+    "ccache_disabled_on_all_workers": true,
+    "conclusion": "success",
+    "created_at": "2026-11-05T11:19:17Z",
+    "earlier_execution_outputs_admitted": false,
+    "head_sha": "9300985475998818d5938a55d11ee9ed03732d83",
+    "id": 42018017251,
+    "native_tasks": 39,
+    "pack_run": "42001383332",
+    "run_attempt": 1,
+    "successful_workflow_jobs": 49,
+    "summary_artifact_id": 13431450207,
+    "updated_at": "2026-11-05T15:51:12Z"
+  },
+  "delivery_assets": {
+    "boot.img": {
+      "sha256": "fe423d925b58d872a6eae934e7172334c8b8003d86478e08bddbe1765f4cd7b3",
+      "size": 134217728
+    },
+    "recovery-cepheus.itb": {
+      "sha256": "838fbb37f636bf37b611983e8c8f1ab3649861b6744419146529cffea81fe410",
+      "size": 57223928
+    },
+    "recovery.img": {
+      "sha256": "1abd1177bc080f257a92917de2ee34540d7909952d86c32d73e7f4a41861736b",
+      "size": 67108864
+    },
+    "rom-cepheus.itb": {
+      "sha256": "a2b63d0465575f7913f8a4d6d70ddf80d1f9c938136a2e12a0f61f1a4ee6cd0f",
+      "size": 45798412
+    },
+    "system.img.zst": {
+      "sha256": "d6372f05de304413dd74d0cb2e71fbde58f505847e211ad7014dbf74a284ab6d",
+      "size": 1209476728
+    },
+    "vendor.img": {
+      "sha256": "b6360a638bdd62ca17e59690a99085efff353c87c7d0b359c32b089db0f273ed",
+      "size": 781857168
+    }
+  },
+  "image_gates": {
+    "avb_algorithms": {
+      "boot": "NONE",
+      "recovery": "SHA256_RSA2048"
+    },
+    "avb_v1_failures": {
+      "boot": [],
+      "recovery": []
+    },
+    "delivery_checksum_entries_verified": 7,
+    "fit_kernel_producer": {
+      "archive_sha256": "06b44ca03b487c2c4c01b287229804034e2d808957ba83391a6d0ddb236eadce",
+      "id": "w001-s001",
+      "manifest_sha256": "fd7dbb8f9d84952cb9529af054f9c4c88987e80996261d801cd2f989d942d6c4",
+      "run_id": "42018017251"
+    },
+    "fit_legacy_binary_reference_read": false,
+    "fit_source_contract": {
+      "path": "/home/runner/work/crux-pe13-distributed/crux-pe13-distributed/references/pe13-boot-contracts/source-declarative-boot-contract.json",
+      "schema_version": 1,
+      "sha256": "f4d39447e9ffe592405b46716b5d06eb0f17295084217d0dc9fef5cb4f5ca811"
+    },
+    "properties": {
+      "errors": [],
+      "status": "success"
+    },
+    "ramdisks": {
+      "boot_entries": 15,
+      "boot_mount_points": [
+        "debug_ramdisk",
+        "dev",
+        "metadata",
+        "mnt",
+        "proc",
+        "second_stage_resources",
+        "sys"
+      ],
+      "recovery_entries": 472,
+      "recovery_fstab": "system/etc/recovery.fstab",
+      "recovery_source": {
+        "extracted_from_android_image": true,
+        "extraction": {
+          "header_version": 1,
+          "offset": 45719552,
+          "page_size": 4096,
+          "sha256": "bb3defcdd20788e7eb01e22ec1c7fa4a4d85e1c633a5a4b943cf74b36d9dd097",
+          "size": 12786741
+        },
+        "path": "/home/runner/work/_temp/android-out/target/product/crux/recovery.img",
+        "sha256": "1abd1177bc080f257a92917de2ee34540d7909952d86c32d73e7f4a41861736b"
+      }
+    },
+    "system_streamed_roundtrip_verified": true,
+    "v1_headers": {
+      "boot": {
+        "expected_image_size": 47083520,
+        "header_size": 1648,
+        "header_version": 1,
+        "kernel_size": 45712140,
+        "os_version": 436208001,
+        "page_size": 4096,
+        "ramdisk_gzip": true,
+        "ramdisk_offset": 45719552,
+        "ramdisk_size": 1361113,
+        "recovery_dtbo_offset": 0,
+        "recovery_dtbo_size": 0,
+        "second_size": 0
+      },
+      "recovery": {
+        "expected_image_size": 58507264,
+        "header_size": 1648,
+        "header_version": 1,
+        "kernel_size": 45712140,
+        "os_version": 436208001,
+        "page_size": 4096,
+        "ramdisk_gzip": true,
+        "ramdisk_offset": 45719552,
+        "ramdisk_size": 12786741,
+        "recovery_dtbo_offset": 0,
+        "recovery_dtbo_size": 0,
+        "second_size": 0
+      }
+    }
+  },
+  "limits": {
+    "device_written": false,
+    "github_release_published": false,
+    "hardware_verified": false,
+    "ota_published": false,
+    "physical_recovery_loader_generated": false,
+    "release_ready": false
+  },
+  "native_system_image": {
+    "sha256": "4fb4d398655daf8d6ccbc23db2eda1f900e6e029591ec06196ae1fb56e40a73e",
+    "size": 2785252244
+  },
+  "product": "aosp_crux-userdebug",
+  "repository_visibility": "PUBLIC",
+  "runner": {
+    "group": "GitHub Actions",
+    "label": "ubuntu-22.04"
+  },
+  "schema_version": 1
+}

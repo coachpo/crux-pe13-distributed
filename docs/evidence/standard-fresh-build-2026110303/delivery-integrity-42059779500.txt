@@ -1,0 +1,8 @@
+boot.img: OK
+delivery-record.json: OK
+recovery-cepheus.itb: OK
+recovery.img: OK
+rom-cepheus.itb: OK
+system.img.zst: OK
+vendor.img: OK
+system.img.zst: verified uncompressed identity {"sha256": "4fb4d398655daf8d6ccbc23db2eda1f900e6e029591ec06196ae1fb56e40a73e", "size": 2785252244}

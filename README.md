@@ -20,8 +20,16 @@ only this public repository's standard Linux runners. Start a new preparation
 with `freeze-standard.yml`, then `prepare-standard.yml` (`stage=full`). No local
 PE build-preparation input or larger/self-hosted runner is required.
 
-Preparation does not automatically compile, assemble, publish or install a new
-ROM. The accepted frozen development delivery below remains unchanged.
+The [accepted fresh ROM path](docs/standard-runner-rom-build-acceptance-2026-11-05.md)
+continues from reviewed capsules through `build-standard.yml` and
+`assemble-standard.yml`. Both run on the same public repository's standard
+Linux runners, admit only newly compiled outputs within one execution, and
+retain the verified images in Actions without publishing or installing them.
+
+### Existing development prerelease path
+
+The accepted frozen development delivery and host-side dev OTA remain unchanged.
+Use the fresh path above when no prior compiled producer may be used.
 
 1. **Frozen inputs** retain the accepted development graph and source capsules
    in their pinned registry.

@@ -11,8 +11,10 @@ the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
 and packs input capsules; it does not assemble or deploy ROM/Recovery images,
 publish an OTA, or install anything on a device. The accepted
 `dev-pe13-2026101105-v3` delivery remains a separate existing build. The complete
-preparation chain has [passed acceptance](standard-runner-preparation-acceptance-2026-11-04.md);
-this is not acceptance of a newly compiled ROM.
+preparation chain has [passed acceptance](standard-runner-preparation-acceptance-2026-11-04.md).
+The separate [fresh ROM acceptance and runbook](standard-runner-rom-build-acceptance-2026-11-05.md)
+continues through native compilation and verified unpublished images on the same
+standard runner class; these two preparation workflows remain preparation-only.
 
 Both workflows can be dispatched entirely from the repository's GitHub Actions
 page. The CLI commands below are optional remote controls, not local build steps.

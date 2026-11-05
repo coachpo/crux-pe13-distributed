@@ -1,0 +1,289 @@
+{
+  "execution_id": "42018017251",
+  "fresh_build": {
+    "execution_id": "42018017251",
+    "pack_run": "42001383332",
+    "plan_sha256": "0adc8fc5ee03139e5918ecb6ea33cbc2048f955721cafe5567f75ee15f28df71",
+    "shard_run": "41769467686",
+    "source_manifest_sha256": "2950cc77ceea78dd47d140e611ef38e477823f306d841433b72f167e0ff1c69d"
+  },
+  "producers": [
+    {
+      "artifact": "shard-w000-s000",
+      "expected_manifest_sha256": "5e1e435b0a911306dc8e2afe6480b30fee9e3a2d0079b1c86b00cc1c27f156c8",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s001",
+      "expected_manifest_sha256": "aa39ecc0cd1a182020f1a2b63c829c6082a7e4bdcebe7d5ddf74fa5c183f46be",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s002",
+      "expected_manifest_sha256": "14f7efdbcbf8fdd8e3957921fd6644799447ff317e8260c752611970e39ed748",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s002",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s003",
+      "expected_manifest_sha256": "ccdc7f30ea4af772b330f8dc7226bbfb561a75bd8f6093d7ecfdfe8c90dc7afd",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s003",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s004",
+      "expected_manifest_sha256": "d06804ae95006104c544d7c4916b3efc597b2cf5968650146a555e0ff8bec9b7",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s004",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s005",
+      "expected_manifest_sha256": "97b27279a1b09e550c15e25f31cbd09cf58a638d1770a305533c4253cb36a045",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s005",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s006",
+      "expected_manifest_sha256": "989481e9da21764e82715f960b79c48cf046e1bc28a90880ccb34ecbdaeca904",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s006",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s007",
+      "expected_manifest_sha256": "828acdd44b916707694d7494f1d31a72d0b230f9033599ed0df54a4f92aaf199",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s007",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s008",
+      "expected_manifest_sha256": "1def39139ffd0532715417bd88be5d2167698fa951bb9d1a2bc020aac5f5e3b0",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s008",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s009",
+      "expected_manifest_sha256": "e7d973aa83ccffdb3401a93bb2fec2e84ce48c003f09133c84cad3881307ce53",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s009",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s010",
+      "expected_manifest_sha256": "c1182d327f7d0d09d4b10740bf3d47896fd95798c4ad6b80849ae205e2479a69",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s010",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s011",
+      "expected_manifest_sha256": "8f78bc81bf195e202d1d307d81c4eadd32642f551643266deb1d24b5e52cdf05",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s011",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w000-s012",
+      "expected_manifest_sha256": "f8db7dd37f168dd83158ba6928562fcc0672730e70ccb93d93c28ef55317937f",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w000-s012",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w001-s000",
+      "expected_manifest_sha256": "05fbca69fb06e3edbec906e4f1d8d55f2f3bd2c333e3e43f0967be815475df2d",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w001-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w001-s001",
+      "expected_manifest_sha256": "fd7dbb8f9d84952cb9529af054f9c4c88987e80996261d801cd2f989d942d6c4",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w001-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w001-s002",
+      "expected_manifest_sha256": "11c5bd0edf28599e531b831df433225dbe780c381ef280a5fc411f868559cde9",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w001-s002",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s000",
+      "expected_manifest_sha256": "cd2dcef37553e5339aede86c5019a8e3a64589ae02c06a4425db3b026381f708",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s001",
+      "expected_manifest_sha256": "2fc1c94609fed6b892f49fed1267658dfcbb289da4a3874b7a0ea29bfdd25481",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s002",
+      "expected_manifest_sha256": "2808243dc09318dda1cc6e647e0b46d75ffca3edb91fee8429d148f1e5a83a21",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s002",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s003",
+      "expected_manifest_sha256": "f9bdb3da9a4eb85fc4bff768c61aaad74754dd46a71636841b294245c3346cb5",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s003",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s004",
+      "expected_manifest_sha256": "bf0946b606d69b3e9e884f1686feaaac7b0385135479e7a29a7a44b8be8a5c91",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s004",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s005",
+      "expected_manifest_sha256": "53e253c39d771c4a449f92d7cc6d6a600df41ba62a257060f8eb5886468c8279",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s005",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w002-s006",
+      "expected_manifest_sha256": "2bca5353725a2caed4ff6d4ca35eff137dbcc54106ef17f9e9222cdd04fd45e9",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w002-s006",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s000",
+      "expected_manifest_sha256": "58f16c932f70a4174eb5f6974a801eed337f0ffbd1e8510d04d689455784b5bd",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s001",
+      "expected_manifest_sha256": "9411cc772b3e23bb82ca247ea5413b947c9d646f38b278dbca827309d279378e",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s002",
+      "expected_manifest_sha256": "8abd1f7f9cbe62c7344cc707398c81c570f485da1b2272216a5cd6bbaff66f2c",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s002",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s003",
+      "expected_manifest_sha256": "f258716cb553249ee57e28d73a8cd304677b506a2d3ea865e799dadde801c7fd",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s003",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s004",
+      "expected_manifest_sha256": "bb635678acecb87d2a0aab33dff5f12b616797d0cbf0cc550a7cf7cd57421631",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s004",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w003-s005",
+      "expected_manifest_sha256": "ac27ee717f174de27197c093d8dd44fc8f79c9148e204219bada332fcc42ffce",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w003-s005",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w004-s000",
+      "expected_manifest_sha256": "f80e7c0fe786bbceb0250b3eb5c24bbf6f83b4f96fbcf4e38adb235500869f12",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w004-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w004-s001",
+      "expected_manifest_sha256": "ae5b7f3174dceac2c69a3f6527feddee90835b85ba814b8f28db8019209feed1",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w004-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w004-s002",
+      "expected_manifest_sha256": "187f72b7deffcc45862d0b94246ddd4a36ee3433cee86cfae33b5b9a5b1ebd83",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w004-s002",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w004-s003",
+      "expected_manifest_sha256": "f63c0e8d3fac86bdf855538a6dbdb1ee89866a50c8a3e1f06455fd106de3632f",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w004-s003",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w004-s004",
+      "expected_manifest_sha256": "3779a6986ef489c17b7cc898e6521c1a834f1cf5402f3dd68fb1a0b6055c655d",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w004-s004",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w005-s000",
+      "expected_manifest_sha256": "c1495e5f2aa841c1eecc25cfd022126112c3a22219a575bea0e659364a551d55",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w005-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w005-s001",
+      "expected_manifest_sha256": "fdeee3c490edaadb2f80e536df7d2423a030dba472e98ecb7996e78362f23958",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w005-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w006-s000",
+      "expected_manifest_sha256": "78b6e97bb72379e9873483372fc160d9cf3542cb4beab6ec8e885893889e8666",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w006-s000",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w006-s001",
+      "expected_manifest_sha256": "6a9719b1f9aeda58192e168a03906d6d179a1c507312138fa4d4240f719939c7",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w006-s001",
+      "run_id": "42018017251"
+    },
+    {
+      "artifact": "shard-w007-s000",
+      "expected_manifest_sha256": "d161f2966f2c07b3e885333b41f368035ebcb5f4a6fb26e1487ad7c8a2d312cb",
+      "expected_worker_commit": "9300985475998818d5938a55d11ee9ed03732d83",
+      "id": "w007-s000",
+      "run_id": "42018017251"
+    }
+  ],
+  "schema_version": 1,
+  "status": "success",
+  "task_count": 39,
+  "worker_commit": "9300985475998818d5938a55d11ee9ed03732d83"
+}
