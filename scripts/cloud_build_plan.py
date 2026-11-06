@@ -17,9 +17,9 @@ from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
 
 
-EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110303'
+EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110501'
 PACK_REGISTRIES = {
-    '42001383332': EVIDENCE.parent / 'standard-fresh-build-2026110303/pack-registry-42001383332.json',
+    '42190106417': EVIDENCE / 'pack-registry-42190106417.json',
 }
 
 

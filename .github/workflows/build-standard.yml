@@ -6,17 +6,17 @@ on:
       pack_run:
         description: Accepted 39-capsule preparation run
         required: true
-        default: '42001383332'
+        default: '42190106417'
         type: string
       shard_run:
         description: Accepted slice plan run
         required: true
-        default: '41769467686'
+        default: '42190106417'
         type: string
       build_number:
         description: Identity embedded in the admitted capsules
         required: true
-        default: '2026110303'
+        default: '2026110501'
         type: string
 permissions:
   contents: read

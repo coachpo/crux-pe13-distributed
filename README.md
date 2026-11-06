@@ -7,7 +7,10 @@ public `coachpo/crux-pe13-ota` R6 feed is frozen and is not read or written here
 
 ## Standard-runner build baseline
 
-Start at the [PE13 `2026110303` acceptance and rerun guide](docs/standard-runner-rom-build-acceptance-2026-11-05.md).
+The current cold inputs are for Dev candidate `2026110501`, from
+[freeze 42186082476](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42186082476)
+and [full preparation 42190106417](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42190106417).
+Preparation acceptance does not establish native compilation or image acceptance.
 Dispatch `build-standard.yml` with its defaults while the admitted inputs are
 available. After its 39-task summary succeeds, pass that **new compile run ID**
 as `build_run` to `assemble-standard.yml`. The verified
@@ -22,11 +25,11 @@ runners.
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both FITs, writes `delivery-record.json` and `SHA256SUMS`, and checks that the compressed system payload decodes to the native system image identity. |
 | [Deliver to dev OTA](docs/dev-ota.md#deliver-an-accepted-standard-runner-build) | Separately dispatch `release-dev.yml` with the successful **assembly run ID** and a versioned dev tag. Preflight is read-only, draft stages the exact verified bytes, and publish explicitly makes the complete prerelease discoverable. |
 
-The [preparation evidence](docs/evidence/standard-preparation-2026110303/) and
-[fresh build evidence](docs/evidence/standard-fresh-build-2026110303/) are
-not payload backups. The bootstrap also reads the pinned graph summary,
-index receipt and current pack registry from those directories: those three
-records are **build inputs**, not just documentation. See the
+The [current preparation records](docs/evidence/standard-preparation-2026110501/)
+pin the graph summary, index receipt and pack registry for bootstrap; they
+are **build inputs**, not payload backups. The
+[PE13 `2026110303` acceptance and rerun guide](docs/standard-runner-rom-build-acceptance-2026-11-05.md)
+describes a separate frozen input set and its image evidence. See the
 [execution record](docs/standard-runner-build-plan.md) for historical attempts
 and the reason for the production kernel short-source policy.
 
