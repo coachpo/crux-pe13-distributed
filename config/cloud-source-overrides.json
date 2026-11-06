@@ -18,11 +18,15 @@
     },
     "device/xiaomi/crux": {
       "archive_revision": "e606ed75177a25f97c931337eb3c7727f8a6ee32",
-      "expected_tree": "e5779e581e6f49b590dc655ac7947e466be4d061",
+      "expected_tree": "8becf53eb6453803f92a579d4f6716da91c41ab7",
       "patches": [
         {
           "path": "config/source-patches/device-crux-dev-v2.patch",
           "sha256": "1dcb4e0feaf4f06bfac8f7324f517bf4538f6e60999513334c34ea86b230ee1a"
+        },
+        {
+          "path": "config/source-patches/device-crux-dev-marker-2026110501.patch",
+          "sha256": "655652d45fadbbee18cdbf9ea3db4163e55b8301a1c0236af85cee28f92e4ff4"
         }
       ]
     }
