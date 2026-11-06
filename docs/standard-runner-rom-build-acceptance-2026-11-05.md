@@ -5,8 +5,10 @@ verification of `aosp_crux-userdebug` succeeded using only standard
 `ubuntu-22.04` GitHub-hosted Linux runners in the public
 `coachpo/crux-pe13-distributed` repository. No local PE build, previous native
 `OUT_DIR` products, ccache, larger runner or self-hosted runner was used.
-The output is an Actions artifact, not a GitHub Release or OTA publication.
-No device was flashed or boot-tested.
+The build and assembly workflows produce an Actions artifact without
+publishing a Release or OTA. No device was flashed or boot-tested. The
+[post-cleanup rerun](#post-cleanup-rerun-4423f08) is a separate host acceptance
+record.
 
 ## Accepted runs and artifacts
 
@@ -62,25 +64,55 @@ It does not generate the separate physical U-Boot Recovery-loader container.
 The accepted device delivery `dev-pe13-2026101105-v3` is not replaced by this
 host-only result.
 
+## Post-cleanup rerun (`4423f08`)
+
+**Accepted on 2026-11-06 (Helsinki):** both workflows ran at
+[`4423f084417836e9f4281219c20eeef2989c5274`](https://github.com/coachpo/crux-pe13-distributed/commit/4423f084417836e9f4281219c20eeef2989c5274)
+on standard GitHub-hosted `ubuntu-22.04` runners. The rerun kept the admitted
+`2026110303` graph, shard plan and cold capsules, not prior compiled outputs.
+
+| Stage | Rerun evidence |
+| --- | --- |
+| Cold compile | [42077474432](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42077474432), attempt 1 — eight waves, 39/39 native tasks and 49/49 workflow jobs passed. The [summary artifact 13458161826](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42077474432/artifacts/13458161826) contains 39 distinct same-run producer bindings at `4423f08`. |
+| Assembly and image validation | [42121254314](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42121254314), attempt 1 — `build_run=42077474432`, dispatched from `verify/pe13-standard-4423f08`. All seven admitted producers came from that compile. The four images and both FITs passed the applicable property, Android v1, AVB structure, cpio, source-declarative FIT and delivery integrity gates. |
+| Actions delivery | [Artifact 13458249458](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42121254314/artifacts/13458249458), `cloud-fresh-rom-42077474432` — 2,698,208,667-byte ZIP. |
+
+An independent check downloaded the retained ZIP after assembly. Its byte
+length and SHA-256
+`c9f45996a2d14818ed6a67798867ba8b38798d529a9161e8ca88f75d11a6fe35`
+matched the Actions artifact record. All seven `SHA256SUMS` entries (four
+images, two FITs and `delivery-record.json`) matched the downloaded bytes.
+Streaming decompression of the downloaded `system.img.zst` produced
+2,785,252,244 bytes with SHA-256
+`a542f1f54056db39ce94f68d55e95cd27d3c1616b8b0cf927576d33f146f496b`,
+matching the native `system.img` identity recorded by this assembly.
+
+The rerun is Actions-only: no Release, OTA publication or device test.
+[`dev-pe13-2026110303-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110303-v1)
+was published from the original assembly `42059779500` and artifact
+`13431937735`, not from this rerun. The shared build number does not identify
+the same bytes; the rerun does not replace the Dev v1 delivery or establish
+device acceptance.
+
 ## Re-run without a local build environment
 
 In the repository's **Actions** page, run **Compile fresh PE13 on standard
-runners** (`build-standard.yml`) with the defaults
+runners** (`build-standard.yml`) on `verify/pe13-standard-4423f08` with the defaults
 `pack_run=42001383332`, `shard_run=41769467686`, and
 `build_number=2026110303`. Wait for the successful 39-task summary. Then run
 **Assemble and verify a fresh PE13 build without publication** with `build_run`
-equal to the new successful compile run ID. Download
+equal to the new successful compile run ID, using the same branch. Download
 `cloud-fresh-rom-<build_run>` from the successful assembly run.
 
 Equivalent remote CLI controls (the commands dispatch jobs; they do not
 compile or validate the ROM locally):
 
 ```sh
-gh workflow run build-standard.yml --repo coachpo/crux-pe13-distributed --ref main \
+gh workflow run build-standard.yml --repo coachpo/crux-pe13-distributed --ref verify/pe13-standard-4423f08 \
   -f pack_run=42001383332 -f shard_run=41769467686 -f build_number=2026110303
 # Wait for the new compile run to succeed; replace BUILD_RUN with its Actions ID.
 gh run watch BUILD_RUN --repo coachpo/crux-pe13-distributed --exit-status
-gh workflow run assemble-standard.yml --repo coachpo/crux-pe13-distributed --ref main \
+gh workflow run assemble-standard.yml --repo coachpo/crux-pe13-distributed --ref verify/pe13-standard-4423f08 \
   -f build_run=BUILD_RUN
 # Replace ASSEMBLY_RUN with the successful assembly run's Actions ID.
 gh run watch ASSEMBLY_RUN --repo coachpo/crux-pe13-distributed --exit-status
@@ -88,6 +120,8 @@ gh run download ASSEMBLY_RUN --repo coachpo/crux-pe13-distributed \
   --name cloud-fresh-rom-BUILD_RUN
 ```
 
+Check that this branch still points to `4423f08` before dispatch. Do not use
+`main` for the frozen inputs if its source manifest has advanced.
 The defaults require the live graph artifact from `41677764699`, the shard
 artifact from `41769467686`, and the registry and all 39 capsules from
 `42001383332`. A compact receipt in Git is not a replacement for an Actions
