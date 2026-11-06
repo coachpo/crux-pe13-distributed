@@ -2212,10 +2212,21 @@
       "url": "https://android.googlesource.com/platform/external/f2fs-tools"
     },
     {
-      "archive_type": "git-bundle",
+      "archive_type": "github-release-snapshot",
+      "expected_tree": "9387f84662ad31e7d4e575e87d5ddcaffd04acf6",
       "path": "external/faceunlock",
+      "release_snapshot": {
+        "asset_id": 716362347,
+        "asset_name": "external-faceunlock-cd8cfdecdfbacbf40c42968863c7525025765e55.tar.gz",
+        "release_id": 436232455,
+        "repository": "coachpo/crux-pe13-faceunlock-snapshot",
+        "repository_id": 1447981826,
+        "sha256": "ffbba90c30e0ceb32ff1064b22800975651f0c30e3a3e1229b12cc9f628231e3",
+        "size_bytes": 60129388,
+        "tag": "snapshot-cd8cfdecdfbacbf40c42968863c7525025765e55"
+      },
       "revision": "cd8cfdecdfbacbf40c42968863c7525025765e55",
-      "url": "https://archive.org/download/gitlab.pixelexperience.org_bundles_20240412/https%3A__gitlab.pixelexperience.org_android_external_faceunlock.git.bundle"
+      "url": "https://github.com/coachpo/crux-pe13-faceunlock-snapshot"
     },
     {
       "path": "external/fastrpc",
@@ -7278,10 +7289,21 @@
       "url": "https://github.com/PixelExperience/vendor_custom-preference"
     },
     {
-      "archive_type": "git-bundle",
+      "archive_type": "github-release-snapshot",
+      "expected_tree": "3c18c9b8e63b4c3941eec58bf15438f64a253e22",
       "path": "vendor/gms",
+      "release_snapshot": {
+        "asset_id": 716362346,
+        "asset_name": "vendor-gms-f0e7f260c5b34a3f3917cfda4dc7b825b96511ff.tar.gz",
+        "release_id": 436232456,
+        "repository": "coachpo/crux-pe13-vendor-gms-snapshot",
+        "repository_id": 1447981829,
+        "sha256": "4beabe5559d474e8189bb45049388996448fae194476c0a3646f5c6f9bc4c321",
+        "size_bytes": 1033457052,
+        "tag": "snapshot-f0e7f260c5b34a3f3917cfda4dc7b825b96511ff"
+      },
       "revision": "f0e7f260c5b34a3f3917cfda4dc7b825b96511ff",
-      "url": "https://archive.org/download/gitlab.pixelexperience.org_bundles_20240412/https%3A__gitlab.pixelexperience.org_android_vendor_gms.git.bundle"
+      "url": "https://github.com/coachpo/crux-pe13-vendor-gms-snapshot"
     },
     {
       "path": "vendor/nxp/nfc",
@@ -7456,5 +7478,5 @@
   ],
   "schema_version": 1,
   "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
-  "source_scope": "complete commit-pinned repo projects and the two retained upstream bundles; excludes Git object storage, build outputs and local diagnostic experiments"
+  "source_scope": "complete commit-pinned repo projects and the two verified Release snapshots; excludes Git object storage, build outputs and local diagnostic experiments"
 }

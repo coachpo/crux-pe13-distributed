@@ -102,9 +102,41 @@ The graph identity and source manifest in this artifact are the inputs for the
 next workflow. A source artifact alone or a fixture test is not graph evidence.
 
 Project archives use their pinned revisions; a failed Google Gitiles archive
-can fall back to fetching and archiving the same revision. The two former PE
-GitLab projects use retained Internet Archive Git bundles. Maintained Crux
-forks are selected in `config/cloud-source-overrides.json`. The device tree
+can fall back to fetching and archiving the same revision. The maintained
+providers for `vendor/gms` and `external/faceunlock` are the two private
+GitHub Release snapshots pinned in the manifest and generator overrides.
+The private snapshot route has no upstream or public artifact fallback. It
+checks the repository, release/tag, asset ID, size and SHA-256, then checks
+the archive's Git commit and reconstructed tree before packaging the layer.
+The older Archive.org inputs are historical provenance only.
+
+Set `CRUX_SOURCE_SNAPSHOTS_TOKEN` in the consuming repository's Actions
+secrets using a fine-grained token with **Contents: read** on exactly
+`coachpo/crux-pe13-vendor-gms-snapshot` and
+`coachpo/crux-pe13-faceunlock-snapshot`. The normal consuming-repository
+workflow token does not cover these private repositories. Only the manual
+trusted `main` snapshot-layer steps receive the credential. The secret is
+not sent to redirected asset hosts or native Git/build subprocesses. This
+protects the private source origin and credential; the resulting source
+layers and downstream artifacts in the public build repository are public.
+
+The snapshot layers (currently `source-15` and `source-26`) are rebuilt from
+their locked assets; `reuse_sources_from` only offers unchanged, verified
+non-snapshot layers. Since the global manifest changes with the new
+providers, generate a fresh graph, index, shard plan, and capsules. The
+complete-run `source_run` override remains exact-manifest only.
+
+When replacing one of these snapshots, review its `snapshot.json`, private
+repository and uploaded Release asset, and independently verify the tarball
+bytes, embedded commit and extracted Git tree. Update the commit, tree and
+release/asset lock together in `config/cloud-source-overrides.json` and
+regenerate the source manifest from the matching resolved XML and source
+layout. The generator requires these overrides and never substitutes a
+public archive. Rotate the credential under the same Actions secret name
+with the same two-repository read scope; neither operation needs Python code
+changes.
+
+Maintained Crux forks are selected in `config/cloud-source-overrides.json`. The device tree
 revision `80c137e` is reconstructed from parent `e606ed7` plus
 `config/source-patches/device-crux-dev-v2.patch`, and its resulting tree is
 checked against `e5779e581e6f49b590dc655ac7947e466be4d061`. The pinned snapshot

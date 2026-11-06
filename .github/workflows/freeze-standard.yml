@@ -59,6 +59,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       layers: ${{ steps.plan.outputs.layers }}
+      snapshot_layers: ${{ steps.plan.outputs.snapshot_layers }}
       datetime: ${{ steps.plan.outputs.datetime }}
       source_run: ${{ steps.plan.outputs.source_run }}
     steps:
@@ -82,8 +83,18 @@ jobs:
               raise SystemExit('Full graph validation requires all source layers')
           if os.environ['MODE'] == 'source-only' and os.environ['SOURCE_RUN']:
               raise SystemExit('Source-only mode must build or verify its selected source layers')
+          snapshots = {project['path'] for project in manifest['projects']
+                       if project.get('archive_type') == 'github-release-snapshot'}
+          snapshot_layers = [layer['id'] for layer in manifest['layers']
+                             if snapshots.intersection(layer['projects'])]
+          if set(selected).intersection(snapshot_layers) and not os.environ['SOURCE_RUN'] and (
+              os.environ['GITHUB_REPOSITORY'] != 'coachpo/crux-pe13-distributed'
+              or os.environ['GITHUB_REF'] != 'refs/heads/main'
+          ):
+              raise SystemExit('Private Release snapshots may only be fetched by the trusted main workflow')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print('layers=' + json.dumps(selected), file=output)
+              print('snapshot_layers=' + json.dumps(snapshot_layers), file=output)
               print('datetime=' + str(int(os.environ['BUILD_DATETIME'] or time.time())), file=output)
               print('source_run=' + (os.environ['SOURCE_RUN'] or os.environ['GITHUB_RUN_ID']), file=output)
           PY
@@ -106,6 +117,7 @@ jobs:
           df -B1
           free -b
       - name: Fetch complete pinned projects and build compressed layer
+        if: ${{ !contains(fromJSON(needs.plan.outputs.snapshot_layers), matrix.layer) }}
         env:
           LAYER: ${{ matrix.layer }}
           REUSE_SOURCE_RUN: ${{ inputs.reuse_sources_from }}
@@ -123,6 +135,14 @@ jobs:
               exit 0
             fi
           fi
+          python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
+            --layer "$LAYER" --output "$RUNNER_TEMP/layer"
+      - name: Fetch locked private Release snapshot and build fresh compressed layer
+        if: contains(fromJSON(needs.plan.outputs.snapshot_layers), matrix.layer)
+        env:
+          LAYER: ${{ matrix.layer }}
+          CRUX_SOURCE_SNAPSHOTS_TOKEN: ${{ secrets.CRUX_SOURCE_SNAPSHOTS_TOKEN }}
+        run: |
           python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
             --layer "$LAYER" --output "$RUNNER_TEMP/layer"
       - name: Retain complete source layer

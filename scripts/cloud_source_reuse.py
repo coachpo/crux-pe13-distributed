@@ -19,7 +19,7 @@ SUCCESS_STATUSES = {"fetched-and-extracted", "fetched-bundle-and-archived",
 MANIFEST_PATH = "config/cloud-source-manifest.json"
 PROJECT_CONTRACT_FIELDS = (
     "path", "revision", "archive_revision", "url", "archive_url", "archive_type",
-    "expected_tree", "patches",
+    "expected_tree", "patches", "release_snapshot",
 )
 
 
@@ -233,6 +233,7 @@ def reuse_layer(manifest_path: Path, layer_id: str, source_run: str, repository:
         prior_receipt = json.loads(receipt_bytes)
         current_receipt = {**prior_receipt,
                            "manifest_sha256": current_manifest_sha,
+                           "source_scope": current_manifest.get("source_scope"),
                            "reuse": {"source_run": str(source_run),
                                      "original_manifest_sha256": old_manifest_sha,
                                      "original_receipt_sha256": receipt_sha,

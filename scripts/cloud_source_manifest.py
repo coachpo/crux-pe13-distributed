@@ -8,6 +8,11 @@ from pathlib import Path
 from urllib.parse import urljoin
 import xml.etree.ElementTree as ET
 
+import cloud_release_snapshot
+
+
+DEFAULT_OVERRIDES = Path(__file__).resolve().parents[1] / 'config/cloud-source-overrides.json'
+
 
 def convert(xml_path, layout_path, layer_count, overrides_path=None):
     if layer_count < 1:
@@ -32,16 +37,14 @@ def convert(xml_path, layout_path, layer_count, overrides_path=None):
                     'source': posixpath.join(path, item.get('src')),
                     'destination': item.get('dest'),
                 }
-    for path, name, revision in (
-        ('vendor/gms', 'vendor_gms', 'f0e7f260c5b34a3f3917cfda4dc7b825b96511ff'),
-        ('external/faceunlock', 'external_faceunlock', 'cd8cfdecdfbacbf40c42968863c7525025765e55'),
-    ):
+    overrides = json.loads(Path(overrides_path or DEFAULT_OVERRIDES).read_text())['projects']
+    for path in cloud_release_snapshot.PROJECT_REPOSITORIES:
+        override = overrides.get(path, {})
+        if (override.get('archive_type') != cloud_release_snapshot.ARCHIVE_TYPE
+                or 'revision' not in override):
+            raise ValueError('Missing reviewed private Release snapshot override: ' + path)
         if path not in {item['path'] for item in projects}:
-            projects.append({
-                'path': path, 'revision': revision, 'archive_type': 'git-bundle',
-                'url': 'https://archive.org/download/gitlab.pixelexperience.org_bundles_20240412/'
-                       'https%3A__gitlab.pixelexperience.org_android_' + name + '.git.bundle',
-            })
+            projects.append({'path': path})
     # These repo-generated links survive local manifest project replacements but
     # are omitted by repo's resolved XML. Preserve their observed layout explicitly.
     observed = json.loads(Path(layout_path).read_text())
@@ -52,13 +55,14 @@ def convert(xml_path, layout_path, layer_count, overrides_path=None):
             raise ValueError('source layout link escapes tree: ' + destination)
         layout[destination] = {'type': 'link', 'source': source, 'destination': destination}
     layout['Makefile'] = {'type': 'copy', 'source': 'build/make/core/root.mk', 'destination': 'Makefile'}
-    if overrides_path:
-        overrides = json.loads(Path(overrides_path).read_text())['projects']
-        known = {project['path'] for project in projects}
-        if set(overrides) - known:
-            raise ValueError('Source overrides include projects absent from the manifest')
-        for project in projects:
-            project.update(overrides.get(project['path'], {}))
+    known = {project['path'] for project in projects}
+    if set(overrides) - known:
+        raise ValueError('Source overrides include projects absent from the manifest')
+    for project in projects:
+        path = project['path']
+        project.update(overrides.get(path, {}))
+        if path in cloud_release_snapshot.PROJECT_REPOSITORIES:
+            cloud_release_snapshot.validate(project)
     projects.sort(key=lambda item: item['path'])
     layers = [{'id': f'source-{i:02d}', 'projects': []} for i in range(layer_count)]
     for number, project in enumerate(projects):
@@ -66,7 +70,7 @@ def convert(xml_path, layout_path, layer_count, overrides_path=None):
     return {
         'schema_version': 1,
         'source_root': '/home/qingli/crux-pe13-offline-2026-09-25/pe13',
-        'source_scope': 'complete commit-pinned repo projects and the two retained upstream bundles; '
+        'source_scope': 'complete commit-pinned repo projects and the two verified Release snapshots; '
                         'excludes Git object storage, build outputs and local diagnostic experiments',
         'projects': projects,
         'layout': sorted(layout.values(), key=lambda item: item['destination']),

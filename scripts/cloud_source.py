@@ -21,6 +21,8 @@ import urllib.parse
 import urllib.request
 import zlib
 
+import cloud_release_snapshot
+
 
 SCHEMA_VERSION = 1
 MAX_PART_BYTES = 1_900_000_000  # Strictly below the 2 GiB release-asset limit.
@@ -109,9 +111,12 @@ def _validate_manifest(manifest):
         seen.add(path)
         project = dict(item)
         project["path"], project["revision"] = path, revision
+        archive_type = project.get("archive_type", "tar.gz")
+        if path in cloud_release_snapshot.PROJECT_REPOSITORIES and archive_type != cloud_release_snapshot.ARCHIVE_TYPE:
+            raise SourceError(f"project {path}: a locked private Release snapshot is required")
+        if archive_type not in {"tar.gz", "git-bundle", cloud_release_snapshot.ARCHIVE_TYPE}:
+            raise SourceError(f"project {path}: unsupported archive_type")
         project["archive_url"] = resolve_archive_url(project)
-        if project.get("archive_type", "tar.gz") not in {"tar.gz", "git-bundle"}:
-            raise SourceError(f"project {path}: archive_type must be tar.gz or git-bundle")
         projects[path] = project
 
     layout = manifest.get("layout", {})
@@ -207,7 +212,12 @@ def _open_archive_url(project, url, timeout):
 
 
 def resolve_archive_url(project):
-    """Return a commit-addressed archive endpoint for the supported public hosts."""
+    """Return the archive endpoint for the reviewed source provider."""
+    if project.get("archive_type") == cloud_release_snapshot.ARCHIVE_TYPE:
+        try:
+            return cloud_release_snapshot.asset_url(cloud_release_snapshot.validate(project))
+        except cloud_release_snapshot.SnapshotError as error:
+            raise SourceError(str(error)) from None
     direct = project.get("archive_url")
     if project.get("archive_type") == "git-bundle" and not direct:
         direct = project.get("url")
@@ -379,7 +389,34 @@ def _extract_git_bundle(project, destination, timeout):
                           f"{_network_error_detail(error)}") from error
 
 
-def _extract_archive(project, destination, timeout):
+def _extract_release_tar(path, project, destination):
+    with tarfile.open(path, mode="r|gz") as archive:
+        if archive.pax_headers.get("comment") != project["revision"]:
+            raise SourceError(f"project {project['path']}: private git archive commit differs from its pin")
+        return _extract_tar_stream(archive, project, destination, 0)
+
+
+def _extract_release_snapshot(project, destination, timeout, token):
+    try:
+        with tempfile.TemporaryDirectory(prefix="cloud-source-release-") as temporary:
+            archive_path = Path(temporary) / "project.tar.gz"
+            lock = cloud_release_snapshot.download(project, archive_path, token, timeout)
+            directory_modes = _extract_release_tar(archive_path, project, destination)
+    except cloud_release_snapshot.SnapshotError as error:
+        raise SourceError(f"project {project['path']}: {error}") from None
+    except (OSError, EOFError, tarfile.TarError, zlib.error) as error:
+        raise SourceError(f"project {project['path']}: invalid private git archive ({type(error).__name__})") from None
+    return {"path": project["path"], "revision": project["revision"],
+            "resolved_commit": project["revision"],
+            "revision_status": "git-archive-commit-matched-pin",
+            "archive_url": project["archive_url"],
+            "source_method": cloud_release_snapshot.ARCHIVE_TYPE,
+            "release_snapshot": lock, "status": "fetched-and-extracted"}, directory_modes
+
+
+def _extract_archive(project, destination, timeout, snapshot_token=None):
+    if project.get("archive_type") == cloud_release_snapshot.ARCHIVE_TYPE:
+        return _extract_release_snapshot(project, destination, timeout, snapshot_token)
     if project.get("archive_type", "tar.gz") == "git-bundle":
         return _extract_git_bundle(project, destination, timeout)
     url = project["archive_url"]
@@ -689,7 +726,7 @@ def _split_archive(archive, parts_dir):
     return result
 
 
-def build(manifest_path, layer_id, output_dir, timeout=300):
+def build(manifest_path, layer_id, output_dir, timeout=300, *, snapshot_token=None):
     if timeout <= 0:
         raise SourceError("timeout must be greater than zero")
     manifest_path = Path(manifest_path)
@@ -701,6 +738,9 @@ def build(manifest_path, layer_id, output_dir, timeout=300):
     source_root, projects, layout, layers = _validate_manifest(manifest)
     if layer_id not in layers:
         raise SourceError(f"unknown layer id: {layer_id}")
+    if (not snapshot_token and any(projects[path].get("archive_type") == cloud_release_snapshot.ARCHIVE_TYPE
+                                   for path in layers[layer_id]["projects"])):
+        raise SourceError(f"missing {cloud_release_snapshot.TOKEN_ENV} for private snapshot layer {layer_id}")
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     parts_dir = output / "layer.sqfs.parts"
@@ -733,7 +773,7 @@ def build(manifest_path, layer_id, output_dir, timeout=300):
             print(f"layer {layer_id}: fetching project {index}/{len(assigned)} {project_path} "
                   f"at {project['revision']} from {_sanitized_url(project['archive_url'])}", flush=True)
             try:
-                status, archive_directory_modes = _extract_archive(project, destination, timeout)
+                status, archive_directory_modes = _extract_archive(project, destination, timeout, snapshot_token)
                 patch_records, reconstructed_tree = _apply_project_patches(project, destination)
                 if project.get("patches"):
                     status["patches"] = patch_records
@@ -807,7 +847,10 @@ def main(argv=None):
                               help="per-source archive request timeout in seconds")
     args = parser.parse_args(argv)
     try:
-        receipt = build(args.manifest, args.layer, args.output, args.timeout)
+        # Remove the scoped credential before any git or squashfs subprocess.
+        snapshot_token = os.environ.pop(cloud_release_snapshot.TOKEN_ENV, None)
+        receipt = build(args.manifest, args.layer, args.output, args.timeout,
+                        snapshot_token=snapshot_token)
     except (SourceError, OSError) as error:
         print(f"cloud_source: {error}", file=sys.stderr)
         return 1
