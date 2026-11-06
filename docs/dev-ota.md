@@ -40,7 +40,7 @@ is public, so publishing a prerelease also makes its assets public.
 
 ## Deliver an accepted standard-runner build
 
-Once the workflow is on `main` in `coachpo/crux-pe13-distributed`, use
+On `main` in `coachpo/crux-pe13-distributed`, use
 **Deliver a verified PE13 build to dev OTA** (`release-dev.yml`). It runs on
 standard `ubuntu-22.04` GitHub-hosted runners; it does not build, repackage
 or replace the accepted images. The historical `assemble-dev.yml` is not a
@@ -54,9 +54,8 @@ The Git tag is the channel version, not the ROM source revision. Use the
 assembly/compile run links, artifact identity and delivery checksums to
 trace the ROM bytes, not GitHub's generated source archive.
 
-Roll out this workflow and the removal of the old `assemble-dev.yml`
-publication step together. Until those changes are on `main`, do not use the
-old workflow's `publish` input.
+This workflow and removal of the old `assemble-dev.yml` publication step
+landed together at `58a4325`. Do not use the old workflow's `publish` input.
 
 ### 1. Choose the successful assembly run and tag
 
@@ -74,7 +73,7 @@ For the [accepted 2026110303 host baseline](standard-runner-rom-build-acceptance
 | `assembly_run` | `42059779500` |
 | Cold compile (derived, not a workflow input) | `42018017251`, 39/39 slices |
 | Assembly artifact (derived) | `cloud-fresh-rom-42018017251`, ID `13431937735` |
-| `tag` | `dev-pe13-2026110303-v1` (candidate, not yet published) |
+| `tag` | [`dev-pe13-2026110303-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110303-v1) (published example) |
 
 ```sh
 REPO=coachpo/crux-pe13-distributed
@@ -151,7 +150,7 @@ python3 scripts/dev_ota.py --cache "$CACHE" check --no-device --json --tag "$TAG
 python3 scripts/dev_ota.py --cache "$CACHE" check --no-device --json
 ```
 
-For the candidate above, expect tag `dev-pe13-2026110303-v1`, build
+For the example above, expect tag `dev-pe13-2026110303-v1`, build
 `2026110303`, a `userdebug/test-keys` fingerprint and `release_ready: false`.
 The default head should match only if no newer eligible prerelease exists.
 `--no-device` intentionally skips ADB: `device: null` and `current: false`
@@ -344,6 +343,18 @@ This was a forced reinstall of the then-current channel head, not a
 cross-version install or rollback. It used the former cache TWRP entry,
 not the current protected installer.
 
+## Publication and discovery verification (2026-11-05)
+
+[`dev-pe13-2026110303-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110303-v1)
+(Release `435566991`) was published directly from accepted assembly `42059779500`.
+[Preflight](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42083722097),
+[draft](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42083947278),
+and [publish](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42084533423)
+passed. All eight uploaded asset digests matched the assembly. The client
+ignored the draft, then selected v1 by default after publication; v3 remains
+selectable explicitly. No device was contacted in these checks. This `2026110303`
+v1 was not installed; the device acceptance below used `2026110501`.
+
 ## Protected RAM TWRP v2 acceptance (2026-11-07)
 
 The local client that supplies this install path upgraded `2026101105`
@@ -377,7 +388,7 @@ new install.
   `SettingsGoogle.apk` contains the guarded update preferences, with the
   additional update boolean false. Google's `ConfigUpdater` is not PE's
   ROM updater. No ROM source changes or new updater were needed.
-- **Discovery:** GitHub read-only checks selected
+- **Discovery before publication:** GitHub read-only checks selected
   `dev-pe13-2026101105-v3` both by default and by explicit tag. The unpublished
   `2026110303` tag was not found. Draft and incomplete release exclusion
   were checked with local fixtures; no remote draft was created.

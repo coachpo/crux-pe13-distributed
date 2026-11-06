@@ -108,7 +108,11 @@ GitHub Release snapshots pinned in the manifest and generator overrides.
 The private snapshot route has no upstream or public artifact fallback. It
 checks the repository, release/tag, asset ID, size and SHA-256, then checks
 the archive's Git commit and reconstructed tree before packaging the layer.
-The older Archive.org inputs are historical provenance only.
+The original Archive.org bundles are upstream provenance. Only if a pinned
+snapshot cannot be obtained, recovering the same commit from its original
+bundle is a separate, manual last resort: verify the pinned commit and Git
+tree before admitting it. An identity or integrity mismatch is an error to
+investigate, never a reason to bypass verification.
 
 Set `CRUX_SOURCE_SNAPSHOTS_TOKEN` in the consuming repository's Actions
 secrets using a fine-grained token with **Contents: read** on exactly
