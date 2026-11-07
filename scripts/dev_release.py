@@ -2,6 +2,8 @@
 """Preflight, stage, or publish one verified standard-runner dev OTA delivery."""
 
 import argparse
+import dataclasses
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +14,7 @@ import tempfile
 from urllib.parse import urlencode
 
 from dev_ota import DevOtaError, REPOSITORY, parse_tag, require
+import dev_ota_manifest
 from dev_release_source import verify_source
 
 
@@ -55,14 +58,34 @@ def provenance(source):
             f"digest={source.artifact_digest} -->")
 
 
+def phone_provenance(source):
+    return f"<!-- dev-ota-phone-manifest sha256={source.phone_manifest} -->"
+
+
 def release_body(source):
-    return (
+    body = (
         "Crux PE13 development delivery (aosp_crux-userdebug / test-keys).\n\n"
         f"[Verified assembly](https://github.com/{REPOSITORY}/actions/runs/{source.assembly_run}) · "
         f"[Cold compile](https://github.com/{REPOSITORY}/actions/runs/{source.compile_run}).\n\n"
         "Host validation only. This is not the public R6 OTA channel. "
-        "Device installation, boot, and version-changing rollback have not been accepted.\n\n"
-        + provenance(source))
+        "Device installation, boot, and version-changing rollback have not been accepted.\n\n")
+    if source.phone_manifest:
+        body += ("Phone update: the signed `crux-ota-manifest.txt` lets the Crux updater on a "
+                 "listed start build install this delivery with data kept.\n"
+                 + phone_provenance(source) + "\n\n")
+    return body + provenance(source)
+
+
+def attach_phone(source, start_builds, serial, signature):
+    """Add the phone manifest and its verified offline signature to the delivery."""
+    text = dev_ota_manifest.from_delivery(source, start_builds=start_builds, serial=serial)
+    require(dev_ota_manifest.verify(text, signature),
+            "ota_signature does not verify this delivery's phone manifest with keys/crux-ota-a-p256.pub")
+    assets = dict(source.assets)
+    for name, data in ((dev_ota_manifest.MANIFEST, text), (dev_ota_manifest.SIGNATURE, signature)):
+        (source.directory / name).write_bytes(data)
+        assets[name] = {"size": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+    return dataclasses.replace(source, assets=assets, phone_manifest=hashlib.sha256(text).hexdigest()), text
 
 
 def find_release(api, source):
@@ -86,7 +109,9 @@ def verify_release(api, source, release):
     require(release.get("tag_name") == source.tag and release.get("prerelease") is True
             and isinstance(release.get("draft"), bool)
             and release.get("target_commitish") == RELEASE_TARGET
-            and provenance(source) in (release.get("body") or "").splitlines(),
+            and provenance(source) in (release.get("body") or "").splitlines()
+            and (not source.phone_manifest
+                 or phone_provenance(source) in (release.get("body") or "").splitlines()),
             f"release conflict for {source.tag}: state or source identity differs")
     if release["draft"]:
         require(ref is None, f"Git tag already exists for draft: {source.tag}")
@@ -167,7 +192,18 @@ def main():
     parser.add_argument("--assembly-run", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--operation", choices=["preflight", "draft", "publish"], default="preflight")
+    parser.add_argument("--ota-start-builds", default="",
+                        help="phone release: installed builds allowed to update (comma-separated)")
+    parser.add_argument("--ota-serial", default="", help="phone release: serial the FITs carry, or any")
+    parser.add_argument("--ota-signature", default="",
+                        help="phone release: offline P-256 r||s over the phone manifest, 128 hex digits")
     args = parser.parse_args()
+    phone = any((args.ota_start_builds, args.ota_serial, args.ota_signature))
+    if phone and not (dev_ota_manifest.BUILDS_RE.fullmatch(args.ota_start_builds)
+                      and (args.ota_serial == "any" or dev_ota_manifest.SERIAL_RE.fullmatch(args.ota_serial))
+                      and re.fullmatch(r"[0-9a-f]{128}", args.ota_signature)):
+        parser.error("a phone release needs --ota-start-builds (10-digit builds), --ota-serial and "
+                     "--ota-signature (128 hex digits) together")
     if not re.fullmatch(r"[1-9][0-9]*", args.assembly_run):
         parser.error("--assembly-run must be a positive Actions run ID")
     if not re.fullmatch(r"dev-pe13-[0-9]{10}-v[1-9][0-9]*", args.tag):
@@ -181,9 +217,14 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="crux-dev-release-") as work:
             source = verify_source(args.assembly_run, args.tag, Path(work))
+            if phone:
+                source, text = attach_phone(source, args.ota_start_builds, args.ota_serial,
+                                            bytes.fromhex(args.ota_signature))
+                print(text.decode(), end="", flush=True)
             print(json.dumps({"tag": source.tag, "assembly_run": source.assembly_run,
                               "compile_run": source.compile_run, "artifact_id": source.artifact_id,
-                              "artifact_digest": source.artifact_digest, "assets": source.assets},
+                              "artifact_digest": source.artifact_digest,
+                              "phone_manifest_sha256": source.phone_manifest, "assets": source.assets},
                              indent=2), flush=True)
             print(json.dumps({"tag": source.tag, "operation": args.operation,
                               **deliver(Releases(), source, args.operation)}, indent=2))

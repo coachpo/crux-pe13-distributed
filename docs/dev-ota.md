@@ -14,6 +14,12 @@ Only `aosp_crux_release` explicitly includes that app and the R6 URL overlay,
 whose feed no longer exists. Neither PE's upstream OTA URLs nor the R6
 overlay are a Dev update source.
 
+A build that contains the Crux A update stack (updater app, prepare/result
+services and the PE Recovery installer; not yet in the cloud source pins) can
+instead install a **phone release** from Settings, keeping data. A phone
+release is an ordinary Dev prerelease plus a signed manifest; see
+[Phone release](#phone-release-signed-manifest).
+
 ## How a release becomes a dev update
 
 There is no separate dev feed or recommendation pointer. The channel reads
@@ -163,6 +169,71 @@ are not evidence about what the phone is running. This check validates
 discovery and release metadata, not the full downloaded images, boot or
 runtime. Use `plan --tag ...` for a separate read-only download and local
 verification of the images.
+
+### Phone release: signed manifest
+
+A phone release adds `crux-ota-manifest.txt` and `crux-ota-manifest.sig` to
+the eight delivery assets. The phone updater considers only published
+`dev-pe13-*` prereleases with both files, a signature that verifies with its
+built-in A key, and a manifest that names this phone's serial and its
+installed build among `start_builds`. It then downloads `system.img.zst`,
+`vendor.img` and `rom-cepheus.itb` from the same release and checks each
+size and SHA-256. The host client ignores the two extra files.
+
+`scripts/dev_ota_manifest.py` defines the manifest (`crux-ota/1`) and
+derives it from the verified delivery:
+- target build and fingerprint;
+- delivered and expanded size and SHA-256 of system and vendor;
+- the ROM FIT, which must fit the `0x3100`-block landing window;
+- the assembly run, compile run and artifact digest;
+- three release inputs:
+  - the installed builds allowed to update;
+  - the serial the FITs carry (`any` only for FITs without one);
+  - the Recovery-container U-Boot role.
+
+The current FITs carry `androidboot.serialno=8bd37df4`, so a phone release
+is for that phone only.
+
+The target build must itself contain the A update stack: `crux-installer`,
+`crux_ota.rc`, the CruxUpdater app with its privapp allowlist, and the A key
+of `keys/crux-ota-a-p256.pub`. Otherwise, after installing it, the phone could
+update again only through the host. Every stage expands `system.img.zst` and
+checks these files with `debugfs` (e2fsprogs; set `DEBUGFS` when it is not on
+`PATH`), so a phone release of a build without the stack is refused. The
+phone must also run a listed start build behind the Recovery-container
+U-Boot, with the matching PE Recovery FIT in its cache window.
+
+**1. Sign offline.** The A private key stays outside every repository,
+Actions secret and synced note. With `gh` signed in:
+
+```sh
+OUT="$(mktemp -d)/phone"
+# macOS with Homebrew e2fsprogs: export DEBUGFS=/opt/homebrew/opt/e2fsprogs/sbin/debugfs
+python3 scripts/dev_ota_manifest.py sign --assembly-run "$ASSEMBLY_RUN" --tag "$TAG" \
+  --start-builds 2026110701 --serial 8bd37df4 \
+  --key ~/.crux-keys/crux-a-ota-2026-11-07.pem --out "$OUT"
+```
+
+It repeats the workflow's source verification, writes both files to `$OUT`
+and prints the manifest, its SHA-256 and `ota_signature`. The signature is
+not secret; it appears in the dispatch inputs and the run log.
+
+**2. Preflight, draft and publish with the same three extra inputs.** Each
+stage keeps its own authorization:
+
+```sh
+gh workflow run release-dev.yml --repo "$REPO" --ref main \
+  -f assembly_run="$ASSEMBLY_RUN" -f tag="$TAG" -f operation=preflight \
+  -f ota_start_builds=2026110701 -f ota_serial=8bd37df4 -f ota_signature="$SIGNATURE"
+```
+
+Every stage regenerates the manifest from the verified delivery and refuses
+a signature that does not verify with `keys/crux-ota-a-p256.pub`. The
+release body records the manifest SHA-256 next to the source line. Every
+operation on a phone release needs all three inputs. Without them, the
+workflow treats the release as host-only and rejects its phone files as
+unexpected assets. A host-only draft cannot gain phone files: use a new
+`v<n>`.
 
 ### Stop, retry or roll back
 

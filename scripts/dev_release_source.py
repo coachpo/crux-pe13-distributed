@@ -36,6 +36,7 @@ class VerifiedDelivery:
     artifact_id: int
     artifact_digest: str
     assets: dict[str, dict]
+    phone_manifest: str | None = None
 
 
 def _require(ok: bool, message: str) -> None:
