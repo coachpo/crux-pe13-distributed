@@ -50,7 +50,7 @@ def admit_pack_registry(registry, pack_run):
     if expected is None:
         raise ValueError('Pack run has no reviewed cold-capsule registry: ' + pack_run)
     if registry != read(expected):
-        raise ValueError('Pack registry differs from the accepted 39 cold capsules')
+        raise ValueError('Pack registry differs from the reviewed cold-capsule registry')
 
 
 def producer_binding(context, task_id):
@@ -201,10 +201,11 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
     waves = [[task['id'] for task in wave] for wave in plan['waves']]
     ids = [task for wave in waves for task in wave]
     capsules = {row['shard_id']: row for row in registry['capsules']}
-    if (len(ids) != 39 or len(waves) != 8 or len(set(ids)) != len(ids)
+    # The task count is the reviewed registry's: admit_pack_registry pins it exactly.
+    if (len(waves) != 8 or len(set(ids)) != len(ids)
             or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
             or set(ids) != set(inventory['shards'])):
-        raise ValueError('Expected complete 39-task/eight-wave preparation inventory')
+        raise ValueError('Expected the complete eight-wave inventory of the reviewed registry')
     tasks, seen = {}, set()
     for number, wave in enumerate(plan['waves']):
         for task in wave:
@@ -366,7 +367,7 @@ def summarize(args):
     receipts = {p.parent.name.removeprefix('fresh-receipt-'): read(p)
                 for p in root.glob('fresh-receipt-*/receipt.json')}
     if set(receipts) != set(context['tasks']):
-        raise ValueError('Compilation receipts do not cover all 39 admitted tasks')
+        raise ValueError('Compilation receipts do not cover all admitted tasks')
     for task_id, receipt in receipts.items():
         validate_receipt(context, receipt, task_id)
     output = Path(args.output)

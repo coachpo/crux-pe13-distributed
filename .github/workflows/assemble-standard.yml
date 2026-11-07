@@ -56,10 +56,11 @@ jobs:
           root = Path(os.environ['RUNNER_TEMP'])
           context = json.loads((root / 'context/context.json').read_text())
           summary = json.loads((root / 'compile-summary/build-summary.json').read_text())
-          if (summary.get('status') != 'success' or summary.get('task_count') != 39
+          if (summary.get('status') != 'success' or not context.get('tasks')
+                  or summary.get('task_count') != len(context['tasks'])
                   or summary.get('execution_id') != '${{ inputs.build_run }}'
                   or summary.get('worker_commit') != context.get('worker_commit')):
-              raise SystemExit('All 39 fresh compilation tasks must succeed before assembly')
+              raise SystemExit('Every admitted fresh compilation task must succeed before assembly')
           PY
       - name: Admit new producers, assemble and verify images
         run: |

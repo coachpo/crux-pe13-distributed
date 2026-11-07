@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       pack_run:
-        description: Accepted 39-capsule preparation run
+        description: Accepted cold-capsule preparation run
         required: true
         default: '42190106417'
         type: string

@@ -171,9 +171,22 @@ class DevReleaseSourceTests(unittest.TestCase):
         with self.assertRaises(source.SourceError):
             self.invoke(bad_source=True)
 
-    def test_summary_requires_all_39_tasks_and_eight_waves(self):
-        with self.assertRaisesRegex(source.SourceError, "39 producer bindings"):
+    def test_accepts_the_task_count_of_the_admitted_plan(self):
+        def grow(summary):
+            summary["producers"].append(dict(summary["producers"][-1], id="w005-s005", artifact="shard-w005-s005"))
+            summary["task_count"] = len(summary["producers"])
+        self.assertEqual(self.invoke(mutate_summary=grow).compile_run, COMPILE_RUN)
+
+    def test_summary_requires_a_producer_for_every_task(self):
+        with self.assertRaisesRegex(source.SourceError, "bind every compiled task"):
             self.invoke(mutate_summary=lambda summary: summary["producers"].pop())
+
+    def test_summary_requires_all_eight_waves(self):
+        def drop_last_wave(summary):
+            summary["producers"] = [p for p in summary["producers"] if not p["id"].startswith("w007-")]
+            summary["task_count"] = len(summary["producers"])
+        with self.assertRaisesRegex(source.SourceError, "all eight waves"):
+            self.invoke(mutate_summary=drop_last_wave)
 
 
 if __name__ == "__main__":

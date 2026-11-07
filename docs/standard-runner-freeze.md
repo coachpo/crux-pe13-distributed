@@ -276,7 +276,10 @@ source revisions and required archive sources.
 
 Preparing a new graph or repacking an expired snapshot does not automatically
 admit a new pack run in `build-standard.yml`. Review the resulting graph and
-index receipts, source manifest, plan, 39 capsule identities and registry.
+index receipts, source manifest, plan, capsule identities and registry. The
+shard count follows the graph (39 for `2026110501`, 40 for `2026110704`); the
+compile, assembly and release checks take it from the admitted registry and
+keep the eight dependency waves.
 For a replacement, record the reviewed registry and update its entry in
 `scripts/cloud_build_plan.py` (`PACK_REGISTRIES`) and the workflow defaults.
 If the graph is regenerated, also review and update the pinned graph summary

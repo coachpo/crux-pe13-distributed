@@ -25,10 +25,10 @@ class BuildPlanTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'no reviewed'):
                 plan.admit_pack_registry(repaired, '3')
 
-    def inputs(self):
+    def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 1)):
         waves, capsules, inventory = [], [], {}
         prior = []
-        for wave, count in enumerate([13, 3, 7, 6, 5, 2, 2, 1]):
+        for wave, count in enumerate(counts):
             rows = []
             for index in range(count):
                 task = f'w{wave:03d}-s{index:03d}'
@@ -40,7 +40,8 @@ class BuildPlanTests(unittest.TestCase):
             prior += [row['id'] for row in rows]
         registry = {'status': 'success', 'build_number': 'new', 'graph_run': '1', 'index_run': '2',
                     'source_run': '1', 'source_manifest_sha256': 'source', 'plan_sha256': 'plan',
-                    'graph_index': {'bytes': 1, 'sha256': 'index'}, 'shard_count': 39, 'capsules': capsules}
+                    'graph_index': {'bytes': 1, 'sha256': 'index'}, 'shard_count': sum(counts),
+                    'capsules': capsules}
         receipt = {k: registry[k] for k in ['status', 'build_number', 'graph_run', 'index_run', 'source_run']}
         receipt.update(manifest_sha256='source', pruned_database=registry['graph_index'])
         return registry, receipt, {'plan_sha256': 'plan', 'shards': inventory}, {'waves': waves}
@@ -50,6 +51,14 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 1])
         self.assertEqual(len(tasks), 39)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
+
+    def test_task_count_comes_from_the_reviewed_registry(self):
+        waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1)), 'plan')
+        self.assertEqual(len(tasks), 40)
+        args = self.inputs()
+        args[0]['shard_count'] = 40
+        with self.assertRaisesRegex(ValueError, 'complete eight-wave inventory'):
+            plan.admit_inputs(*args, 'plan')
 
     def test_identity_and_same_wave_dependency_are_rejected(self):
         args = self.inputs()

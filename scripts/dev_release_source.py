@@ -174,8 +174,8 @@ def _artifact_json(run_id: str, name: str, filename: str, work: Path, token: str
 
 def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
     _require(isinstance(summary, dict) and summary.get("schema_version") == 1
-             and summary.get("status") == "success" and summary.get("task_count") == 39,
-             "compile summary is not a successful 39-task build")
+             and summary.get("status") == "success",
+             "compile summary is not a successful build")
     _require(summary.get("execution_id") == compile_run, "compile summary execution ID mismatch")
     _require(summary.get("worker_commit") == worker,
              "compile summary worker does not match the compile run commit")
@@ -188,8 +188,8 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
              and _is_sha(fresh.get("source_manifest_sha256")),
              "compile summary has invalid source/plan bindings")
     producers = summary.get("producers")
-    _require(isinstance(producers, list) and len(producers) == 39,
-             "compile summary does not contain all 39 producer bindings")
+    _require(isinstance(producers, list) and producers and summary.get("task_count") == len(producers),
+             "compile summary does not bind every compiled task to a producer")
     ids = set()
     waves = set()
     for producer in producers:

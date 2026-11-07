@@ -274,10 +274,10 @@ def validate_context(context: dict, manifest_path: Path | None = None) -> tuple[
             or graph_index['bytes'] <= 0 or not re.fullmatch(r'[a-f0-9]{64}', graph_index.get('sha256', ''))):
         raise AssembleError('Context has invalid pruned graph identity')
     tasks, waves = context.get('tasks'), context.get('waves')
-    if not isinstance(tasks, dict) or len(tasks) != 39 or not isinstance(waves, list) or len(waves) != 8:
-        raise AssembleError('Context is not the accepted 39-task/eight-wave plan')
+    if not isinstance(tasks, dict) or not tasks or not isinstance(waves, list) or len(waves) != 8:
+        raise AssembleError('Context is not an admitted eight-wave plan')
     flattened = [task_id for wave in waves for task_id in wave]
-    if (len(flattened) != 39 or set(flattened) != set(tasks) or len(set(flattened)) != 39
+    if (len(flattened) != len(tasks) or set(flattened) != set(tasks) or len(set(flattened)) != len(flattened)
             or any(not isinstance(task_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', task_id)
                    for task_id in flattened)):
         raise AssembleError('Context waves do not cover each admitted task exactly once')

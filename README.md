@@ -19,7 +19,7 @@ available. The preparation artifacts expire on 2026-11-20 (the freeze artifacts
 from 2026-11-13); after that, run a new freeze and preparation, then review the
 new admission. `freeze-standard.yml` and `prepare-standard.yml` therefore have
 no build or run defaults, and `prepare-standard.yml` defaults to `stage=full`.
-After the compile's 39-task summary succeeds, pass that **new compile run ID**
+After the compile's summary succeeds for every admitted task, pass that **new compile run ID**
 as `build_run` to `assemble-standard.yml`. The verified
 `cloud-fresh-rom-<build_run>` is an Actions artifact, not a prerelease or an
 installation. The entire path uses public-repository standard `ubuntu-22.04`
@@ -27,8 +27,8 @@ runners.
 
 | Stage | Maintained inputs and handoff |
 | --- | --- |
-| [Prepare](docs/standard-runner-freeze.md) | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a reviewed registry and 39 cold capsules. |
-| Compile | `build-standard.yml` admits the graph, shard plan, reviewed registry and runtime policy, creates `cloud-build-context` and drives eight calls to `compile-standard-wave.yml`. Shards import only declared predecessor outputs from this execution; the final summary verifies all 39 fresh receipts. |
+| [Prepare](docs/standard-runner-freeze.md) | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a reviewed registry and one cold capsule per shard. |
+| Compile | `build-standard.yml` admits the graph, shard plan, reviewed registry and runtime policy, creates `cloud-build-context` and drives eight calls to `compile-standard-wave.yml`. Shards import only declared predecessor outputs from this execution; the final summary verifies a fresh receipt for every admitted shard. |
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both FITs, writes `delivery-record.json` and `SHA256SUMS`, and checks that the compressed system payload decodes to the native system image identity. |
 | [Deliver to dev OTA](docs/dev-ota.md#deliver-an-accepted-standard-runner-build) | Separately dispatch `release-dev.yml` with the successful **assembly run ID** and a versioned dev tag. Preflight is read-only, draft stages the exact verified bytes, and publish explicitly makes the complete prerelease discoverable. A [phone release](docs/dev-ota.md#phone-release-signed-manifest) also takes the offline signature of its `crux-ota-manifest.txt`, which every stage regenerates and verifies. |
 
