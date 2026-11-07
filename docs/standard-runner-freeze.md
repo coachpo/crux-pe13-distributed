@@ -140,12 +140,17 @@ public archive. Rotate the credential under the same Actions secret name
 with the same two-repository read scope; neither operation needs Python code
 changes.
 
-Maintained Crux forks are selected in `config/cloud-source-overrides.json`. The device tree
-revision `80c137e` is reconstructed from parent `e606ed7` plus
-`config/source-patches/device-crux-dev-v2.patch`, and its resulting tree is
-checked against `e5779e581e6f49b590dc655ac7947e466be4d061`. The pinned snapshot
-omits Git object databases, old build outputs and local diagnostics; repo
-copy/link entries are explicit manifest inputs.
+Maintained Crux forks are selected in `config/cloud-source-overrides.json`. From build
+`2026110704` the device tree is fetched at its pushed fork commit `5c22058`
+(the dev-v2 product contract `80c137e` plus the crux-install/1 updater and
+installer) and `bootable/recovery` at `959eda7`. Each build adds its own image
+marker, `config/source-patches/device-crux-dev-marker-<build>.patch`, and the
+patched device tree is checked against the pinned `expected_tree`. Builds up to
+`2026110501` reconstructed `80c137e` from parent `e606ed7` plus
+`config/source-patches/device-crux-dev-v2.patch` (tree
+`e5779e581e6f49b590dc655ac7947e466be4d061`). The pinned snapshot omits Git
+object databases, old build outputs and local diagnostics; repo copy/link
+entries are explicit manifest inputs.
 
 ## 2. Index, shard and pack
 

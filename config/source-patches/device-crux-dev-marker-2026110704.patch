@@ -1,0 +1,16 @@
+diff --git a/aosp_crux.mk b/aosp_crux.mk
+--- a/aosp_crux.mk
++++ b/aosp_crux.mk
+@@ -55 +55,6 @@
+ # Keep the installed stock firmware. ROM OTAs only update Android images.
++
++ifeq ($(TARGET_BUILD_VARIANT),userdebug)
++PRODUCT_COPY_FILES += \
++    device/xiaomi/crux/crux-delivery-verification.txt:$(TARGET_COPY_OUT_SYSTEM)/etc/crux-delivery-verification.txt
++endif
+diff --git a/crux-delivery-verification.txt b/crux-delivery-verification.txt
+new file mode 100644
+--- /dev/null
++++ b/crux-delivery-verification.txt
+@@ -0,0 +1 @@
++crux-pe13-dev-2026110704
