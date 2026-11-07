@@ -2,8 +2,9 @@
 
 This repository owns the GitHub Actions pipeline for the **development** Crux
 PE13 product (`aosp_crux-userdebug`): four development images and two U-Boot
-FITs. It does not build, sign or publish the public release product. The
-public `coachpo/crux-pe13-ota` R6 feed is frozen and is not read or written here.
+FITs. It does not build, sign or publish the stock-ABL release product. That
+product's R6 Releases and feed were deleted on 2026-11-07; this repository
+never read or wrote them.
 
 ## Standard-runner build baseline
 
@@ -14,7 +15,11 @@ This input set passed [cold compile 42218749916](https://github.com/coachpo/crux
 and [assembly 42260118571](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42260118571).
 New preparation results still need their own compile and assembly acceptance.
 Dispatch `build-standard.yml` with its defaults while the admitted inputs are
-available. After its 39-task summary succeeds, pass that **new compile run ID**
+available. The preparation artifacts expire on 2026-11-20 (the freeze artifacts
+from 2026-11-13); after that, run a new freeze and preparation, then review the
+new admission. `freeze-standard.yml` and `prepare-standard.yml` therefore have
+no build or run defaults, and `prepare-standard.yml` defaults to `stage=full`.
+After the compile's 39-task summary succeeds, pass that **new compile run ID**
 as `build_run` to `assemble-standard.yml`. The verified
 `cloud-fresh-rom-<build_run>` is an Actions artifact, not a prerelease or an
 installation. The entire path uses public-repository standard `ubuntu-22.04`
@@ -37,19 +42,19 @@ and the reason for the production kernel short-source policy.
 
 ## Dev OTA is the only supported ROM update channel
 
-The `2026101105` frozen path (`prepare.yml`, `controller.yml`,
-`controller-wave.yml`, `wave.yml`, `assemble-dev.yml` and its `inputs/`
-records) is retained separately from the standard-runner build. It is not a
-fallback or an input to it; `assemble-dev.yml` only retains Actions artifacts.
-Preparation releases are build inputs, not ROM updates, and cannot use
-`dev-pe13-*` tags. The [host-driven Dev OTA](docs/dev-ota.md) consumes
+The October `2026101105` frozen path was retired on 2026-11-07. Its
+build-input prereleases were deleted, and its workflows (`prepare.yml`,
+`controller.yml`, `controller-wave.yml`, `wave.yml`, `assemble-dev.yml`) were
+removed. The `inputs/` records and the shared scripts stay as history;
+`assemble_dev.py` is still used by the standard assembly. The
+[host-driven Dev OTA](docs/dev-ota.md) consumes
 complete published prereleases and requires separate device-write
 authorization. The [protected install entry](docs/dev-ota.md#host-client-prerequisites)
 stages RAM-only TWRP v2; the original cache TWRP is a CRC witness, not the
 installer. [`dev-pe13-2026110501-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110501-v1)
 passed device upgrade and explicit rollback to
-`dev-pe13-2026101105-v3`; keep that rollback entry. R6 rollback and official
-MIUI recovery are retained separately; neither is a Dev update channel.
+`dev-pe13-2026101105-v3`; keep that rollback entry. Official MIUI recovery is
+the only rescue path outside Dev OTA; it is not a Dev update channel.
 
 ## Checks
 

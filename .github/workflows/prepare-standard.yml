@@ -8,17 +8,15 @@ on:
         description: Canonical index, slices, cold capsules, or all preparation stages
         type: choice
         required: true
-        default: index
+        default: full
         options: [index, shard, pack, full]
       graph_run:
         description: Successful standard freeze run containing the fresh graph
         required: true
-        default: '41677764699'
         type: string
       build_number:
         description: Exact graph build identity
         required: true
-        default: '2026110303'
         type: string
       index_run:
         description: Reuse a successful canonical index run, or empty to create it

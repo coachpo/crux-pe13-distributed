@@ -1,17 +1,18 @@
 # Dev OTA channel (single-user, host-driven)
 
 **Host-driven Dev OTA is the only supported update channel for the maintained
-Crux PE13 ROM** (`aosp_crux-userdebug`). The public `aosp_crux_release` R6
-feed (`r6-2026101104-hosted`) is frozen and is neither read nor written by
-Dev OTA. The official Xiaomi MIUI recovery package is a recovery input,
-not a project update channel.
+Crux PE13 ROM** (`aosp_crux-userdebug`). The stock-ABL `aosp_crux_release`
+R6 Releases and feed were deleted on 2026-11-07; Dev OTA never read or wrote
+them. The official Xiaomi MIUI recovery package is a recovery input, not a
+project update channel.
 
 To update the Dev ROM, use this host tool rather than Android Settings. The
 Dev product is built as PE `UNOFFICIAL`: the common `ota.mk` adds PE's
 `Updates` app only for `OFFICIAL` or `CI`, and the Settings controller
 requires one of those build types plus the `org.pixelexperience.ota` package.
-Only `aosp_crux_release` explicitly includes that app and the R6 URL overlay.
-Neither PE's upstream OTA URLs nor the R6 overlay are a Dev update source.
+Only `aosp_crux_release` explicitly includes that app and the R6 URL overlay,
+whose feed no longer exists. Neither PE's upstream OTA URLs nor the R6
+overlay are a Dev update source.
 
 ## How a release becomes a dev update
 
@@ -43,10 +44,9 @@ is public, so publishing a prerelease also makes its assets public.
 On `main` in `coachpo/crux-pe13-distributed`, use
 **Deliver a verified PE13 build to dev OTA** (`release-dev.yml`). It runs on
 standard `ubuntu-22.04` GitHub-hosted runners; it does not build, repackage
-or replace the accepted images. The historical `assemble-dev.yml` is not a
-publication entry point. The standard compile and assembly workflows do
-not publish. The preparation workflow can publish build-input capsules but
-reserves `dev-pe13-*` for ROM delivery. Do not publish Dev ROM assets manually.
+or replace the accepted images. The standard freeze, preparation, compile and
+assembly workflows do not publish Releases. Do not publish Dev ROM assets
+manually.
 
 The Release's Git tag targets `main`: the standard Actions token
 [cannot tag a historical target with differing workflow files](https://docs.github.com/en/rest/releases/releases#create-a-release).
@@ -54,8 +54,10 @@ The Git tag is the channel version, not the ROM source revision. Use the
 assembly/compile run links, artifact identity and delivery checksums to
 trace the ROM bytes, not GitHub's generated source archive.
 
-This workflow and removal of the old `assemble-dev.yml` publication step
-landed together at `58a4325`. Do not use the old workflow's `publish` input.
+This workflow and the removal of the old `assemble-dev.yml` publication step
+landed together at `58a4325`. The October workflows themselves (`prepare.yml`,
+`controller.yml`, `controller-wave.yml`, `wave.yml`, `assemble-dev.yml`) were
+removed on 2026-11-07.
 
 ### 1. Choose the successful assembly run and tag
 
@@ -66,20 +68,23 @@ build number in the accepted delivery record. Both the assembly artifact and
 the cold compile summary must still be available. A failed assembly can retain
 an artifact for diagnostics; it is not a delivery input.
 
-For the [accepted 2026110303 host baseline](standard-runner-rom-build-acceptance-2026-11-05.md):
+For the accepted `2026110501` build ([README baseline](../README.md#standard-runner-build-baseline)):
 
 | Input | Example |
 | --- | --- |
-| `assembly_run` | `42059779500` |
-| Cold compile (derived, not a workflow input) | `42018017251`, 39/39 slices |
-| Assembly artifact (derived) | `cloud-fresh-rom-42018017251`, ID `13431937735` |
-| `tag` | [`dev-pe13-2026110303-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110303-v1) (published example) |
+| `assembly_run` | `42260118571` |
+| Cold compile (derived, not a workflow input) | `42218749916`, 39/39 slices |
+| Assembly artifact (derived) | `cloud-fresh-rom-42218749916`, ID `13525224011` |
+| `tag` | [`dev-pe13-2026110501-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110501-v1) (published example) |
 
 ```sh
 REPO=coachpo/crux-pe13-distributed
-ASSEMBLY_RUN=42059779500
-TAG=dev-pe13-2026110303-v1
+ASSEMBLY_RUN=42260118571
+TAG=dev-pe13-2026110501-v1
 ```
+
+A new delivery uses its own successful assembly run and a new tag. The
+`2026110501` assembly artifact expires on 2026-12-06.
 
 ### 2. Preflight (read-only)
 
@@ -150,8 +155,8 @@ python3 scripts/dev_ota.py --cache "$CACHE" check --no-device --json --tag "$TAG
 python3 scripts/dev_ota.py --cache "$CACHE" check --no-device --json
 ```
 
-For the example above, expect tag `dev-pe13-2026110303-v1`, build
-`2026110303`, a `userdebug/test-keys` fingerprint and `release_ready: false`.
+For the example above, expect tag `dev-pe13-2026110501-v1`, build
+`2026110501`, a `userdebug/test-keys` fingerprint and `release_ready: false`.
 The default head should match only if no newer eligible prerelease exists.
 `--no-device` intentionally skips ADB: `device: null` and `current: false`
 are not evidence about what the phone is running. This check validates
@@ -173,16 +178,18 @@ verification of the images.
 Dispatching with `draft` or `publish`, pushing the workflow to GitHub,
 altering remote releases/assets, and installing on a device are separate
 actions with separate authorization. Neither this workflow nor its client
-checks modify the frozen R6 feed.
+checks read or write any other update channel.
 
 ## Host client prerequisites
 
 - A boot-complete Crux Dev ROM on the accepted **U-Boot development chain**
   with the PE partition layout. Obtain the exclusive device window before
   accessing the phone, and separate permission for any reboot or persistent
-  write. Confirm the USB serial and starting fingerprint. The stock-ABL
-  R6 product and a local direct-install ROM are not accepted A OTA starting
-  points; the updater does not migrate either or install U-Boot.
+  write. Confirm the USB serial and starting fingerprint. A stock-ABL
+  install is not an accepted A OTA starting point. Neither is a local
+  direct-install ROM whose fingerprint tail is not its 10-digit build number:
+  B `2026110502` reports `1907`. The updater does not migrate either, and
+  does not install U-Boot.
 - `gh` with access to the pipeline releases, `zstd` and `simg2img`;
   `debugfs` (host or OrbStack `cruxbuild`) for the image's vold identity.
   `adb` and `fastboot` are needed for installation, not for `check --no-device`
@@ -292,9 +299,8 @@ Select it explicitly with `check --no-device --tag` and
 fingerprint with the same protected update entry after write approval.
 `--force` applies only to separately reviewed same-build reinstalls;
 it was not used in the accepted upgrade or rollback. The physical rollback
-does not move the default channel head. R6 rollback remains a separate
-frozen rescue path; keep its retained material unless disposition is
-separately approved.
+does not move the default channel head. R6 was deleted on 2026-11-07, so the
+only rescue path outside Dev OTA is official MIUI/EDL.
 
 ## Acceptance after authorization
 
@@ -345,8 +351,8 @@ not the current protected installer.
 
 ## Publication and discovery verification (2026-11-05)
 
-[`dev-pe13-2026110303-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110303-v1)
-(Release `435566991`) was published directly from accepted assembly `42059779500`.
+`dev-pe13-2026110303-v1` (Release `435566991`, deleted on 2026-11-07) was
+published directly from accepted assembly `42059779500`.
 [Preflight](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42083722097),
 [draft](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42083947278),
 and [publish](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42084533423)

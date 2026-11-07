@@ -17,7 +17,6 @@ on:
         type: string
       build_number:
         description: New development build identity
-        default: '2026110301'
         required: true
         type: string
       build_datetime:
