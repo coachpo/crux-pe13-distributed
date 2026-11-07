@@ -33,6 +33,7 @@ import zlib
 from pathlib import Path
 
 import dev_ota_fits
+import dev_ota_ram_twrp as ram_twrp
 
 
 REPOSITORY = "coachpo/crux-pe13-distributed"
@@ -41,7 +42,7 @@ TAG_RE = re.compile(r"^dev-pe13-(\d{10})-v(\d+)$")
 PRODUCT = "aosp_crux-userdebug"
 DEVICE = "crux"
 DEFAULT_SERIAL = "8bd37df4"
-SLOTS = {"recovery": (0x38000, 0x3693), "rom": (0x3c000, 0x2bae)}
+SLOTS = dev_ota_fits.WRITE_WINDOWS
 TWRP_SLOT = {"lba": 0x34000, "blocks": 0x2924}
 DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
                   "rom-cepheus.itb", "recovery-cepheus.itb", "system.img.zst",
@@ -49,9 +50,19 @@ DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.im
 DELIVERY_ASSET_NAMES = frozenset(DELIVERY_NAMES) - {"delivery-record.json", "SHA256SUMS"}
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = REPO_ROOT.parents[2]
+
+
+def workspace_root(checkout, explicit=None):
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    # The maintained checkout lives at <workspace>/out/<lane>/<checkout>.
+    return checkout.parents[2] if len(checkout.parents) > 2 else checkout.parent
+
+
+WORKSPACE = workspace_root(REPO_ROOT, os.environ.get("CRUX_WORKSPACE"))
 INSTALL_SCRIPT = WORKSPACE / "u-boot-port/scripts/install-pe13.py"
 RAM_SCRIPT = WORKSPACE / "u-boot-port/scripts/ram-boot-pe13.py"
+WATCH_SCRIPT = WORKSPACE / "u-boot-port/scripts/uconsole_watch.py"
 TWRP_FIT = WORKSPACE / "out/crux-pe13-baseline-2026-10-05/fits/twrp-menu.itb"
 
 
@@ -258,13 +269,13 @@ def check(args):
     return 0
 
 
-def ensure_delivery(release, directory):
+def ensure_delivery(release, directory, cache):
     if directory is not None:
         directory = Path(directory)
         missing = [name for name in DELIVERY_NAMES if not (directory / name).is_file()]
         require(not missing, "delivery directory is missing: " + " ".join(missing))
     else:
-        directory = Path(directory or (Path.home() / ".cache/crux-dev-ota" / release["tag"]))
+        directory = cache / release["tag"]
         download(release["tag"], DELIVERY_NAMES, directory)
     record, sums = load_record(release, directory)
     for name, identity in record["delivery"].items():
@@ -344,15 +355,15 @@ def vold_digest(system_raw, work):
     return None
 
 
-def make_plan(args, release):
-    delivery, record, sums = ensure_delivery(release, args.delivery_dir)
+def make_plan(args, release, *, no_device=False):
+    delivery, record, sums = ensure_delivery(release, args.delivery_dir, args.cache)
     work = Path(args.out) / "work" / release["tag"]
     raw = expand_images(delivery, work)
     fits = pad_fits(delivery, work)
     vold = vold_digest(raw["system"]["path"], work)
     require(Path(args.twrp_fit).is_file(),
             "missing retained TWRP FIT: " + str(args.twrp_fit))
-    device = device_state(args.serial)
+    device = None if no_device else device_state(args.serial)
     plan = {
         "schema_version": 1,
         "channel": "dev",
@@ -377,7 +388,7 @@ def make_plan(args, release):
             dev_ota_fits.padded(args.twrp_fit, dev_ota_fits.TWRP["blocks"])),
         "uboot_version": args.uboot_version,
         "current_device": device,
-        "note": ("Host-driven dev OTA: U-Boot cache FITs plus TWRP "
+        "note": ("Host-driven dev OTA: U-Boot cache FITs plus protected RAM TWRP "
                  "install-pe13.py. PE data is discarded by this v1 update."),
     }
     out = Path(args.out)
@@ -408,18 +419,9 @@ def print_plan(plan):
 
 def plan_command(args):
     release = select_head(discover(REPOSITORY), args.tag)
-    plan = make_plan(args, release)
+    plan = make_plan(args, release, no_device=args.no_device)
     print_plan(plan)
     return 0
-
-
-def enter_uboot(out, serial, ram):
-    offset = ram.LOG.stat().st_size
-    run(["adb", "-s", serial, "reboot"], timeout=20)
-    session = ram.Session(Path(out))
-    state = session.recover(offset, require_menu=True, timeout=120)
-    session.save()
-    return session, state
 
 
 def wait_for(serial, prop, expected, timeout=300):
@@ -436,25 +438,41 @@ def wait_for(serial, prop, expected, timeout=300):
     raise DevOtaError("timed out waiting for %s=%s (last %r)" % (prop, expected, last))
 
 
-def install(plan, out):
-    require(INSTALL_SCRIPT.is_file(), "missing install script: " + str(INSTALL_SCRIPT))
-    result_dir = Path(out) / "install"
-    if result_dir.exists():
-        result_dir.rename(Path(out) / ("install-prev-%d" % int(time.time())))
-    result_dir.parent.mkdir(parents=True, exist_ok=True)
-    command = [sys.executable, str(INSTALL_SCRIPT),
-               "--system", plan["raw"]["system"]["path"],
-               "--system-sha256", plan["raw"]["system"]["sha256"],
-               "--vendor", plan["raw"]["vendor"]["path"],
-               "--vendor-sha256", plan["raw"]["vendor"]["sha256"],
-               "--out", str(result_dir), "--discard-pe-data"]
-    completed = run(command, timeout=3600, required=False)
-    (result_dir / "install.log").write_text(completed.stdout + completed.stderr)
-    require(completed.returncode == 0, "install-pe13.py failed; see " + str(result_dir))
+def install_args(plan, result_dir, profile_id):
+    return [INSTALL_SCRIPT, "--system", plan["raw"]["system"]["path"],
+            "--system-sha256", plan["raw"]["system"]["sha256"],
+            "--vendor", plan["raw"]["vendor"]["path"],
+            "--vendor-sha256", plan["raw"]["vendor"]["sha256"],
+            "--out", result_dir, "--ram-twrp-id", profile_id]
+
+
+def install(plan, out, profile_id):
+    result_dir = out / "install"
+    ram_twrp.helper([*install_args(plan, result_dir, profile_id), "--discard-pe-data"],
+                    out / "install.log", 3600)
     result = json.loads((result_dir / "result.json").read_text())
     require(result.get("status") == "fresh_pe_installed_readback_and_format_verified",
             "unexpected install status: %s" % result.get("status"))
     return result
+
+
+def require_reviewed_payload(plan, reviewed):
+    # Execution expands and pads fresh files; the paths may change, but the
+    # approved bytes and physical cache destinations must not.
+    require(isinstance(reviewed, dict), "reviewed plan must be a JSON object")
+    for key in ("schema_version", "serial", "tag", "build", "fingerprint",
+                "data_policy", "vold_sha256", "twrp_crc32", "uboot_version"):
+        require(key in reviewed and plan[key] == reviewed[key], "execution plan differs from review: " + key)
+    for section, keys in (("assets", ("size", "sha256")),
+                          ("raw", ("size", "sha256")),
+                          ("fits", ("lba", "blocks", "sha256"))):
+        expected = reviewed.get(section)
+        require(isinstance(expected, dict) and plan[section].keys() == expected.keys(),
+                "execution payload set differs from review: " + section)
+        for name, item in plan[section].items():
+            wanted = expected[name]
+            require(isinstance(wanted, dict) and all(key in wanted and item[key] == wanted[key] for key in keys),
+                    f"execution payload differs from review: {section}/{name}")
 
 
 def verify_device(plan, args, out):
@@ -504,46 +522,102 @@ def verify_device(plan, args, out):
 
 
 def update_command(args):
+    out = Path(args.out)
+    reviewed_path = getattr(args, "reviewed_plan", None)
+    if args.execute:
+        require(args.tag and parse_tag(args.tag), "execution requires an explicit Dev --tag")
+        require(reviewed_path is not None, "execution requires --reviewed-plan")
+        require(getattr(args, "expected_start_fingerprint", None),
+                "execution requires --expected-start-fingerprint")
+        require(not out.exists() and not out.is_symlink(),
+                "execution needs a new --out directory; use a separate output for plan")
+        require(INSTALL_SCRIPT.is_file(), "missing install script: " + str(INSTALL_SCRIPT))
+        require(WATCH_SCRIPT.is_file(), "missing console watcher: " + str(WATCH_SCRIPT))
+    reviewed = json.loads(reviewed_path.read_text()) if reviewed_path is not None else None
+    if args.execute:
+        require(isinstance(reviewed, dict) and reviewed.get("tag") == args.tag,
+                "reviewed plan must identify the explicit --tag")
+    candidate = None
+    if args.execute or args.ram_twrp_manifest is not None or args.ram_twrp_manifest_sha256 is not None:
+        require(RAM_SCRIPT.is_file(), "missing U-Boot helper: " + str(RAM_SCRIPT))
+        ram = dev_ota_fits.load_ram(WORKSPACE)
+        candidate = ram_twrp.validate_manifest(args.ram_twrp_manifest,
+                                               args.ram_twrp_manifest_sha256, ram)
+    if args.execute:
+        require(args.serial == ram.SERIAL == DEFAULT_SERIAL, "unsupported RAM TWRP/installer serial")
+        require(candidate["fit_sha256"] == ram_twrp.V2_FIT_SHA256
+                and candidate["profile_id"] == ram_twrp.V2_PROFILE_ID,
+                "execution requires the accepted RAM TWRP v2 FIT and profile")
     release = select_head(discover(REPOSITORY), args.tag)
-    plan = make_plan(args, release)
+    plan = make_plan(args, release, no_device=args.execute)
+    if reviewed_path is not None:
+        require_reviewed_payload(plan, reviewed)
+    if args.execute:
+        require(plan["twrp_crc32"] == dev_ota_fits.RETAINED_TWRP_CRC32,
+                "retained cache TWRP witness differs from the accepted CRC")
+        require(sha256(Path(plan["twrp_fit"])) == dev_ota_fits.RETAINED_TWRP_SHA256,
+                "retained cache TWRP witness differs from the accepted SHA-256")
+    if candidate:
+        plan["ram_twrp"] = candidate
+        (out / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     print_plan(plan)
     if not args.execute:
         print("dry run only; pass --execute to write the device")
         return 0
-    require(RAM_SCRIPT.is_file(), "missing U-Boot helper: " + str(RAM_SCRIPT))
-    require(Path(plan["twrp_fit"]).is_file(), "missing retained TWRP FIT: " + plan["twrp_fit"])
     current = device_state(args.serial)
-    if current and current["incremental"] == plan["build"] and not args.force:
+    fingerprint_build = re.fullmatch(r"Xiaomi/crux/crux:13/[^/]+/(\d{10}):userdebug/test-keys",
+                                     current["fingerprint"]) if current else None
+    require(current and current["boot_completed"] == "1"
+            and fingerprint_build and fingerprint_build[1] == current["incremental"],
+            "execution must start from an identified, boot-complete Dev ROM")
+    require(current["fingerprint"] == args.expected_start_fingerprint,
+            "running Dev ROM differs from the approved starting fingerprint")
+    plan["current_device"] = current
+    (out / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
+    if current["incremental"] == plan["build"] and not args.force:
         print("device already reports build %s; use --force to reinstall" % plan["build"])
         return 0
-    watcher = run(["pgrep", "-f", "uconsole_watch.py"], required=False)
-    require(watcher.returncode == 0 and watcher.stdout.strip(),
-            "start u-boot-port/scripts/uconsole_watch.py before --execute")
-    ram = dev_ota_fits.load_ram(WORKSPACE)
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    session, menu = enter_uboot(out, args.serial, ram)
-    print("U-Boot:", menu.get("menu_evidence"))
+    require(adb(args.serial, "get-state").stdout.strip() == "device",
+            "expected the Dev ROM ADB endpoint")
+    identity = adb(args.serial, "shell", "getprop ro.boot.serialno; cat /proc/mounts").stdout
+    (out / "start-rom-mounts.txt").write_text(identity)
+    require(identity.splitlines()[:1] == [args.serial]
+            and re.search(r"(?m)^/dev/block/(?:bootdevice/)?by-name/pesystem / ext4 ", identity)
+            and re.search(r"(?m)^/dev/block/(?:bootdevice/)?by-name/pevendor /vendor ext4 ", identity),
+            "live serial or PE ROM mounts differ; do not migrate stock-ABL")
+    watcher = run(["pgrep", "-f", r"[ /]uconsole_watch[.]py([[:space:]]|$)"], required=False)
+    pids = watcher.stdout.split()
+    require(watcher.returncode == 0 and len(pids) == 1 and pids[0].isdecimal()
+            and ram.LOG.is_file() and ram.CMD.is_file(),
+            "start exactly one uconsole_watch.py with its bridge before --execute")
+    pid = int(pids[0])
+    profile_id = candidate["profile_id"]
+    ram_twrp.helper([*install_args(plan, out / "unused-dry-run", profile_id), "--dry-run"],
+                    out / "installer-dry-run.log", 180)
+    # Prove the exact recovery can return to the host-controlled menu before
+    # making the first persistent write. Never boot the cache TWRP witness.
+    ram_twrp.reboot_to_shell(ram, args.serial, out / "rom-to-rehearsal", args.uboot_version)
+    ram_twrp.boot(candidate, RAM_SCRIPT, INSTALL_SCRIPT, out / "ram-twrp-rehearsal",
+                  args.uboot_version, pid, args.serial)
+    session = ram_twrp.reboot_to_shell(ram, args.serial, out / "rehearsal-to-menu", args.uboot_version)
+    ram_twrp.boot_rom(ram, session)
+    wait_for(args.serial, "sys.boot_completed", "1", timeout=args.boot_timeout)
+    observed = device_state(args.serial)
+    (out / "rehearsal-rom.json").write_text(json.dumps(observed, indent=2) + "\n")
+    require(observed and observed["fingerprint"] == current["fingerprint"]
+            and observed["incremental"] == current["incremental"],
+            "no-write rehearsal did not return to the starting Dev ROM")
+    session = ram_twrp.reboot_to_shell(ram, args.serial, out / "rom-to-install-menu", args.uboot_version)
+    ram_twrp.verify_geometry(session)
     dev_ota_fits.write_fits(session, ram, plan["fits"]["recovery"], plan["fits"]["rom"],
-                            out / "fit-write", args.uboot_version, plan["twrp_fit"])
-    session.send("run boot_twrp", prompt=False, timeout=20)
-    session.save()
-    deadline = time.monotonic() + 180
-    while time.monotonic() < deadline:
-        try:
-            version = adb(args.serial, "shell", "getprop ro.twrp.version").stdout.strip()
-        except Exception:
-            version = ""
-        if version.startswith("3.7.1_12"):
-            break
-        time.sleep(2)
-    else:
-        raise DevOtaError("TWRP did not expose the expected ADB target")
-    result = install(plan, out)
+                            out / "fit-write", args.uboot_version, plan["twrp_fit"],
+                            strict_console=True)
+    ram_twrp.boot(candidate, RAM_SCRIPT, INSTALL_SCRIPT, out / "ram-twrp-install",
+                  args.uboot_version, pid, args.serial)
+    result = install(plan, out, profile_id)
     (out / "install-result.json").write_text(json.dumps(result, indent=2) + "\n")
-    session, menu = enter_uboot(out, args.serial, ram)
-    session.send("run boot_pe_rom", prompt=False, timeout=20)
-    session.save()
+    session = ram_twrp.reboot_to_shell(ram, args.serial, out / "installer-to-rom", args.uboot_version)
+    ram_twrp.boot_rom(ram, session)
     verify = verify_device(plan, args, out)
     print(json.dumps(verify, indent=2))
     return 0
@@ -564,7 +638,7 @@ def verify_command(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/crux-dev-ota",
-                        help="record download cache")
+                        help="cache for downloaded release records and payloads")
     parser.add_argument("--serial", default=DEFAULT_SERIAL)
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -583,7 +657,8 @@ def main():
         command.add_argument("--delivery-dir", type=Path,
                              help="use an existing delivery directory instead of downloading")
         command.add_argument("--out", type=Path, default=Path("dev-ota-evidence"))
-        command.add_argument("--twrp-fit", type=Path, default=TWRP_FIT)
+        command.add_argument("--twrp-fit", type=Path, default=TWRP_FIT,
+                             help="retained cache TWRP FIT for CRC comparison only")
         command.add_argument("--uboot-version",
                              default="2026.10-rc5-00614-g35579e6f8c14-dirty")
         command.add_argument("--boot-timeout", type=int, default=300)
@@ -592,12 +667,24 @@ def main():
                              help="perform device writes (update only)")
         command.add_argument("--force", action="store_true",
                              help="reinstall the same build (update only)")
+        if name == "plan":
+            command.add_argument("--no-device", action="store_true",
+                                 help="verify release payloads and plan without querying ADB")
+        if name == "update":
+            command.add_argument("--reviewed-plan", type=Path,
+                                 help="verified plan that the payload must match (required to execute)")
+            command.add_argument("--expected-start-fingerprint",
+                                 help="approved running Dev fingerprint (required to execute)")
+            command.add_argument("--ram-twrp-manifest", type=Path,
+                                 help="approved local RAM TWRP manifest (required to execute)")
+            command.add_argument("--ram-twrp-manifest-sha256",
+                                 help="approved SHA-256 of the manifest (required to execute)")
         command.set_defaults(func=function)
 
     args = parser.parse_args()
     try:
         return args.func(args)
-    except DevOtaError as error:
+    except (RuntimeError, OSError, ValueError) as error:
         parser.exit(1, "dev-ota: %s\n" % error)
 
 

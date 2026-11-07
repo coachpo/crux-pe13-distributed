@@ -56,6 +56,12 @@ def release_for(record):
 
 
 class DevOtaTests(unittest.TestCase):
+    def test_workspace_resolution_accepts_explicit_override_and_shallow_checkout(self):
+        self.assertEqual(dev_ota.workspace_root(Path("/checkout")), Path("/"))
+        self.assertEqual(dev_ota.workspace_root(Path("/crux/out/lane/checkout")), Path("/crux"))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(dev_ota.workspace_root(Path("/checkout"), directory), Path(directory).resolve())
+
     @staticmethod
     def release_payload(tag="dev-pe13-2026101105-v3", **overrides):
         names = (*dev_ota.DELIVERY_NAMES, "extra-not-used.bin")
@@ -149,6 +155,37 @@ class DevOtaTests(unittest.TestCase):
             self.assertEqual(dev_ota.check(args), 0)
         device_state.assert_not_called()
         self.assertIsNone(json.loads(output.getvalue())["device"])
+
+    def test_plan_no_device_verifies_payload_and_skips_adb(self):
+        record = record_for()
+        release = release_for(record)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache, out = root / "isolated-cache", root / "plan"
+            twrp = root / "twrp.itb"
+            twrp.touch()
+            delivery = cache / release["tag"]
+            raw = {"system": {"path": "system.raw.img", "size": 4096, "sha256": "a" * 64},
+                   "vendor": {"path": "vendor.raw.img", "size": 4096, "sha256": "b" * 64}}
+            argv = ["dev_ota.py", "--cache", str(cache), "plan", "--no-device",
+                    "--tag", release["tag"], "--out", str(out), "--twrp-fit", str(twrp)]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(dev_ota, "discover", return_value=[release]), \
+                    mock.patch.object(dev_ota, "ensure_delivery",
+                                      return_value=(delivery, record, {})) as prepare, \
+                    mock.patch.object(dev_ota, "expand_images", return_value=raw), \
+                    mock.patch.object(dev_ota, "pad_fits", return_value={}), \
+                    mock.patch.object(dev_ota, "vold_digest", return_value="c" * 64), \
+                    mock.patch.object(dev_ota.dev_ota_fits, "padded", return_value=b"fixture"), \
+                    mock.patch.object(dev_ota, "device_state") as device_state, \
+                    mock.patch.object(dev_ota, "print_plan"):
+                self.assertEqual(dev_ota.main(), 0)
+            prepare.assert_called_once_with(release, None, cache)
+            device_state.assert_not_called()
+            plan = json.loads((out / "plan.json").read_text())
+            self.assertEqual(plan["delivery_dir"], str(delivery))
+            self.assertEqual(plan["raw"], raw)
+            self.assertIsNone(plan["current_device"])
 
     def test_parse_sums(self):
         text = "a" * 64 + "  boot.img\n" + "b" * 64 + "  system.img.zst\n"

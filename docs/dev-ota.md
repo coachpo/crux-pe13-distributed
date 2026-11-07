@@ -178,78 +178,124 @@ checks modify the frozen R6 feed.
 
 ## Host client prerequisites
 
-- A device already using the accepted Crux **U-Boot + TWRP development
-  chain**, with the PE partition layout. Confirm the latest explicit device
-  control and the actual chain before any authorized write. If the device
-  is on stock-ABL R6, stop: moving to Dev is a separately authorized
-  boot-chain migration, not an OTA or a Dev rollback. The Dev installer
-  does not install the U-Boot chain.
-- `gh` with access to the pipeline releases.
-- `adb` with the Crux connected (`8bd37df4` by default) for device checks and
-  installation; `check --no-device` needs neither.
-- `zstd`, `simg2img`; `debugfs` (host or OrbStack `cruxbuild`) for the vold
-  identity check.
-- The retained TWRP FIT at
-  `out/crux-pe13-baseline-2026-10-05/fits/twrp-menu.itb` and the U-Boot
-  console bridge `u-boot-port/scripts/uconsole_watch.py` running before
-  `update --execute`.
-- The deployed U-Boot environment with the cache windows:
-  recovery `0x38000/0x3693`, ROM `0x3c000/0x2bae`, TWRP `0x34000/0x2924`.
+- A boot-complete Crux Dev ROM on the accepted **U-Boot development chain**
+  with the PE partition layout. Obtain the exclusive device window before
+  accessing the phone, and separate permission for any reboot or persistent
+  write. Confirm the USB serial and starting fingerprint. The stock-ABL
+  R6 product and a local direct-install ROM are not accepted A OTA starting
+  points; the updater does not migrate either or install U-Boot.
+- `gh` with access to the pipeline releases, `zstd` and `simg2img`;
+  `debugfs` (host or OrbStack `cruxbuild`) for the image's vold identity.
+  `adb` and `fastboot` are needed for installation, not for `check --no-device`
+  or `plan --no-device`.
+- For installation, export `CRUX_WORKSPACE` as the absolute path to the
+  local Crux workspace. The tested layout places this checkout two
+  directories below `$CRUX_WORKSPACE/out`. Use the workspace's
+  `tools/edl/.venv/bin/python` with PySerial and PyUSB/libusb; the latter
+  supplies the exact U-Boot `continue` fallback if the SDK CLI lacks it.
+  Use the workspace's matching `u-boot-port/scripts/ram-boot-pe13.py`,
+  `install-pe13.py`, and a single reconnecting `uconsole_watch.py` bridge.
+- Use the verified **RAM-only TWRP v2** from
+  `out/crux-pe13-device-validation-2026-11-05/RAM-TWRP/v2/`, with its
+  reviewed manifest and the actual FIT. The installer accepts FIT SHA-256
+  `3dab88d57ea205ac54db167282a0547461eee81a1e6eebdfdc528ba4e348e808`
+  and profile
+  `d9e985bf6ad11b6143787603898f041764813026d0da6d3b001c4cef2a8d4297`.
+  The original workspace `candidate.json` SHA-256 is
+  `3ca1a48923cf4a432fbe7a70a6f0066cd7cf650a5f9ff9daf34375f650dadc7d`.
+  The manifest uses an absolute FIT path. Review any relocated manifest
+  independently and use its own digest; the accepted FIT bytes and profile
+  must still match. These are existing local artifacts, not new Release
+  assets.
+- Preserve the original
+  `out/crux-pe13-baseline-2026-10-05/fits/twrp-menu.itb` as a **CRC witness
+  only** for cache LBA `0x34000` × `0x2924` (CRC `effcee45`). Do not boot
+  it for this installation; its startup can write shared `misc` and mount
+  original volumes. The two PE FIT write windows are recovery
+  `0x38000/0x3693` and ROM `0x3c000/0x2bae` on LUN 0, 4096 B/block.
 
 ## Commands
 
-From the pipeline repository:
+From the pipeline repository, prepare the selected published delivery
+without contacting the phone. Choose an unused plan directory and an
+explicit tag:
 
 ```sh
-# Channel head and whether the device is current (read-only)
-python3 scripts/dev_ota.py check
-python3 scripts/dev_ota.py check --json
-
-# Download/verify the delivery, expand system/vendor, pad the FITs, write plan.json
-python3 scripts/dev_ota.py plan --tag dev-pe13-2026101105-v3 \
-  --out ../../crux-pe13-devcloud-2026-10-16/dev-ota/v3
-
-# Optional: use already downloaded payloads (release discovery still uses GitHub)
-python3 scripts/dev_ota.py plan --tag dev-pe13-2026101105-v3 \
-  --delivery-dir ../../crux-pe13-devcloud-2026-10-16/cloud-delivery/dev-pe13-2026101105-v3 \
-  --out ../../crux-pe13-devcloud-2026-10-16/dev-ota/v3
-
-# Check the running device against the saved plan
-python3 scripts/dev_ota.py verify \
-  --out ../../crux-pe13-devcloud-2026-10-16/dev-ota/v3 --verify-seconds 300
+# Set CRUX_WORKSPACE, CACHE, and PLAN_OUT to absolute local paths first.
+export CRUX_WORKSPACE
+TAG=dev-pe13-2026110501-v1
+python3 scripts/dev_ota.py --cache "$CACHE" check --no-device --json --tag "$TAG"
+python3 scripts/dev_ota.py --cache "$CACHE" plan --no-device --tag "$TAG" \
+  --out "$PLAN_OUT"
 ```
 
-`plan` never writes to the device. Only with separate device-write approval,
-run `python3 scripts/dev_ota.py update --tag "$TAG" --execute` with the
-verified target tag. This is destructive; it reuses the established sequence:
+`plan` downloads and verifies the eight assets, expands the raw images,
+pads the PE FITs and writes `plan.json`. It never writes to the device.
+`--delivery-dir` can reuse an already verified local delivery, but the tag
+is still resolved and validated against the public channel.
 
-1. reboot to the U-Boot menu and enter the shell;
-2. write the recovery/ROM FIT windows and read them back (TWRP and the MIUI /
-   gap windows must keep their CRC);
-3. boot TWRP and run
-   `u-boot-port/scripts/install-pe13.py --discard-pe-data` with the expanded
-   raw images;
-4. reboot and boot the new ROM FIT;
-5. verify fingerprint, v2 fstab, `/data/media/0` v2, vold identity, CE,
-   `boot_completed`, no v1 policy messages and no `zygote-fatal`.
+Before the first install, rehearse the keyless **no-write** control loop
+under an authorized device window. Start the single workspace watcher with
+an empty command bridge; use ordinary `adb reboot`, not an ABL Fastboot
+or Recovery target. Enter the observed U-Boot menu's shell, verify the live
+environment and watchdog, and stage the reviewed v2 FIT into RAM using
+`ram-boot-pe13.py --mode recovery --resume-shell --strict-console` with
+the exact FIT digest, watcher PID and fresh journal. The running installer
+must pass `install-pe13.py --preflight-only --ram-twrp-id <profile-id>`.
+Return via ordinary reboot, fresh U-Boot and its guarded ROM entry to the
+original Dev fingerprint with a new boot ID. No physical keys,
+`fastboot flash` or persistent writes are part of this rehearsal.
+
+Only with separate device-write approval, supply the exact reviewed plan
+and starting fingerprint. Use a fresh `INSTALL_OUT`; do not reuse
+`PLAN_OUT`.
+
+```sh
+RAM_TWRP_MANIFEST="$CRUX_WORKSPACE/out/crux-pe13-device-validation-2026-11-05/RAM-TWRP/v2/candidate.json"
+RAM_TWRP_MANIFEST_SHA256=3ca1a48923cf4a432fbe7a70a6f0066cd7cf650a5f9ff9daf34375f650dadc7d
+"$CRUX_WORKSPACE/tools/edl/.venv/bin/python" scripts/dev_ota.py update \
+  --tag "$TAG" --execute --delivery-dir "$CACHE/$TAG" \
+  --reviewed-plan "$PLAN_OUT/plan.json" \
+  --expected-start-fingerprint "$EXPECTED_START_FINGERPRINT" \
+  --ram-twrp-manifest "$RAM_TWRP_MANIFEST" \
+  --ram-twrp-manifest-sha256 "$RAM_TWRP_MANIFEST_SHA256" --out "$INSTALL_OUT"
+```
+
+Execution refuses the old cache-TWRP route. It checks the same reviewed
+payload and starting ROM, rehearses the guarded RAM recovery and return to
+the starting ROM, and reads live LUN/GPT geometry. It stages and writes
+only the two approved PE FIT windows; checks readback and individual
+MIUI, TWRP and gap CRCs; then stages the same protected RAM TWRP to write
+and read back PE system/vendor and format PE data/metadata. The ROM
+handoff must show a successful 30-second watchdog start. On failure,
+keep the journal and identify the endpoint; no automatic retry or
+alternate install is authorized.
+
+The built-in checks verify fingerprint, CE, FBE v2 fstab/media policy,
+vold identity, boot completion and absence of `zygote-fatal` at the
+initial check. For device acceptance also record actual PE mounts, image
+marker state, one boot ID over at least 300 seconds and continuous logs
+without `zygote-fatal`. The workspace's tested `verify-pe-rom.py` in
+`out/crux-pe13-device-validation-2026-11-05/device/` supplies this
+supplemental observation from root ROM ADB; a timed boot-completed
+recheck alone does not prove stability.
 
 ## Data policy and rollback
 
 Every Dev OTA install or rollback clears `peuserdata` and `pemetadata`.
-Confirm the data loss before proceeding; there is no data-preserving Dev OTA
-path.
+Confirm the data loss before proceeding; data-preserving upgrade was not
+tested. PE Recovery FIT write/readback does not establish independent
+Recovery boot.
 
-`dev-pe13-2026101105-v3` is the last device-accepted dev delivery. Keep its
-release and assets. Select it explicitly with `check --no-device --tag` and
-`plan --tag` before considering a rollback. Under separate device-write
-authorization, the same `update --tag <older-tag> --execute` path installs
-the older delivery. If the phone already reports that build number,
-`--force` is required to reinstall it (also true for a different `v<n>` of
-the same build). Verify the actual device, target partitions, images and
-write ranges before any install. Preserve the R6 rollback payload and official
-MIUI recovery package at least until a cross-version Dev update **and** rollback
-pass on the device; a passing host preflight or same-version reinstall is not
-that acceptance. R6 rollback is a separate product path.
+Keep the verified rollback release `dev-pe13-2026101105-v3` and its assets.
+Select it explicitly with `check --no-device --tag` and
+`plan --no-device --tag`; use that plan and the actual running newer Dev
+fingerprint with the same protected update entry after write approval.
+`--force` applies only to separately reviewed same-build reinstalls;
+it was not used in the accepted upgrade or rollback. The physical rollback
+does not move the default channel head. R6 rollback remains a separate
+frozen rescue path; keep its retained material unless disposition is
+separately approved.
 
 ## Acceptance after authorization
 
@@ -295,10 +341,26 @@ The channel was exercised against the installed
   300 s stability window.
 
 This was a forced reinstall of the then-current channel head, not a
-cross-version install or rollback. Build `2026110303` has separate host
-compile/assembly acceptance only. Its release publication, discovery of that
-new tag on GitHub, physical install, boot/runtime and version-changing
-rollback have not been accepted.
+cross-version install or rollback. It used the former cache TWRP entry,
+not the current protected installer.
+
+## Protected RAM TWRP v2 acceptance (2026-11-07)
+
+The local client that supplies this install path upgraded `2026101105`
+to `2026110501`, then explicitly rolled back to
+[`dev-pe13-2026101105-v3`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026101105-v3)
+without `--force`. The two PE FITs and raw PE images matched readback;
+the protected cache CRCs were unchanged. Each running ROM passed the
+PE/FBE/CE/vold and marker checks and at least 300 seconds on one boot ID.
+The newer [`dev-pe13-2026110501-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110501-v1)
+remained the default after physical rollback. It was built in
+[compile 42218749916](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42218749916),
+verified by [assembly 42260118571](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42260118571),
+and published by [run 42336984836](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42336984836).
+The evidence is in the Crux workspace at
+`out/crux-pe13-device-validation-2026-11-05/device/a-upgrade-rollback-2026-11-07/`.
+Those are dated device results, not device access or authorization for a
+new install.
 
 ## ROM entry-point audit (2026-11-05)
 

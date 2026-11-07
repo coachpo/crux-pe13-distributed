@@ -26,6 +26,9 @@ CACHE_START = 0x30000
 CACHE_END = 0x48000
 MIUI = {"lba": 0x30000, "blocks": 0x28bd}
 TWRP = {"lba": 0x34000, "blocks": 0x2924}
+RETAINED_TWRP_SHA256 = "df812eef1821f519a2864b56d9f192eda22260aad6a24e9851503c72b692e2c1"
+RETAINED_TWRP_CRC32 = "effcee45"
+WRITE_WINDOWS = {"recovery": (0x38000, 0x3693), "rom": (0x3C000, 0x2BAE)}
 
 
 def require(condition, message):
@@ -73,18 +76,25 @@ def padded(path, blocks):
 
 
 def neighbors(recovery, rom):
-    """Ranges that must not change: MIUI+TWRP, the recovery/ROM gap, the tail."""
-    result = [(MIUI["lba"], recovery["lba"] - MIUI["lba"])]
-    recovery_end = recovery["lba"] + recovery["blocks"]
-    if rom["lba"] > recovery_end:
-        result.append((recovery_end, rom["lba"] - recovery_end))
-    rom_end = rom["lba"] + rom["blocks"]
-    if CACHE_END > rom_end:
-        result.append((rom_end, CACHE_END - rom_end))
+    """Disjoint readback ranges for MIUI, TWRP and each gap."""
+    result = []
+    cursor = CACHE_START
+    for name, item in (("miui", MIUI), ("twrp", TWRP),
+                       ("recovery", recovery), ("rom", rom)):
+        start, blocks = item["lba"], item["blocks"]
+        require(cursor <= start and 0 < blocks <= CACHE_END - start,
+                f"invalid or overlapping cache range for {name}")
+        if cursor < start:
+            result.append(("gap", cursor, start - cursor))
+        if name in ("miui", "twrp"):
+            result.append((name, start, blocks))
+        cursor = start + blocks
+    if cursor < CACHE_END:
+        result.append(("gap", cursor, CACHE_END - cursor))
     return result
 
 
-def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
+def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit, *, strict_console=True):
     """Write and verify the two PE FIT windows.
 
     ``recovery`` and ``rom`` are dicts with ``path``, ``sha256``, ``lba`` and
@@ -93,8 +103,12 @@ def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    ranges = neighbors(recovery, rom)
     rows = []
     for role, spec in (("recovery", recovery), ("rom", rom)):
+        start, limit = WRITE_WINDOWS[role]
+        require(spec["lba"] == start and 0 < spec["blocks"] <= limit,
+                f"{role}: outside the approved PE FIT write window")
         data = padded(spec["path"], spec["blocks"])
         actual = hashlib.sha256(data).hexdigest()
         require(actual == spec["sha256"], f"{role}: padded FIT digest differs")
@@ -121,10 +135,9 @@ def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
     record = {"schema_version": 1, "environment": environment,
               "twrp_slot_crc32": twrp_value, "twrp_expected_crc32": twrp_expected,
               "neighbors_before": [], "rows": [], "writes": [], "neighbors_after": []}
-    gaps = neighbors(recovery, rom)
-    for start, count in gaps:
+    for name, start, count in ranges:
         record["neighbors_before"].append(
-            {"lba": hex(start), "blocks": hex(count),
+            {"target": name, "lba": hex(start), "blocks": hex(count),
              "crc32": range_crc(session, ram, start, count)})
     for row in rows:
         record["rows"].append(
@@ -132,10 +145,14 @@ def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
              "sha256": row["sha256"], "crc32": row["crc32"],
              "before_crc32": range_crc(session, ram, row["lba"], row["blocks"])})
     (out / "before.json").write_text(json.dumps(record, indent=2) + "\n")
+    progress = out / "fit-write.json"
+    record["status"] = "writes_in_progress"
+    progress.write_text(json.dumps(record, indent=2) + "\n")
 
+    stage = ram.stage_fastboot_command(session, strict_console)
     for row in rows:
         data = row["data"]
-        session.send("setenv pe_update_stage 'run stop_acm; fastboot -l 0xC0000000 usb 0; run serial_gadget'")
+        session.send(f"setenv pe_update_stage '{stage}'")
         offset = ram.LOG.stat().st_size
         session.send("run pe_update_stage", prompt=False)
         transport = ram.wait_fastboot(session, "fastboot", ram.UBOOT_SERIAL)
@@ -152,7 +169,7 @@ def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
             protocol_out = out / ("continue-" + row["role"])
             protocol_out.mkdir(exist_ok=True)
             ram.protocol_continue(transport, protocol_out)
-        session.recover(offset, timeout=30)
+        session.recover(offset, timeout=30, strict=strict_console)
         text = session.send(f"crc32 {ADDRESS} 0x{len(data):x}", timeout=30)
         require(re.search(r"==>\s*" + row["crc32"] + r"\b", text, re.I),
                 f"{row['role']}: RAM CRC mismatch")
@@ -166,14 +183,16 @@ def write_fits(session, ram, recovery, rom, out, uboot_version, twrp_fit):
             {"role": row["role"], "lba": hex(row["lba"]), "blocks": hex(row["blocks"]),
              "sha256": row["sha256"], "crc32": row["crc32"],
              "readback_crc32": readback})
+        progress.write_text(json.dumps(record, indent=2) + "\n")
 
-    for start, count in gaps:
+    for name, start, count in ranges:
         record["neighbors_after"].append(
-            {"lba": hex(start), "blocks": hex(count),
+            {"target": name, "lba": hex(start), "blocks": hex(count),
              "crc32": range_crc(session, ram, start, count)})
+    progress.write_text(json.dumps(record, indent=2) + "\n")
     for before, after in zip(record["neighbors_before"], record["neighbors_after"]):
         require(before["crc32"] == after["crc32"],
                 f"cache neighbor changed at {before['lba']}")
     record["status"] = "verified"
-    (out / "fit-write.json").write_text(json.dumps(record, indent=2) + "\n")
+    progress.write_text(json.dumps(record, indent=2) + "\n")
     return record

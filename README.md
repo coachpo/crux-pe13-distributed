@@ -7,10 +7,12 @@ public `coachpo/crux-pe13-ota` R6 feed is frozen and is not read or written here
 
 ## Standard-runner build baseline
 
-The current cold inputs are for Dev candidate `2026110501`, from
+The current cold inputs are for Dev build `2026110501`, from
 [freeze 42186082476](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42186082476)
 and [full preparation 42190106417](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42190106417).
-Preparation acceptance does not establish native compilation or image acceptance.
+This input set passed [cold compile 42218749916](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42218749916)
+and [assembly 42260118571](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42260118571).
+New preparation results still need their own compile and assembly acceptance.
 Dispatch `build-standard.yml` with its defaults while the admitted inputs are
 available. After its 39-task summary succeeds, pass that **new compile run ID**
 as `build_run` to `assemble-standard.yml`. The verified
@@ -42,9 +44,12 @@ fallback or an input to it; `assemble-dev.yml` only retains Actions artifacts.
 Preparation releases are build inputs, not ROM updates, and cannot use
 `dev-pe13-*` tags. The [host-driven Dev OTA](docs/dev-ota.md) consumes
 complete published prereleases and requires separate device-write
-authorization. The standard-runner artifact does not replace the accepted
-`dev-pe13-2026101105-v3` rollback entry. R6 rollback and official MIUI recovery
-are retained separately; neither is a supported update channel for Dev.
+authorization. The [protected install entry](docs/dev-ota.md#host-client-prerequisites)
+stages RAM-only TWRP v2; the original cache TWRP is a CRC witness, not the
+installer. [`dev-pe13-2026110501-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110501-v1)
+passed device upgrade and explicit rollback to
+`dev-pe13-2026101105-v3`; keep that rollback entry. R6 rollback and official
+MIUI recovery are retained separately; neither is a Dev update channel.
 
 ## Checks
 
