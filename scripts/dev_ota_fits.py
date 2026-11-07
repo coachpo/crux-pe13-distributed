@@ -5,9 +5,12 @@ The cache layout is fixed by the deployed U-Boot environment:
 
     MIUI        0x30000 0x28bd
     TWRP        0x34000 0x2924
-    PE Recovery 0x38000 0x3693
-    PE ROM      0x3c000 0x2bae
+    PE Recovery 0x38000 0x3b00
+    PE ROM      0x3c000 0x3100
 
+MIUI and TWRP are the retained FITs' extents.  The two PE write windows are
+the whole lengths U-Boot reads for each FIT, the same windows crux-install/1
+lands (owner decision, 2026-11-07; earlier releases used 0x3693/0x2bae).
 Only the recovery and ROM windows are written.  The TWRP slot and the gaps
 between slots are read before and after and must keep their CRC32.  The
 caller supplies one U-Boot shell session from ``ram-boot-pe13.py``.
@@ -28,7 +31,7 @@ MIUI = {"lba": 0x30000, "blocks": 0x28bd}
 TWRP = {"lba": 0x34000, "blocks": 0x2924}
 RETAINED_TWRP_SHA256 = "df812eef1821f519a2864b56d9f192eda22260aad6a24e9851503c72b692e2c1"
 RETAINED_TWRP_CRC32 = "effcee45"
-WRITE_WINDOWS = {"recovery": (0x38000, 0x3693), "rom": (0x3C000, 0x2BAE)}
+WRITE_WINDOWS = {"recovery": (0x38000, 0x3B00), "rom": (0x3C000, 0x3100)}
 
 
 def require(condition, message):

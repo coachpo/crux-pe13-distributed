@@ -92,20 +92,28 @@ class RamTwrpTests(unittest.TestCase):
         with self.assertRaisesRegex(ram_twrp.RamTwrpError, "4096"):
             ram_twrp.verify_geometry(session)
         self.assertEqual(dev_ota_fits.neighbors(
-            {"lba": 0x38000, "blocks": 0x3693}, {"lba": 0x3c000, "blocks": 0x2bae}), [
+            {"lba": 0x38000, "blocks": 0x3b00}, {"lba": 0x3c000, "blocks": 0x3100}), [
                 ("miui", 0x30000, 0x28bd), ("gap", 0x328bd, 0x1743),
                 ("twrp", 0x34000, 0x2924), ("gap", 0x36924, 0x16dc),
-                ("gap", 0x3b693, 0x96d), ("gap", 0x3ebae, 0x9452),
+                ("gap", 0x3bb00, 0x500), ("gap", 0x3f100, 0x8f00),
             ])
 
-    def test_fit_writer_rejects_menu_read_capacity_before_console_access(self):
+    def test_fit_windows_are_the_uboot_read_lengths(self):
+        self.assertEqual(dev_ota_fits.WRITE_WINDOWS, {"recovery": (0x38000, 0x3b00), "rom": (0x3c000, 0x3100)})
+
+    def test_fit_writer_rejects_ranges_beyond_the_windows_before_console_access(self):
         session = mock.Mock()
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(RuntimeError, "outside the approved PE FIT write window"):
-                dev_ota_fits.write_fits(session, mock.Mock(),
-                                        {"lba": 0x38000, "blocks": 0x3b00},
-                                        {"lba": 0x3c000, "blocks": 0x3100},
-                                        Path(directory), "version", Path("witness"))
+            fit = Path(directory) / "recovery.itb"
+            fit.write_bytes(bytes.fromhex("d00dfeed"))
+            small = {"path": fit, "lba": 0x38000, "blocks": 1,
+                     "sha256": hashlib.sha256(bytes.fromhex("d00dfeed").ljust(4096, b"\0")).hexdigest()}
+            for recovery, rom in (({"lba": 0x38000, "blocks": 0x3b01}, {"lba": 0x3c000, "blocks": 0x3100}),
+                                  ({"lba": 0x38001, "blocks": 0x3aff}, {"lba": 0x3c000, "blocks": 0x3100}),
+                                  (small, {"lba": 0x3c000, "blocks": 0x3101})):
+                with self.assertRaisesRegex(RuntimeError, "outside the approved PE FIT write window"):
+                    dev_ota_fits.write_fits(session, mock.Mock(), recovery, rom,
+                                            Path(directory), "version", Path("witness"))
         session.send.assert_not_called()
 
     def test_readiness_polls_until_candidate_adb_process_appears(self):
@@ -141,8 +149,8 @@ class RamTwrpTests(unittest.TestCase):
                     "assets": {"boot.img": {"size": 8, "sha256": "boot"}},
                     "raw": {"system": {"path": "system.raw", "sha256": "s", "size": 4096},
                             "vendor": {"path": "vendor.raw", "sha256": "v", "size": 4096}},
-                    "fits": {"recovery": {"lba": 0x38000, "blocks": 0x3693, "sha256": "r"},
-                             "rom": {"lba": 0x3c000, "blocks": 0x2bae, "sha256": "b"}}}
+                    "fits": {"recovery": {"lba": 0x38000, "blocks": 0x3b00, "sha256": "r"},
+                             "rom": {"lba": 0x3c000, "blocks": 0x3100, "sha256": "b"}}}
             if failure == "wrong_cache_witness":
                 plan["twrp_crc32"] = "bad"
             review.write_text(json.dumps(plan))

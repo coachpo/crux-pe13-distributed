@@ -219,7 +219,10 @@ checks read or write any other update channel.
   only** for cache LBA `0x34000` × `0x2924` (CRC `effcee45`). Do not boot
   it for this installation; its startup can write shared `misc` and mount
   original volumes. The two PE FIT write windows are recovery
-  `0x38000/0x3693` and ROM `0x3c000/0x2bae` on LUN 0, 4096 B/block.
+  `0x38000/0x3b00` and ROM `0x3c000/0x3100` on LUN 0, 4096 B/block: the
+  whole lengths U-Boot reads for each FIT, the same windows crux-install/1
+  lands (since 2026-11-07). Plans prepared for the earlier
+  `0x3693`/`0x2bae` windows no longer pass; prepare and review them again.
 
 ## Commands
 
