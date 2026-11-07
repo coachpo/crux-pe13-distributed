@@ -56,9 +56,8 @@ def release_for(record):
 
 
 class DevOtaTests(unittest.TestCase):
-    def test_workspace_resolution_accepts_explicit_override_and_shallow_checkout(self):
-        self.assertEqual(dev_ota.workspace_root(Path("/checkout")), Path("/"))
-        self.assertEqual(dev_ota.workspace_root(Path("/crux/out/lane/checkout")), Path("/crux"))
+    def test_workspace_resolution_accepts_explicit_override_and_maintained_layout(self):
+        self.assertEqual(dev_ota.workspace_root(Path("/crux/crux-pe13-distributed")), Path("/crux"))
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(dev_ota.workspace_root(Path("/checkout"), directory), Path(directory).resolve())
 

@@ -195,8 +195,9 @@ checks read or write any other update channel.
   `adb` and `fastboot` are needed for installation, not for `check --no-device`
   or `plan --no-device`.
 - For installation, export `CRUX_WORKSPACE` as the absolute path to the
-  local Crux workspace. The tested layout places this checkout two
-  directories below `$CRUX_WORKSPACE/out`. Use the workspace's
+  local Crux workspace. Without it, the client assumes the maintained
+  layout, in which this checkout is `$CRUX_WORKSPACE/crux-pe13-distributed`.
+  Use the workspace's
   `tools/edl/.venv/bin/python` with PySerial and PyUSB/libusb; the latter
   supplies the exact U-Boot `continue` fallback if the SDK CLI lacks it.
   Use the workspace's matching `u-boot-port/scripts/ram-boot-pe13.py`,

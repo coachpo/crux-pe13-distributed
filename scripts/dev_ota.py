@@ -55,8 +55,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def workspace_root(checkout, explicit=None):
     if explicit:
         return Path(explicit).expanduser().resolve()
-    # The maintained checkout lives at <workspace>/out/<lane>/<checkout>.
-    return checkout.parents[2] if len(checkout.parents) > 2 else checkout.parent
+    # The maintained checkout lives at <workspace>/crux-pe13-distributed.
+    return checkout.parent
 
 
 WORKSPACE = workspace_root(REPO_ROOT, os.environ.get("CRUX_WORKSPACE"))
