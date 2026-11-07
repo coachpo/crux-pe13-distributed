@@ -8,6 +8,8 @@
   - it passed cold compile `42218749916` and assembly `42260118571`;
   - it is published as `dev-pe13-2026110501-v1`, the default channel head.
 
+  The current cold inputs, admitted on 2026-11-08, are `2026110704`, the first build with the crux-install/1 update stack (40 shards in eight waves). Its compile and assembly are still separate acceptances.
+
   On November 7 the protected RAM-only TWRP v2 installer ([`docs/dev-ota.md`](docs/dev-ota.md)) upgraded a device `2026101105 → 2026110501` and then rolled it back explicitly to `dev-pe13-2026101105-v3`. Neither result, nor the channel head, identifies the live phone. Installs refuse the old cache-TWRP route. `dev-pe13-2026110303-v1` was published but never installed; it was deleted on 2026-11-07.
 - A phone release adds the signed `crux-ota-manifest.txt`/`.sig` ([guide](docs/dev-ota.md#phone-release-signed-manifest)). Sign it offline with `scripts/dev_ota_manifest.py sign`; keep the A private key out of every repository, Actions secret and synced note. Pass the same `ota_*` inputs to every stage of that release.
 - Remote dispatch requires authorization. Preflight does not mutate Releases; draft and publish are separately authorized writes. Keep them separate from phone installation. `python3 scripts/dev_ota.py check --no-device` reads online release metadata and manifests without using ADB; use a fresh cache when checking publication or discovery changes.
