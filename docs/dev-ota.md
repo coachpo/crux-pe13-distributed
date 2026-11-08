@@ -358,6 +358,14 @@ handoff must show a successful 30-second watchdog start. On failure,
 keep the journal and identify the endpoint; no automatic retry or
 alternate install is authorized.
 
+Every reboot to the shell checks the Boot U-Boot version that the plan
+records. Since 2026-11-08 the Boot partition holds the identity build
+`2026.10-rc5-00617-g0f6d3c792bd5`, the default `--uboot-version`; plans
+reviewed against the earlier `2026.10-rc5-00614-g35579e6f8c14-dirty` no
+longer pass. That build keeps `bootcmd`, the menu and the `boot_pe_rom` the
+client uses, so the client still boots the ROM without injecting identity:
+use it only with FITs that carry the device identity.
+
 The built-in checks verify fingerprint, CE, FBE v2 fstab/media policy,
 vold identity, boot completion and absence of `zygote-fatal` at the
 initial check. For device acceptance also record actual PE mounts, image

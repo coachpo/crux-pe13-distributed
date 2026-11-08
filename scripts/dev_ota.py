@@ -660,7 +660,7 @@ def main():
         command.add_argument("--twrp-fit", type=Path, default=TWRP_FIT,
                              help="retained cache TWRP FIT for CRC comparison only")
         command.add_argument("--uboot-version",
-                             default="2026.10-rc5-00614-g35579e6f8c14-dirty")
+                             default="2026.10-rc5-00617-g0f6d3c792bd5")
         command.add_argument("--boot-timeout", type=int, default=300)
         command.add_argument("--verify-seconds", type=int, default=0)
         command.add_argument("--execute", action="store_true",
