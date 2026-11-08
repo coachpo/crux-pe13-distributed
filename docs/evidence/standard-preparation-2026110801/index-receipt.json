@@ -1,0 +1,33 @@
+{
+  "build_number": "2026110801",
+  "compressed_database": {
+    "compression": "zstd -T4 -3",
+    "file": "index.sqlite.zst",
+    "sha256": "dcbb7738f8174818d4fe52d18bb548130e6f700d7c6317b3e6e351c6752da1a3",
+    "size": 204745908
+  },
+  "database": "index.sqlite",
+  "database_bytes": 8153706496,
+  "database_sha256": "624e3c83188ab12090f08409128ecc98475ccbc36908560c2efadf2a6e651a8f",
+  "elapsed_seconds": 348.493,
+  "graph_receipt_sha256": "c3813fce922408d0394177f3ef142eca28664841b55d833565b23ae275a555d7",
+  "graph_run": "42453128546",
+  "manifest_sha256": "f4481473389a67b5001376a09a0c2010dbf836f0269579e6f9d30bcaf8d6892f",
+  "output": "/home/runner/work/_temp/index-evidence",
+  "parser_sha256": "8766879c097e66aa047c2dd54a2c31793c68d611fb1b70f4f3f3418320ff2917",
+  "row_counts": {
+    "edges": 1749586,
+    "files": 4,
+    "outputs": 1961939,
+    "statements": 2442135
+  },
+  "schema_version": 1,
+  "source_root": "/home/qingli/crux-pe13-offline-2026-09-25/pe13",
+  "status": "success",
+  "target_producers": {
+    "bootimage": 962502,
+    "recoveryimage": 1235891,
+    "systemimage": 1239399,
+    "vendorimage": 1255716
+  }
+}

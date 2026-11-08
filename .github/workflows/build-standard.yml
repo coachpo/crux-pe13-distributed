@@ -6,17 +6,17 @@ on:
       pack_run:
         description: Accepted cold-capsule preparation run
         required: true
-        default: '42415440751'
+        default: '42455132490'
         type: string
       shard_run:
         description: Accepted slice plan run
         required: true
-        default: '42415440751'
+        default: '42455132490'
         type: string
       build_number:
         description: Identity embedded in the admitted capsules
         required: true
-        default: '2026110704'
+        default: '2026110801'
         type: string
 permissions:
   contents: read

@@ -8,22 +8,21 @@ never read or wrote them.
 
 ## Standard-runner build baseline
 
-The current cold inputs are for Dev build `2026110704`, the first cloud build
-with the crux-install/1 update stack, from
-[freeze 42412861700](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42412861700)
-and [full preparation 42415440751](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42415440751).
-Its plan has 40 shards in eight waves. It passed
+The current cold inputs are for Dev build `2026110801`, whose device tree adds
+transaction-record retirement to the crux-install/1 update stack, from
+[freeze 42453128546](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42453128546)
+and [full preparation 42455132490](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42455132490).
+Its plan is the same 40 shards in eight waves as `2026110704`. Preparation
+acceptance alone does not establish native compilation or image acceptance;
+these inputs still need their own compile and assembly. The previous input
+set, `2026110704`, passed
 [cold compile 42427170882](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42427170882)
 and [assembly 42444269612](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42444269612),
 and is published as the phone release
 [`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1).
-Preparation acceptance alone does not establish native compilation or image
-acceptance. The previous input set, `2026110501`, passed
-[cold compile 42218749916](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42218749916)
-and [assembly 42260118571](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42260118571).
 Dispatch `build-standard.yml` with its defaults while the admitted inputs are
-available. The preparation and graph artifacts expire on 2026-11-21 (the
-freeze source artifacts on 2026-11-14); after that, run a new freeze and
+available. The preparation and graph artifacts expire on 2026-11-22 (the
+freeze source artifacts on 2026-11-15); after that, run a new freeze and
 preparation, then review the new admission. `freeze-standard.yml` and `prepare-standard.yml` therefore have
 no build or run defaults, and `prepare-standard.yml` defaults to `stage=full`.
 After the compile's summary succeeds for every admitted task, pass that **new compile run ID**
@@ -39,7 +38,7 @@ runners.
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both FITs, writes `delivery-record.json` and `SHA256SUMS`, and checks that the compressed system payload decodes to the native system image identity. |
 | [Deliver to dev OTA](docs/dev-ota.md#deliver-an-accepted-standard-runner-build) | Separately dispatch `release-dev.yml` with the successful **assembly run ID** and a versioned dev tag. Preflight is read-only, draft stages the exact verified bytes, and publish explicitly makes the complete prerelease discoverable. A [phone release](docs/dev-ota.md#phone-release-signed-manifest) also takes the offline signature of its `crux-ota-manifest.txt`, which every stage regenerates and verifies. |
 
-The [current preparation records](docs/evidence/standard-preparation-2026110704/)
+The [current preparation records](docs/evidence/standard-preparation-2026110801/)
 pin the graph summary, index receipt and pack registry for bootstrap; they
 are **build inputs**, not payload backups. The
 [PE13 `2026110303` acceptance and rerun guide](docs/standard-runner-rom-build-acceptance-2026-11-05.md)
