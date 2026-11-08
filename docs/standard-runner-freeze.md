@@ -143,7 +143,9 @@ changes.
 Maintained Crux forks are selected in `config/cloud-source-overrides.json`. From build
 `2026110704` the device tree is fetched at its pushed fork commit `5c22058`
 (the dev-v2 product contract `80c137e` plus the crux-install/1 updater and
-installer) and `bootable/recovery` at `959eda7`. Each build adds its own image
+installer) and `bootable/recovery` at `959eda7`. Build `2026110801` takes the
+device tree at `cedab06`, whose installer also retires finished transaction
+records in `pemetadata`. Each build adds its own image
 marker, `config/source-patches/device-crux-dev-marker-<build>.patch`, and the
 patched device tree is checked against the pinned `expected_tree`. Builds up to
 `2026110501` reconstructed `80c137e` from parent `e606ed7` plus
