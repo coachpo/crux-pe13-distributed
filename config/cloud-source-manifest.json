@@ -1606,7 +1606,7 @@
     },
     {
       "path": "bootable/recovery",
-      "revision": "959eda7478cdccac6d537983ae020c63d57de7dd",
+      "revision": "44443e382969fdd96f7d3fc5917f7bd9bd81ad4c",
       "url": "https://github.com/coachpo/crux-pe13-recovery"
     },
     {
@@ -1723,7 +1723,7 @@
         }
       ],
       "path": "device/xiaomi/crux",
-      "revision": "cedab0662e70a4b2bef81d6b18825f331ba094ac",
+      "revision": "978a10aa6368f3a983d32a7c0d117913cff3916e",
       "url": "https://github.com/coachpo/device_xiaomi_crux"
     },
     {
@@ -5810,7 +5810,7 @@
     },
     {
       "path": "kernel/xiaomi/crux-pe-cepheus",
-      "revision": "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e",
+      "revision": "086b838e3a50f76e3e25b67b41862a401d3fa7a5",
       "url": "https://github.com/coachpo/kernel_xiaomi_crux"
     },
     {
@@ -6135,7 +6135,7 @@
     },
     {
       "path": "packages/apps/Updates",
-      "revision": "56623f04d5abff06e7b80aac5460ff827dfe1651",
+      "revision": "50c6109df4a3af5ecba94a1382a2d5d2460422fa",
       "url": "https://github.com/coachpo/crux-pe13-updates"
     },
     {

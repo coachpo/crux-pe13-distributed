@@ -141,16 +141,14 @@ with the same two-repository read scope; neither operation needs Python code
 changes.
 
 Maintained Crux forks are selected in `config/cloud-source-overrides.json`. From build
-`2026110704` the device tree is fetched at its pushed fork commit `5c22058`
-(the dev-v2 product contract `80c137e` plus the crux-install/1 updater and
-installer) and `bootable/recovery` at `959eda7`. Build `2026110801` takes the
-device tree at `cedab06`, whose installer also retires finished transaction
-records in `pemetadata`. Each build adds its own image
-marker, `config/source-patches/device-crux-dev-marker-<build>.patch`, and the
-patched device tree is checked against the pinned `expected_tree`. Builds up to
-`2026110501` reconstructed `80c137e` from parent `e606ed7` plus
-`config/source-patches/device-crux-dev-v2.patch` (tree
-`e5779e581e6f49b590dc655ac7947e466be4d061`). The pinned snapshot omits Git
+`2026110804` the device tree is fetched at fork commit `978a10a` (the development
+product only), `bootable/recovery` at `44443e3`, the kernel at `086b838`, and
+`packages/apps/Updates`, which is not built, at the upstream commit `50c6109`.
+Each build adds its own image marker,
+`config/source-patches/device-crux-dev-marker-<build>.patch`, and the patched
+device tree is checked against the pinned `expected_tree`. A local build of the
+same commits is the same code; `scripts/check_local_source.py` checks a local
+tree against these pins. The pinned snapshot omits Git
 object databases, old build outputs and local diagnostics; repo copy/link
 entries are explicit manifest inputs.
 
