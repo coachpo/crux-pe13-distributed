@@ -566,6 +566,20 @@ def validate_ramdisk(data, diagnostic, role="recovery", dualboot=False, developm
                                 "does not certify runtime policy or device behavior"}
 
 
+# Device and board identity that the identity-injecting U-Boot copies from the ABL
+# command line before each PE boot (u-boot-next cmd/crux_ota.c, crux_identity).
+# A FIT without these tokens is not bound to one phone, but only that U-Boot can
+# boot it: msm_drm.dsi_display0 also selects the panel.
+IDENTITY_KEYS = frozenset({
+    "androidboot.serialno", "androidboot.cpuid", "androidboot.oled_wp", "androidboot.hwversion",
+    "androidboot.hwlevel", "androidboot.hwc", "androidboot.ufsid", "androidboot.dp",
+    "androidboot.baseband", "msm_drm.dsi_display0"})
+
+
+def without_identity(bootargs):
+    return " ".join(token for token in bootargs.split() if token.split("=", 1)[0] not in IDENTITY_KEYS)
+
+
 def native_bootargs(bootargs, dualboot):
     """Retain captured board identity while using native init/source defaults."""
     removed_keys = {"root", "rootwait", "ro", "skip_initramfs", "init", "nokaslr",
@@ -635,7 +649,7 @@ def overlap(a, b):
     return a[0] < b[0] + b[1] and b[0] < a[0] + a[1]
 
 
-def boot_tree(merged, reference, mode, native=False, dualboot=False, pstore=PSTORE):
+def boot_tree(merged, reference, mode, native=False, dualboot=False, pstore=PSTORE, identity=True):
     tree = copy.deepcopy(merged)
     ref_chosen = find(reference.root, "/chosen")["props"]
     require(set(ref_chosen) == {"bootargs"}, "Unexpected reference /chosen properties")
@@ -643,6 +657,8 @@ def boot_tree(merged, reference, mode, native=False, dualboot=False, pstore=PSTO
     require(not re.search(r"(?i)warm.?reset", bootargs), "Warm-reset flag in reference bootargs")
     if native or dualboot:
         bootargs = native_bootargs(bootargs, dualboot or native)
+    if not identity:
+        bootargs = without_identity(bootargs)
     find(tree.root, "/chosen")["props"]["bootargs"] = bootargs.encode() + b"\0"
     memory = find(reference.root, "/memory")
     require(set(memory["props"]) <= {"device_type", "reg", "ddr_device_type"},
@@ -843,6 +859,9 @@ def main():
                         help="Use source crux_uboot fstab and native bootargs in Recovery too")
     parser.add_argument("--development-adb", action="store_true",
                         help="Permit source-built ROM/Recovery RSA-disabled development ADB; retain ro.secure and storage checks")
+    parser.add_argument("--without-identity", action="store_true",
+                        help="Leave the captured device identity out of both FITs; only an identity-injecting "
+                             "U-Boot (crux_ota bootargs) can boot them")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mkimage", default=shutil.which("mkimage") or
                         str(workspace / "u-boot-port/tools/host/mkimage"))
@@ -876,6 +895,7 @@ def main():
               "classification": "development-adb" if args.development_adb else
                                 ("native-fbe-source-candidate" if native or args.dualboot else "development"),
               "development_adb": args.development_adb,
+              "device_identity_in_bootargs": not args.without_identity,
               "rom_boot_type": None if args.recovery_only else ("native-first-stage-ramdisk" if native else "legacy-ramdiskless"),
               "recovery_only": args.recovery_only,
               "recovery_fstab_profile": "crux_uboot" if args.dualboot else "legacy-default",
@@ -942,7 +962,8 @@ def main():
             tree, reservations, extras, omitted = boot_tree(selected, reference, mode,
                                                           native=native and mode == "rom",
                                                           dualboot=args.dualboot and mode == "recovery",
-                                                          pstore=pstore_contract)
+                                                          pstore=pstore_contract,
+                                                          identity=not args.without_identity)
             mode_ramdisk = ramdisk if mode == "recovery" else boot_ramdisk
             mode_ramdisk_data = ramdisk_data if mode == "recovery" else boot_ramdisk_data
             kernel_range = (KERNEL_ADDRESS, header["image_size"])

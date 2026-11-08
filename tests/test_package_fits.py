@@ -142,6 +142,12 @@ class PackagingTests(unittest.TestCase):
             self.assertNotIn("root=PARTUUID=", native_args)
             self.assertNotIn("rootwait", native_args.split())
             self.assertIn("androidboot.serialno=8bd37df4", native_args.split())
+            bare, _, _, _ = recipe.boot_tree(fresh_source, projected, mode, identity=False, **native_kwargs)
+            bare_args = recipe.strings(recipe.find(bare.root, "/chosen")["props"]["bootargs"])[0].split()
+            self.assertEqual(bare_args, [token for token in native_args.split()
+                                         if token.split("=", 1)[0] not in recipe.IDENTITY_KEYS])
+            self.assertFalse({token.split("=", 1)[0] for token in bare_args} & recipe.IDENTITY_KEYS)
+            self.assertIn("msm_drm.dsi_display0", {token.split("=", 1)[0] for token in native_args.split()})
 
     def test_source_contract_route_does_not_open_legacy_reference_dtbs(self):
         contract_path = (Path(__file__).resolve().parents[1]

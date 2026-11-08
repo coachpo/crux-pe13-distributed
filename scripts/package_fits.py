@@ -338,7 +338,7 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
                 command = [sys.executable, str(recipe_path), "--image", str(inputs / "Image"),
                            "--base-dir", str(inputs / "base-dtbs"), "--overlay", str(inputs / "crux-sm8150-overlay.dtbo"),
                            "--boot-ramdisk", str(inputs / "ramdisk.img"), "--recovery-ramdisk", str(inputs / "ramdisk-recovery.img"),
-                           "--dualboot", "--development-adb",
+                           "--dualboot", "--development-adb", "--without-identity",
                            *boot_contract_args(reference_dir, source_contract),
                            "--output-dir", str(output / "fits"), "--mkimage", str(mkimage), "--fdtoverlay", str(fdtoverlay)]
                 print(json.dumps(command), file=log)

@@ -191,8 +191,14 @@ derives it from the verified delivery:
   - the serial the FITs carry (`any` only for FITs without one);
   - the Recovery-container U-Boot role.
 
-The current FITs carry `androidboot.serialno=8bd37df4`, so a phone release
-is for that phone only.
+FITs of builds up to `2026110704` carry the captured device identity
+(`androidboot.serialno=8bd37df4`, `cpuid` and the other ABL tokens), so their
+phone releases are for that phone only. From 2026-11-08 the assembly packages
+both FITs `--without-identity`: the identity-injecting U-Boot copies those
+tokens from the ABL command line before each PE boot (`crux_ota bootargs`).
+Such FITs boot only through the Recovery container and an identity-injecting
+Boot U-Boot; `msm_drm.dsi_display0` also selects the panel. Their phone
+release may use `any`.
 
 The target build must itself contain the A update stack: `crux-installer`,
 `crux_ota.rc`, the CruxUpdater app with its privapp allowlist, and the A key
