@@ -197,8 +197,8 @@ phone releases are for that phone only. From 2026-11-08 the assembly packages
 both FITs `--without-identity`: the identity-injecting U-Boot copies those
 tokens from the ABL command line before each PE boot (`crux_ota bootargs`).
 Such FITs boot only through the Recovery container and an identity-injecting
-Boot U-Boot; `msm_drm.dsi_display0` also selects the panel. Their phone
-release may use `any`.
+Boot U-Boot, including the host client's ROM return; `msm_drm.dsi_display0`
+also selects the panel. Their phone release may use `any`.
 
 The target build must itself contain the A update stack: `crux-installer`,
 `crux_ota.rc`, the CruxUpdater app with its privapp allowlist, and the A key
@@ -359,12 +359,16 @@ keep the journal and identify the endpoint; no automatic retry or
 alternate install is authorized.
 
 Every reboot to the shell checks the Boot U-Boot version that the plan
-records. Since 2026-11-08 the Boot partition holds the identity build
+records and its role `crux_uboot_role=boot-crux-identity-1`. Since
+2026-11-08 the Boot partition holds that identity build,
 `2026.10-rc5-00617-g0f6d3c792bd5`, the default `--uboot-version`; plans
 reviewed against the earlier `2026.10-rc5-00614-g35579e6f8c14-dirty` no
-longer pass. That build keeps `bootcmd`, the menu and the `boot_pe_rom` the
-client uses, so the client still boots the ROM without injecting identity:
-use it only with FITs that carry the device identity.
+longer pass. The client (and the B host installer, which shares this code)
+returns to the ROM through the build's PE entry `crux_boot_pe_rom`. It
+replaces the FIT's identity tokens with the values ABL passed
+(`crux_ota bootargs`), so FITs with or without the device identity install
+alike. If ABL passed no identity, `crux_ota` refuses, no kernel starts and the
+handoff check fails at the U-Boot shell.
 
 The built-in checks verify fingerprint, CE, FBE v2 fstab/media policy,
 vold identity, boot completion and absence of `zygote-fatal` at the

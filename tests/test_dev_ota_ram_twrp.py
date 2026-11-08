@@ -98,6 +98,26 @@ class RamTwrpTests(unittest.TestCase):
                 ("gap", 0x3bb00, 0x500), ("gap", 0x3f100, 0x8f00),
             ])
 
+    def test_rom_return_uses_the_boot_identity_entry(self):
+        ram = mock.Mock(UBOOT_SERIAL="1499001831")
+        session = mock.Mock()
+        good = (f"serial#=1499001831\ncrux_uboot_role={ram_twrp.UBOOT_ROLE}\n"
+                f"crux_boot_pe_rom={ram_twrp.ROM_BOOT}\n")
+        session.send.return_value = good
+        ram_twrp.read_environment(session, ram, "version")
+        ram.verify_environment.assert_called_once_with(session, "version")
+        self.assertIn("if crux_ota bootargs; then bootm prep; run boot_go; fi", ram_twrp.ROM_BOOT)
+        for text, error in ((good.replace(ram_twrp.UBOOT_ROLE, "recovery-container-crux-install-1"), "identity build"),
+                            (good.replace("crux_uboot_role", "other_role"), "identity build"),
+                            (good.replace("if crux_ota bootargs; then ", "").replace("; fi", ""), "ROM menu command")):
+            with self.subTest(error=error):
+                session.send.return_value = text
+                with self.assertRaisesRegex(ram_twrp.RamTwrpError, error):
+                    ram_twrp.read_environment(session, ram, "version")
+        ram_twrp.boot_rom(ram, session)
+        ram.guarded_handoff.assert_called_once_with(session, "setenv crux_ota_extra; run crux_boot_pe_rom")
+        session.save.assert_called_once_with()
+
     def test_fit_windows_are_the_uboot_read_lengths(self):
         self.assertEqual(dev_ota_fits.WRITE_WINDOWS, {"recovery": (0x38000, 0x3b00), "rom": (0x3c000, 0x3100)})
 
