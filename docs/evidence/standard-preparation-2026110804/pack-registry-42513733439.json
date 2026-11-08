@@ -1,0 +1,332 @@
+{
+  "archive_bytes_total": 40835417252,
+  "build_number": "2026110804",
+  "capsules": [
+    {
+      "archive": "w000-s000.tar.zst",
+      "archive_bytes": 1663625768,
+      "archive_sha256": "9ca4c26ba874830ad3e35084f8b9c49825d52ed84da55c93800a360ca4359f52",
+      "file_count": 34605,
+      "input_bytes": 5135900788,
+      "shard_id": "w000-s000"
+    },
+    {
+      "archive": "w000-s001.tar.zst",
+      "archive_bytes": 1063531165,
+      "archive_sha256": "7939aa20516f192d806c058da072c7a51c7f235225cad2e2e579ce1488f0e3d3",
+      "file_count": 166057,
+      "input_bytes": 4372500968,
+      "shard_id": "w000-s001"
+    },
+    {
+      "archive": "w000-s002.tar.zst",
+      "archive_bytes": 1109297401,
+      "archive_sha256": "00c4dae594f2891f18b75c57abec961d96a6d9b1f92a1a93f019005d6be3ebc1",
+      "file_count": 151410,
+      "input_bytes": 4715424882,
+      "shard_id": "w000-s002"
+    },
+    {
+      "archive": "w000-s003.tar.zst",
+      "archive_bytes": 673388301,
+      "archive_sha256": "9dd9e07247035a559aa9bb0dd87b073d560dfa786fec0b2d95c18578a02264be",
+      "file_count": 29306,
+      "input_bytes": 2527182223,
+      "shard_id": "w000-s003"
+    },
+    {
+      "archive": "w000-s004.tar.zst",
+      "archive_bytes": 977138700,
+      "archive_sha256": "0553c2b28201ac2fee782c50709aa206417ae20fe24bb0b007e3bee3d60c0226",
+      "file_count": 19970,
+      "input_bytes": 3579429605,
+      "shard_id": "w000-s004"
+    },
+    {
+      "archive": "w000-s005.tar.zst",
+      "archive_bytes": 976597094,
+      "archive_sha256": "16070ae38611073f9591110ae9013264e81c217d3274d710bc1a74618b0bee4d",
+      "file_count": 17165,
+      "input_bytes": 3576586988,
+      "shard_id": "w000-s005"
+    },
+    {
+      "archive": "w000-s006.tar.zst",
+      "archive_bytes": 992408601,
+      "archive_sha256": "261a3b32ef3fced24b015222921a1f8bdbdebc050676477946dbc5cf4e82c80e",
+      "file_count": 30192,
+      "input_bytes": 3661458232,
+      "shard_id": "w000-s006"
+    },
+    {
+      "archive": "w000-s007.tar.zst",
+      "archive_bytes": 982164034,
+      "archive_sha256": "a84e93525c71b31b06e84775505b80f2ddfb922738f3c01cf8fb47762c1f6ca6",
+      "file_count": 22332,
+      "input_bytes": 3604535294,
+      "shard_id": "w000-s007"
+    },
+    {
+      "archive": "w000-s008.tar.zst",
+      "archive_bytes": 990184074,
+      "archive_sha256": "ad369378c7e7ca74e21e78e84973b7793dd035b2feaaa74ffdf5d34ac607dbae",
+      "file_count": 24968,
+      "input_bytes": 3644769652,
+      "shard_id": "w000-s008"
+    },
+    {
+      "archive": "w000-s009.tar.zst",
+      "archive_bytes": 987008221,
+      "archive_sha256": "28700125bd539bb66e09225f2e8451ecf0343b9a75d608b05176c423a3704432",
+      "file_count": 22616,
+      "input_bytes": 3638956788,
+      "shard_id": "w000-s009"
+    },
+    {
+      "archive": "w000-s010.tar.zst",
+      "archive_bytes": 1014846933,
+      "archive_sha256": "0e75b0b008089ec2f38b5593e690d76bd6c4a199ebde9d3df3e34201c7c19176",
+      "file_count": 38038,
+      "input_bytes": 4123287502,
+      "shard_id": "w000-s010"
+    },
+    {
+      "archive": "w000-s011.tar.zst",
+      "archive_bytes": 985712462,
+      "archive_sha256": "f104ac9f8f2e501e5b14fe5eaedbb4f35a08b4f5bf4ae3cb009d1c851257fe45",
+      "file_count": 47352,
+      "input_bytes": 3468075699,
+      "shard_id": "w000-s011"
+    },
+    {
+      "archive": "w000-s012.tar.zst",
+      "archive_bytes": 849734640,
+      "archive_sha256": "17913b4488ce59ee96a16898237a53e844f739cfd2ef661c832948070929996c",
+      "file_count": 43442,
+      "input_bytes": 3018005712,
+      "shard_id": "w000-s012"
+    },
+    {
+      "archive": "w001-s000.tar.zst",
+      "archive_bytes": 893253775,
+      "archive_sha256": "470207351a556994771bb7680ace101c61b162c0a857798c825b594191f2bf5f",
+      "file_count": 46597,
+      "input_bytes": 3237338504,
+      "shard_id": "w001-s000"
+    },
+    {
+      "archive": "w001-s001.tar.zst",
+      "archive_bytes": 2608099236,
+      "archive_sha256": "9cc403de4257235316c7f495c7e2233d3f3750e121cf39a7986b3633f2ad3674",
+      "file_count": 142721,
+      "input_bytes": 8376186584,
+      "shard_id": "w001-s001"
+    },
+    {
+      "archive": "w001-s002.tar.zst",
+      "archive_bytes": 1933774970,
+      "archive_sha256": "f7433734aba90364b4ef9f6eb135ffec923a0a9a3d251cff27249f883133c8d4",
+      "file_count": 50293,
+      "input_bytes": 5359644156,
+      "shard_id": "w001-s002"
+    },
+    {
+      "archive": "w002-s000.tar.zst",
+      "archive_bytes": 1126723358,
+      "archive_sha256": "2a0dad3f36a3a240302a5a2be04c25e16962ad1d27ed54f57278bc479f594951",
+      "file_count": 53617,
+      "input_bytes": 3654049217,
+      "shard_id": "w002-s000"
+    },
+    {
+      "archive": "w002-s001.tar.zst",
+      "archive_bytes": 648464011,
+      "archive_sha256": "50fcec43d61f18a54106df1a53c837522d084ce3410b3a80785675020b52d647",
+      "file_count": 13313,
+      "input_bytes": 2447449669,
+      "shard_id": "w002-s001"
+    },
+    {
+      "archive": "w002-s002.tar.zst",
+      "archive_bytes": 1133301956,
+      "archive_sha256": "22f5b14afbae8e67279ae9b3bf1ac2745fde6c083e28e8033e4954020dca3d85",
+      "file_count": 44505,
+      "input_bytes": 3411039442,
+      "shard_id": "w002-s002"
+    },
+    {
+      "archive": "w002-s003.tar.zst",
+      "archive_bytes": 1003093866,
+      "archive_sha256": "d2f91036a6c2c779148cdbddb73170cb79420d24adbaaa93d2c99b1e04dfd7ff",
+      "file_count": 37106,
+      "input_bytes": 3685441401,
+      "shard_id": "w002-s003"
+    },
+    {
+      "archive": "w002-s004.tar.zst",
+      "archive_bytes": 1255275729,
+      "archive_sha256": "2ce4bd553d88c74b587a8eb7aa4dc2a9aca751743d49159a1f8e0ef3ff6ceb36",
+      "file_count": 64699,
+      "input_bytes": 4207239859,
+      "shard_id": "w002-s004"
+    },
+    {
+      "archive": "w002-s005.tar.zst",
+      "archive_bytes": 710844721,
+      "archive_sha256": "f6f4dd151797adffdd4eaf384acab10ac6485a752ef02ada861dbdedc0256f9b",
+      "file_count": 26812,
+      "input_bytes": 2768143436,
+      "shard_id": "w002-s005"
+    },
+    {
+      "archive": "w002-s006.tar.zst",
+      "archive_bytes": 905728035,
+      "archive_sha256": "46808a3badb360f8c351c6bb9ed1338f7ae3786a39d0245af41dc67e758ded43",
+      "file_count": 45006,
+      "input_bytes": 2986803047,
+      "shard_id": "w002-s006"
+    },
+    {
+      "archive": "w003-s000.tar.zst",
+      "archive_bytes": 935267563,
+      "archive_sha256": "1528ed60e75f874caa7da35324c0512e179ef5e13a43fcb16a55b4cd9dcbd723",
+      "file_count": 19775,
+      "input_bytes": 3160585385,
+      "shard_id": "w003-s000"
+    },
+    {
+      "archive": "w003-s001.tar.zst",
+      "archive_bytes": 911772316,
+      "archive_sha256": "dd6fbd0e709ac205f258918e284cd49e96d81e22289dc7bfd374a20a905a050e",
+      "file_count": 25227,
+      "input_bytes": 3077243470,
+      "shard_id": "w003-s001"
+    },
+    {
+      "archive": "w003-s002.tar.zst",
+      "archive_bytes": 1133533306,
+      "archive_sha256": "b1de9af5e556da0a92751abdd698d6e31f931740a8ca4262fff589658793852e",
+      "file_count": 41435,
+      "input_bytes": 3947166616,
+      "shard_id": "w003-s002"
+    },
+    {
+      "archive": "w003-s003.tar.zst",
+      "archive_bytes": 989940733,
+      "archive_sha256": "8c64493705b8572136278d9df34bb550aeac75ecd2f8db0af6ff16103faa1f9d",
+      "file_count": 24545,
+      "input_bytes": 3705877426,
+      "shard_id": "w003-s003"
+    },
+    {
+      "archive": "w003-s004.tar.zst",
+      "archive_bytes": 1366636570,
+      "archive_sha256": "51be328d3a44a2ad026a8c7e8a9e85c7967c9aebaea3617a7371bb5a24367a9b",
+      "file_count": 47954,
+      "input_bytes": 4386765192,
+      "shard_id": "w003-s004"
+    },
+    {
+      "archive": "w003-s005.tar.zst",
+      "archive_bytes": 678725142,
+      "archive_sha256": "bbd22d78bccfef9fae1481fc9e7ab9fe8a2b1826934c5991a8105e8c72997355",
+      "file_count": 26073,
+      "input_bytes": 2463912430,
+      "shard_id": "w003-s005"
+    },
+    {
+      "archive": "w004-s000.tar.zst",
+      "archive_bytes": 1041599036,
+      "archive_sha256": "8b6326b769cc13f118c235673053cbf4653c96a9a3e5bab340e00ca981ee502a",
+      "file_count": 25732,
+      "input_bytes": 3318183887,
+      "shard_id": "w004-s000"
+    },
+    {
+      "archive": "w004-s001.tar.zst",
+      "archive_bytes": 649440508,
+      "archive_sha256": "dc1bc9b8bba9601291a1ef0b87285e37a071956b5012fcee54abc9383dcecb42",
+      "file_count": 13496,
+      "input_bytes": 2461576773,
+      "shard_id": "w004-s001"
+    },
+    {
+      "archive": "w004-s002.tar.zst",
+      "archive_bytes": 918723293,
+      "archive_sha256": "7b9df31e66e1711423ad8ad2a64605d8d0f8f39a0e41481128d1a462f64150b9",
+      "file_count": 14052,
+      "input_bytes": 3400913591,
+      "shard_id": "w004-s002"
+    },
+    {
+      "archive": "w004-s003.tar.zst",
+      "archive_bytes": 926380520,
+      "archive_sha256": "eeeaa5d186c1a9c422580d16ebc4817117296c5f87130a9fa632969d145675b0",
+      "file_count": 21815,
+      "input_bytes": 3538303239,
+      "shard_id": "w004-s003"
+    },
+    {
+      "archive": "w004-s004.tar.zst",
+      "archive_bytes": 960978216,
+      "archive_sha256": "54c88da85a49c78991aba1b693af85bb7d173510832aa8500c2c0667048c211f",
+      "file_count": 16838,
+      "input_bytes": 3033985996,
+      "shard_id": "w004-s004"
+    },
+    {
+      "archive": "w005-s000.tar.zst",
+      "archive_bytes": 1121654259,
+      "archive_sha256": "d1dca96e4e521b4834ddf7d496aa1c46a42d9fe04e7d438ce6fa1336cf03fa53",
+      "file_count": 11613,
+      "input_bytes": 3728513153,
+      "shard_id": "w005-s000"
+    },
+    {
+      "archive": "w005-s001.tar.zst",
+      "archive_bytes": 1170290989,
+      "archive_sha256": "2b67473e4fc38c1c405166aabe82d83be0203532b8de9ec24f5b7cc069864402",
+      "file_count": 12446,
+      "input_bytes": 3856939932,
+      "shard_id": "w005-s001"
+    },
+    {
+      "archive": "w006-s000.tar.zst",
+      "archive_bytes": 1074874658,
+      "archive_sha256": "b6b21f664fe9189846910d4f3722e127508bdf39fac21563271c980c39b89b4b",
+      "file_count": 22491,
+      "input_bytes": 3193214158,
+      "shard_id": "w006-s000"
+    },
+    {
+      "archive": "w006-s001.tar.zst",
+      "archive_bytes": 1120960047,
+      "archive_sha256": "7686a128faf53ecd6023afc50815918c759b96dc277482f097a7f0d284033404",
+      "file_count": 12194,
+      "input_bytes": 3728307694,
+      "shard_id": "w006-s001"
+    },
+    {
+      "archive": "w007-s000.tar.zst",
+      "archive_bytes": 350443045,
+      "archive_sha256": "b45baa05908b4dc0fa725862c26171a038cf59497054185426577b995841c408",
+      "file_count": 9266,
+      "input_bytes": 838171572,
+      "shard_id": "w007-s000"
+    }
+  ],
+  "graph_index": {
+    "bytes": 1534476288,
+    "sha256": "8e9cff52a1d829ea69270dac838c8a3b9002c446285f226ac8cbf24fc4bead8d"
+  },
+  "graph_run": "42511447592",
+  "index_run": "42513733439",
+  "input_bytes_total": 141039110162,
+  "plan_sha256": "e665fd17c36a2393e7774d5563e07273039712854484db57d02ea36fcdda9e7d",
+  "schema_version": 1,
+  "shard_count": 39,
+  "shard_run": "42513733439",
+  "source_manifest_sha256": "4fa0be6bd976b33783eaf625642c77175f05c5c1a0fb1c25188dcb44123786b1",
+  "source_run": "42511447592",
+  "status": "success"
+}

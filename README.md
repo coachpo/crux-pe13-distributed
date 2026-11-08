@@ -8,15 +8,19 @@ publish here.
 
 ## Standard-runner build baseline
 
-The admitted cold inputs are for build `2026110801`, from
-[freeze 42453128546](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42453128546)
-and [full preparation 42455132490](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42455132490):
-40 shards in eight waves. They passed
+The admitted cold inputs are for build `2026110804`, the first build without
+the OTA stack, from
+[freeze 42511447592](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42511447592)
+and [full preparation 42513733439](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42513733439):
+39 shards in eight waves (one fewer than `2026110801`, whose plan carried the
+removed updater). Preparation acceptance alone does not establish native
+compilation or image acceptance; these inputs still need their own compile and
+assembly. The previous input set, `2026110801`, passed
 [cold compile 42465427782](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42465427782)
 and [assembly 42482803187](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42482803187).
-Preparation acceptance alone does not establish native compilation or image
-acceptance. The source pins in `config/` have since moved on, so the next build
-starts with a new freeze and preparation, then a reviewed admission.
+Dispatch `build-standard.yml` with its defaults while the admitted inputs are
+available. The preparation and graph artifacts expire on 2026-11-22; after
+that, run a new freeze and preparation, then review the new admission.
 `freeze-standard.yml` and `prepare-standard.yml` therefore have no build or run
 defaults, and `prepare-standard.yml` defaults to `stage=full`. After the
 compile's summary succeeds for every admitted task, pass that **new compile run
@@ -30,7 +34,7 @@ public-repository standard `ubuntu-22.04` runners.
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both identity-free FITs, writes `delivery-record.json` and `SHA256SUMS`, checks that the compressed system payload decodes to the native system image identity, then builds `installer/` and writes the unsigned ZIP payload (`zip-payload/`) with `scripts/crux_zip.py prepare`. `cloud-fresh-rom-<build_run>` is an Actions artifact, not a release. |
 | Release | Sign the payload's `crux-install.txt` offline (`scripts/crux_zip.py sign`), then dispatch `release.yml` with the successful **assembly run ID**, a `crux-pe13-<build>-v<n>` tag and the signature. Preflight is read-only, draft stages the exact verified bytes, and publish makes the complete prerelease visible. |
 
-The [current preparation records](docs/evidence/standard-preparation-2026110801/)
+The [current preparation records](docs/evidence/standard-preparation-2026110804/)
 pin the graph summary, index receipt and pack registry for bootstrap; they
 are **build inputs**, not payload backups. See the
 [execution record](docs/standard-runner-build-plan.md) for historical attempts
