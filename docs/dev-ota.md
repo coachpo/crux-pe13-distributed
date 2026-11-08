@@ -501,10 +501,53 @@ three assets, and its PE Recovery installed them with data kept. The phone
 came back on `2026110704` with the marker `crux-pe13-dev-2026110704`, an
 unchanged data witness and FBE v2 policy, the ROM window CRC that the host
 predicted and unchanged Recovery, TWRP and `misc` regions. It then passed 300
-seconds on one boot ID and the update-stack check. The same flow over the
-phone's own network was not tested. The evidence is in the Crux workspace at
-`out/crux-pe13-convergence-2026-11-07/device/a-2026110704/` and
-`out/crux-pe13-convergence-2026-11-07/cloud-2026110704/`.
+seconds on one boot ID and the update-stack check. The evidence is in the
+Crux workspace at `out/crux-pe13-convergence-2026-11-07/device/a-2026110704/`
+and `out/crux-pe13-convergence-2026-11-07/cloud-2026110704/`.
+
+[`dev-pe13-2026110801-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110801-v1)
+(Release `438310948`), the default channel head since its publication on
+2026-11-08, adds transaction-record retirement to the update stack, and its
+FITs carry no device identity. It was built in
+[compile 42465427782](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42465427782)
+(the same 40-shard plan), verified by
+[assembly 42482803187](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42482803187),
+and signed offline with start build `2026110704` and serial `any`.
+[Preflight](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42491434787),
+[draft](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42491561847)
+and [publish](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42491875103)
+passed with the same `ota_*` inputs, and all ten asset digests matched the
+verified delivery and the signed manifest. With a fresh cache, `check
+--no-device` still selected `2026110704` by default while the release was a
+draft, and selected `2026110801` both explicitly and by default after
+publication. The evidence is in
+`out/crux-pe13-convergence-2026-11-07/cloud-2026110801/`.
+
+On `8bd37df4`, running `2026110704`, the phone used its own Wi-Fi: the
+default network was validated Wi-Fi with no global proxy, and the host set
+up no proxy, server or `adb reverse`; it only tapped the app's buttons over
+ADB and watched. Two older transaction records were seeded in
+`/metadata/crux_ota` first. From Settings, CruxUpdater read the release from
+its built-in GitHub channel, verified the signature, and downloaded and
+checked the three assets in about 22 minutes (a crowded 2.4 GHz link). The
+test script stopped during the download on a host-side `uiautomator` error;
+the phone was unaffected, and the run went on from the app's verified
+download (`--continue`). PE Recovery of `2026110704` installed the update with
+data kept, and the Recovery-container U-Boot landed the identity-free ROM FIT:
+229 seconds after the install tap the phone came back on `2026110801` with
+the marker `crux-pe13-dev-2026110801`. Its command line carried each ABL
+identity token once, equal to ABL's, and
+`androidboot.crux_uboot=recovery-container-crux-install-1` once. The data
+witness and FBE v2 policy were unchanged, the ROM window CRC matched the host
+prediction, and Recovery, TWRP and `misc` were unchanged. The result service
+removed the seeded and the finished transaction records and kept only this
+transaction's result file. The phone then passed 300 seconds on one boot ID
+and the update-stack check. An F3 no-write rehearsal from `2026110801` then
+returned through `crux_boot_pe_rom` with the identity injected under
+`boot-crux-identity-1`. USB stayed connected throughout; an unplugged run with
+manual taps was not tested. The evidence is in
+`out/crux-pe13-convergence-2026-11-07/device/a-2026110801/` and
+`out/crux-pe13-convergence-2026-11-07/f3/rehearsal-boot-identity-from-2026110801/`.
 
 ## ROM entry-point audit (2026-11-05)
 

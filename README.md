@@ -13,9 +13,13 @@ transaction-record retirement to the crux-install/1 update stack, from
 [freeze 42453128546](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42453128546)
 and [full preparation 42455132490](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42455132490).
 Its plan is the same 40 shards in eight waves as `2026110704`. Preparation
-acceptance alone does not establish native compilation or image acceptance;
-these inputs still need their own compile and assembly. The previous input
-set, `2026110704`, passed
+acceptance alone does not establish native compilation or image acceptance.
+These inputs passed
+[cold compile 42465427782](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42465427782)
+and [assembly 42482803187](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42482803187),
+and are published as the phone release
+[`dev-pe13-2026110801-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110801-v1).
+The previous input set, `2026110704`, passed
 [cold compile 42427170882](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42427170882)
 and [assembly 42444269612](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42444269612),
 and is published as the phone release
@@ -62,11 +66,14 @@ passed device upgrade and explicit rollback to
 `dev-pe13-2026101105-v3`; keep that rollback entry. Official MIUI recovery is
 the only rescue path outside Dev OTA; it is not a Dev update channel.
 
-[`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1),
-the default channel head since 2026-11-08, is the first
-[phone release](docs/dev-ota.md#phone-release-signed-manifest). The phone's
-own CruxUpdater installed it from Settings with data kept, starting from local
-build `2026110703` ([acceptance](docs/dev-ota.md#phone-release-acceptance-2026-11-08)).
+[`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1)
+is the first [phone release](docs/dev-ota.md#phone-release-signed-manifest).
+The phone's own CruxUpdater installed it from Settings with data kept,
+starting from local build `2026110703`.
+[`dev-pe13-2026110801-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110801-v1),
+the default channel head since 2026-11-08, has FITs without device identity;
+the phone installed it the same way from `2026110704` over its own Wi-Fi
+([acceptance](docs/dev-ota.md#phone-release-acceptance-2026-11-08)).
 
 ## Checks
 

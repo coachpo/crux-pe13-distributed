@@ -8,9 +8,9 @@
   - it passed cold compile `42218749916` and assembly `42260118571`;
   - it is published as `dev-pe13-2026110501-v1`.
 
-  `2026110704`, the first build with the crux-install/1 update stack (40 shards in eight waves), was admitted on 2026-11-08 at `00b228d`. It passed cold compile `42427170882` and assembly `42444269612`, and is published as the phone release `dev-pe13-2026110704-v1` (signed manifest, start build `2026110703`), the default channel head since 2026-11-08.
+  `2026110704`, the first build with the crux-install/1 update stack (40 shards in eight waves), was admitted on 2026-11-08 at `00b228d`. It passed cold compile `42427170882` and assembly `42444269612`, and is published as the phone release `dev-pe13-2026110704-v1` (signed manifest, start build `2026110703`).
 
-  The current cold inputs, admitted on 2026-11-08, are `2026110801`: the same 40-shard plan, with transaction-record retirement in the device tree. Its compile and assembly are still separate acceptances.
+  The current cold inputs, admitted on 2026-11-08 at `1c92153`, are `2026110801`: the same 40-shard plan, with transaction-record retirement in the device tree and both FITs packaged without device identity. It passed cold compile `42465427782` and assembly `42482803187`, and is published as the phone release `dev-pe13-2026110801-v1` (signed manifest, start build `2026110704`, serial `any`), the default channel head since 2026-11-08.
 
   On November 7 the protected RAM-only TWRP v2 installer ([`docs/dev-ota.md`](docs/dev-ota.md)) upgraded a device `2026101105 → 2026110501` and then rolled it back explicitly to `dev-pe13-2026101105-v3`. Neither result, nor the channel head, identifies the live phone. Installs refuse the old cache-TWRP route. `dev-pe13-2026110303-v1` was published but never installed; it was deleted on 2026-11-07.
 - A phone release adds the signed `crux-ota-manifest.txt`/`.sig` ([guide](docs/dev-ota.md#phone-release-signed-manifest)). Sign it offline with `scripts/dev_ota_manifest.py sign`; keep the A private key out of every repository, Actions secret and synced note. Pass the same `ota_*` inputs to every stage of that release.
