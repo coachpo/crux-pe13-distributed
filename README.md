@@ -12,9 +12,13 @@ The current cold inputs are for Dev build `2026110704`, the first cloud build
 with the crux-install/1 update stack, from
 [freeze 42412861700](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42412861700)
 and [full preparation 42415440751](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42415440751).
-Its plan has 40 shards in eight waves. Preparation acceptance does not
-establish native compilation or image acceptance; these inputs still need
-their own compile and assembly. The previous input set, `2026110501`, passed
+Its plan has 40 shards in eight waves. It passed
+[cold compile 42427170882](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42427170882)
+and [assembly 42444269612](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42444269612),
+and is published as the phone release
+[`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1).
+Preparation acceptance alone does not establish native compilation or image
+acceptance. The previous input set, `2026110501`, passed
 [cold compile 42218749916](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42218749916)
 and [assembly 42260118571](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42260118571).
 Dispatch `build-standard.yml` with its defaults while the admitted inputs are
@@ -58,6 +62,12 @@ installer. [`dev-pe13-2026110501-v1`](https://github.com/coachpo/crux-pe13-distr
 passed device upgrade and explicit rollback to
 `dev-pe13-2026101105-v3`; keep that rollback entry. Official MIUI recovery is
 the only rescue path outside Dev OTA; it is not a Dev update channel.
+
+[`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1),
+the default channel head since 2026-11-08, is the first
+[phone release](docs/dev-ota.md#phone-release-signed-manifest). The phone's
+own CruxUpdater installed it from Settings with data kept, starting from local
+build `2026110703` ([acceptance](docs/dev-ota.md#phone-release-acceptance-2026-11-08)).
 
 ## Checks
 

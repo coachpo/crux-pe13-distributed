@@ -388,8 +388,9 @@ only rescue path outside Dev OTA is official MIUI/EDL.
    ranges, and the accepted rollback inputs. Run a read-only plan for the exact
    published tag. Only with device-write approval run the install, then check
    FIT readback and unchanged neighboring windows, PE-only writes, ROM boot and
-   the runtime checks listed above. Confirm Settings offers no on-device PE ROM
-   update action. A publication result is not a device acceptance result.
+   the runtime checks listed above. For a build without the update stack,
+   confirm Settings offers no on-device PE ROM update action. A publication
+   result is not a device acceptance result.
 3. **Roll back:** with separate write approval, explicitly plan and install
    `dev-pe13-2026101105-v3`, then repeat the FIT, boot and runtime checks against
    that older delivery. Record the forward and backward build identities.
@@ -400,7 +401,9 @@ only rescue path outside Dev OTA is official MIUI/EDL.
 - Dev builds are `userdebug/test-keys`, `ro.adb.secure=0`; this channel must
   never be recommended to the public release feed.
 - No `target_files`, signing, OTA ZIP, `sign.yml` or `publish.yml` is involved.
-- Host-side only: no on-device updater app was added.
+- The host client is host-side. Builds with the update stack (from
+  `2026110704`) also carry the on-device CruxUpdater, which installs only
+  signed [phone releases](#phone-release-signed-manifest).
 - `check`/`plan` do not write the device; `update --execute` is the only
   destructive command and must be run with the U-Boot bridge active.
 
@@ -453,6 +456,37 @@ The evidence is in the Crux workspace at
 `out/crux-pe13-device-validation-2026-11-05/device/a-upgrade-rollback-2026-11-07/`.
 Those are dated device results, not device access or authorization for a
 new install.
+
+## Phone release acceptance (2026-11-08)
+
+[`dev-pe13-2026110704-v1`](https://github.com/coachpo/crux-pe13-distributed/releases/tag/dev-pe13-2026110704-v1)
+(Release `438033894`) is the first phone release. It was built in
+[compile 42427170882](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42427170882)
+(40 shards), verified by
+[assembly 42444269612](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42444269612),
+and signed offline with start build `2026110703` and serial `8bd37df4`.
+[Preflight](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42447092097),
+[draft](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42447377892)
+and [publish](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42447601669)
+passed with the same `ota_*` inputs. All ten uploaded asset digests matched the
+verified delivery and the signed manifest. With a fresh cache, `check
+--no-device` selected it both explicitly and as the default head. The
+draft-stage check that the default stayed on the previous head was not run.
+
+On `8bd37df4`, running local build `2026110703`, Settings → System →
+Additional system updates opened CruxUpdater, which read this release from
+its built-in GitHub channel. The phone had no network of its own, so the host
+relayed only GitHub HTTPS tunnels (`api.github.com`, `github.com`,
+`release-assets.githubusercontent.com`) through `adb reverse` and the global
+proxy setting. The app verified the signature, downloaded and checked the
+three assets, and its PE Recovery installed them with data kept. The phone
+came back on `2026110704` with the marker `crux-pe13-dev-2026110704`, an
+unchanged data witness and FBE v2 policy, the ROM window CRC that the host
+predicted and unchanged Recovery, TWRP and `misc` regions. It then passed 300
+seconds on one boot ID and the update-stack check. The same flow over the
+phone's own network was not tested. The evidence is in the Crux workspace at
+`out/crux-pe13-convergence-2026-11-07/device/a-2026110704/` and
+`out/crux-pe13-convergence-2026-11-07/cloud-2026110704/`.
 
 ## ROM entry-point audit (2026-11-05)
 
