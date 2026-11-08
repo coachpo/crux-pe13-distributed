@@ -1,0 +1,69 @@
+name: Publish a verified PE13 flashable ZIP
+run-name: ZIP release ${{ inputs.operation }} ${{ inputs.tag }} from assembly ${{ inputs.assembly_run }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      assembly_run:
+        description: Successful assemble-standard.yml run ID (not the compile run)
+        required: true
+        type: string
+      tag:
+        description: "Release version: crux-pe13-<build>-v<n>"
+        required: true
+        type: string
+      operation:
+        description: Preflight (read only), prepare a draft, or publish a complete draft
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, draft, publish]
+      signature:
+        description: Offline P-256 signature of the payload's crux-install.txt (128 hex digits)
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: standard-zip-release
+  cancel-in-progress: false
+
+env:
+  ASSEMBLY_RUN: ${{ inputs.assembly_run }}
+  RELEASE_TAG: ${{ inputs.tag }}
+  OPERATION: ${{ inputs.operation }}
+  SIGNATURE: ${{ inputs.signature }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  preflight:
+    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation == 'preflight'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the assembly payload and the signed ZIP without release writes
+        run: |
+          python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
+            --signature "$SIGNATURE"
+
+  release:
+    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && (inputs.operation == 'draft' || inputs.operation == 'publish')
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare or publish the signed ZIP release
+        run: |
+          python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
+            --operation "$OPERATION" --signature "$SIGNATURE"

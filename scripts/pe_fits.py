@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write development OTA FITs into the Crux U-Boot cache slots.
+"""Write the PE FITs into the Crux U-Boot cache slots.
 
 The cache layout is fixed by the deployed U-Boot environment:
 

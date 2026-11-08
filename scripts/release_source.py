@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that an unpublished fresh-ROM artifact is bound to successful source runs."""
+"""Verify that a fresh assembly artifact and its ZIP payload come from successful source runs."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,31 +12,37 @@ import urllib.request
 import zipfile
 
 import cloud_layers
-import dev_ota
 
 
 API = cloud_layers.API
+REPOSITORY = "coachpo/crux-pe13-distributed"
+PRODUCT = "aosp_crux-userdebug"
 COMPILE_WORKFLOW = ".github/workflows/build-standard.yml"
 ASSEMBLY_WORKFLOW = ".github/workflows/assemble-standard.yml"
-EXPECTED_FILES = frozenset(dev_ota.DELIVERY_NAMES)
-MAX_ASSET_SIZE = 2 * 1024 * 1024 * 1024
+TAG_RE = re.compile(r"crux-pe13-([0-9]{10})-v([1-9][0-9]*)")
+DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
+                  "rom-cepheus.itb", "recovery-cepheus.itb", "system.img.zst", "vendor.img")
+DELIVERY_ASSET_NAMES = frozenset(DELIVERY_NAMES) - {"delivery-record.json", "SHA256SUMS"}
+PAYLOAD_NAMES = ("update-binary", "crux-install.txt", "README.txt", "recovery-cepheus.itb",
+                 "rom-cepheus.itb", "system.raw.img.zst", "vendor.raw.img.zst", "payload.json")
+MAX_MEMBER_SIZE = 4 * 1024 * 1024 * 1024
 
 
-class SourceError(dev_ota.DevOtaError):
+class SourceError(RuntimeError):
     """Source-run provenance or artifact verification failed."""
 
 
 @dataclass(frozen=True)
-class VerifiedDelivery:
+class VerifiedBuild:
     tag: str
-    directory: Path
+    build: str
+    payload: Path
     assembly_commit: str
     assembly_run: str
     compile_run: str
     artifact_id: int
     artifact_digest: str
-    assets: dict[str, dict]
-    phone_manifest: str | None = None
+    manifest_sha256: str
 
 
 def _require(ok: bool, message: str) -> None:
@@ -48,6 +54,33 @@ def _is_sha(value) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def sha256(path) -> str:
+    result = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 22), b""):
+            result.update(chunk)
+    return result.hexdigest()
+
+
+def parse_tag(tag):
+    match = TAG_RE.fullmatch(tag or "")
+    return {"build": match.group(1), "version": int(match.group(2))} if match else None
+
+
+def parse_sums(text: str) -> dict[str, str]:
+    sums = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("  ", 1)
+        _require(len(parts) == 2 and re.fullmatch(r"[0-9a-f]{64}", parts[0]),
+                 "invalid SHA256SUMS line: " + line)
+        _require(parts[1] not in sums, "duplicate SHA256SUMS entry: " + parts[1])
+        sums[parts[1]] = parts[0]
+    _require(bool(sums), "empty SHA256SUMS")
+    return sums
+
+
 def _token() -> str:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     _require(bool(token), "GH_TOKEN or GITHUB_TOKEN is required for source verification")
@@ -55,7 +88,7 @@ def _token() -> str:
 
 
 def _json_api(path: str, token: str) -> dict:
-    url = API + "/repos/" + dev_ota.REPOSITORY + "/" + path.lstrip("/")
+    url = API + "/repos/" + REPOSITORY + "/" + path.lstrip("/")
     try:
         payload, _ = cloud_layers._request(url, token)
         value = json.loads(payload)
@@ -82,7 +115,7 @@ def _run(run_id: str, workflow_path: str, token: str) -> dict:
 
 def _inventory(run_id: str, token: str) -> dict:
     try:
-        return cloud_layers.artifact_inventory(run_id, dev_ota.REPOSITORY, token)
+        return cloud_layers.artifact_inventory(run_id, REPOSITORY, token)
     except Exception as error:
         raise SourceError("Actions artifact inventory failed: " + str(error)) from error
 
@@ -99,10 +132,10 @@ def _artifact(inventory: dict, name: str) -> dict:
 
 
 def _download_zip(artifact: dict, destination: Path, token: str) -> tuple[Path, str]:
-    url = f"{API}/repos/{dev_ota.REPOSITORY}/actions/artifacts/{artifact['id']}/zip"
+    url = f"{API}/repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"
     request = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json", "Authorization": "Bearer " + token,
-        "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "crux-dev-release-source",
+        "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "crux-release-source",
     })
     path = destination / (str(artifact["id"]) + ".zip")
     digest = hashlib.sha256()
@@ -125,8 +158,7 @@ def _download_zip(artifact: dict, destination: Path, token: str) -> tuple[Path, 
     return path, actual
 
 
-def _read_members(zip_path: Path, members: set[str], output: Path,
-                  max_size: int = MAX_ASSET_SIZE) -> dict[str, Path]:
+def _read_members(zip_path: Path, members: set[str], output: Path) -> dict[str, Path]:
     found = {}
     try:
         with zipfile.ZipFile(zip_path) as archive:
@@ -140,20 +172,20 @@ def _read_members(zip_path: Path, members: set[str], output: Path,
                 _require(name not in found, "duplicate Actions artifact member: " + name)
                 mode = info.external_attr >> 16
                 _require(not info.is_dir() and (mode & 0o170000) != 0o120000
-                         and info.file_size <= max_size,
+                         and info.file_size <= MAX_MEMBER_SIZE,
                          "invalid or oversized Actions artifact member: " + name)
                 target = output / Path(*posix.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                digest_size = 0
+                size = 0
                 with archive.open(info) as src, target.open("xb") as dst:
                     while True:
                         block = src.read(8 * 1024 * 1024)
                         if not block:
                             break
-                        digest_size += len(block)
-                        _require(digest_size <= max_size, "Actions artifact member exceeds 2 GiB: " + name)
+                        size += len(block)
+                        _require(size <= MAX_MEMBER_SIZE, "Actions artifact member is oversized: " + name)
                         dst.write(block)
-                _require(digest_size == info.file_size, "Actions artifact member size mismatch: " + name)
+                _require(size == info.file_size, "Actions artifact member size mismatch: " + name)
                 found[name] = target
     except (zipfile.BadZipFile, OSError) as error:
         raise SourceError("invalid Actions artifact ZIP: " + str(error)) from error
@@ -208,16 +240,16 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
     _require(waves == set(range(8)), "compile summary does not cover all eight waves")
 
 
-def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedDelivery:
-    """Download and verify the fresh assembly artifact and its same-run lineage.
+def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
+    """Download and verify the fresh assembly artifact, its same-run lineage and ZIP payload.
 
-    `work` must be a new existing empty directory. The returned directory holds only
-    the eight verified delivery files, under `delivery/`.
+    `work` must be a new existing empty directory. The returned payload directory holds
+    the verified crux_zip.py payload of this build, under `zip-payload/`.
     """
     work = Path(work)
     _require(work.is_dir() and not any(work.iterdir()), "source verification work directory must be empty")
-    parsed = dev_ota.parse_tag(tag)
-    _require(parsed is not None, "invalid development delivery tag")
+    parsed = parse_tag(tag)
+    _require(parsed is not None, "invalid release tag")
     token = _token()
     assembly = _run(assembly_run, ASSEMBLY_WORKFLOW, token)
     inventory = _inventory(assembly_run, token)
@@ -235,25 +267,29 @@ def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedDelivery:
 
     artifact = _artifact(inventory, artifact_name)
     zip_path, zip_digest = _download_zip(artifact, work, token)
-    names = {"delivery/" + name for name in EXPECTED_FILES}
-    _read_members(zip_path, names | {"assembly-receipt.json"}, work)
-    verified_assets = _verify_delivery(tag, parsed["build"], work, summary)
-    return VerifiedDelivery(tag, work / "delivery", assembly["head_sha"], assembly_run,
-                            compile_run, artifact["id"], zip_digest, verified_assets)
+    names = ({"delivery/" + name for name in DELIVERY_NAMES} | {"zip-payload/" + name for name in PAYLOAD_NAMES}
+             | {"assembly-receipt.json"})
+    _read_members(zip_path, names, work)
+    zip_path.unlink()
+    record = _verify_delivery(parsed["build"], work, summary)
+    manifest_sha = _verify_payload(parsed["build"], work / "zip-payload", record)
+    return VerifiedBuild(tag, parsed["build"], work / "zip-payload", assembly["head_sha"], assembly_run,
+                         compile_run, artifact["id"], zip_digest, manifest_sha)
 
 
-def _verify_delivery(tag: str, build: str, work: Path, summary: dict) -> dict[str, dict]:
+def _verify_delivery(build: str, work: Path, summary: dict) -> dict:
     delivery_dir = work / "delivery"
-    record_path = delivery_dir / "delivery-record.json"
-    record = json.loads(record_path.read_text())
-    sums = dev_ota.parse_sums((delivery_dir / "SHA256SUMS").read_text())
+    record = json.loads((delivery_dir / "delivery-record.json").read_text())
+    sums = parse_sums((delivery_dir / "SHA256SUMS").read_text())
     receipt = json.loads((work / "assembly-receipt.json").read_text())
     _require(isinstance(receipt, dict) and isinstance(record, dict),
              "assembly receipt or delivery record is malformed")
     _require(receipt.get("schema_version") == 1 and receipt.get("status") == "success"
-             and receipt.get("build_number") == build
-             and receipt.get("product") == dev_ota.PRODUCT,
+             and receipt.get("build_number") == build and receipt.get("product") == PRODUCT,
              "assembly receipt does not match successful requested build")
+    _require(record.get("schema_version") == 1 and record.get("status") == "success"
+             and record.get("build_number") == build and record.get("product") == PRODUCT,
+             "delivery record does not match successful requested build")
     source_selection = record.get("source_selection")
     fresh = summary["fresh_build"]
     _require(isinstance(source_selection, dict)
@@ -265,39 +301,57 @@ def _verify_delivery(tag: str, build: str, work: Path, summary: dict) -> dict[st
              "delivery source selection differs from the successful compile summary")
     source_env = source_selection.get("env", {})
     _require(isinstance(source_env, dict) and source_env.get("USE_CCACHE") == "0"
-             and source_env.get("CCACHE_DISABLE") == "1",
-             "delivery source selection does not confirm ccache is disabled")
+             and source_env.get("CCACHE_DISABLE") == "1"
+             and str(source_env.get("BUILD_FINGERPRINT", "")).endswith(f"/{build}:userdebug/test-keys"),
+             "delivery source selection is not a ccache-free Dev test-keys build of this number")
     assets = record.get("delivery")
-    _require(isinstance(assets, dict) and set(assets) == dev_ota.DELIVERY_ASSET_NAMES,
+    _require(isinstance(assets, dict) and set(assets) == DELIVERY_ASSET_NAMES,
              "delivery record has an incomplete asset set")
-    _require(all(isinstance(value, dict) and type(value.get("size")) is int
-                 and value["size"] > 0 and _is_sha(value.get("sha256"))
-                 for value in assets.values()), "delivery record has invalid asset metadata")
+    _require(set(sums) == DELIVERY_ASSET_NAMES | {"delivery-record.json"},
+             "SHA256SUMS and delivery assets differ")
+    _require(sums["delivery-record.json"] == sha256(delivery_dir / "delivery-record.json"),
+             "delivery record digest differs from SHA256SUMS")
     receipt_assets = receipt.get("assets")
-    _require(isinstance(receipt_assets, dict), "assembly receipt has no asset inventory")
-    _require(set(receipt_assets) == set(assets), "assembly receipt asset inventory mismatch")
+    _require(isinstance(receipt_assets, dict) and set(receipt_assets) == set(assets),
+             "assembly receipt asset inventory mismatch")
     record_producers = record.get("producers")
-    _require(isinstance(record_producers, list) and len(record_producers) == 7,
+    _require(isinstance(record_producers, list) and len(record_producers) == 7
+             and all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in record_producers),
              "delivery record does not bind exactly seven assembly producers")
-    _require(all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in record_producers),
-             "delivery record has malformed producer bindings")
     selected = {producer["id"]: producer for producer in summary["producers"]}
     _require(len({item.get("id") for item in record_producers}) == 7
              and all(item == selected.get(item.get("id")) for item in record_producers),
              "delivery producer bindings differ from successful compile summary")
-    verified = {}
-    for name in sorted(EXPECTED_FILES):
+    for name in sorted(DELIVERY_ASSET_NAMES):
         path = delivery_dir / name
-        size = path.stat().st_size
-        _require(0 < size < MAX_ASSET_SIZE, "invalid release asset size: " + name)
-        digest = dev_ota.sha256(path)
-        if name != "SHA256SUMS":
-            _require(sums.get(name) == digest, "asset digest differs from SHA256SUMS: " + name)
-        if name in assets:
-            _require(size == assets[name]["size"], "delivery asset size mismatch: " + name)
-            _require(receipt_assets[name] == digest, "assembly receipt digest mismatch: " + name)
-        verified[name] = {"size": size, "digest": "sha256:" + digest}
-    release = {"tag": tag, "build": build,
-               "assets": [{"name": name, **meta} for name, meta in verified.items()]}
-    dev_ota.validate_record(release, record, sums)
-    return verified
+        digest = sha256(path)
+        _require(sums.get(name) == digest, "asset digest differs from SHA256SUMS: " + name)
+        _require(path.stat().st_size == assets[name].get("size") and assets[name].get("sha256") == digest
+                 and receipt_assets[name] == digest, "delivery asset differs from its record: " + name)
+    fit = record.get("fit_validation", {})
+    _require(fit.get("release_ready") is False and fit.get("development_adb") is True,
+             "the FITs are not the development ADB profile")
+    images = record.get("gates", {}).get("images", {})
+    _require(all(images.get(role, {}).get("failures") == [] for role in ("boot", "recovery")),
+             "an image gate failed")
+    return record
+
+
+def _verify_payload(build: str, payload: Path, record: dict) -> str:
+    text = (payload / "crux-install.txt").read_bytes()
+    fields = dict(line.split("=", 1) for line in text.decode().splitlines() if "=" in line)
+    _require(fields.get("schema") == "crux-install/1" and fields.get("kind") == "zip"
+             and fields.get("product") == PRODUCT and fields.get("target_build") == build
+             and fields.get("serialno") == "any" and fields.get("data_policy") == "discard",
+             "the ZIP payload manifest is not this build's identity-free clean-install package")
+    delivery = record["delivery"]
+    for role, name in (("recovery", "recovery-cepheus.itb"), ("rom", "rom-cepheus.itb")):
+        _require(fields.get(f"fit.{role}.entry") == name
+                 and fields.get(f"fit.{role}.sha256") == delivery[name]["sha256"] == sha256(payload / name),
+                 f"the ZIP payload {role} FIT is not the verified assembly FIT")
+    record_path = payload / "payload.json"
+    payload_record = json.loads(record_path.read_text())
+    _require(payload_record.get("manifest_sha256") == hashlib.sha256(text).hexdigest()
+             and payload_record.get("installer_sha256") == sha256(payload / "update-binary"),
+             "payload.json does not describe this payload")
+    return hashlib.sha256(text).hexdigest()

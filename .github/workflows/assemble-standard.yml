@@ -36,7 +36,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/result"
           sudo apt-get update
           sudo apt-get install -y zstd u-boot-tools device-tree-compiler e2fsprogs \
-            android-sdk-libsparse-utils cpio python-is-python3
+            android-sdk-libsparse-utils cpio python-is-python3 gcc-aarch64-linux-gnu
           sudo mkdir -p /home/qingli
           sudo chown "$(id -u):$(id -g)" /home/qingli
           uname -a > "$RUNNER_TEMP/result/runner.txt"
@@ -93,6 +93,27 @@ jobs:
               raise SystemExit(f"system.img.zst: expected uncompressed identity {expected}, got {actual}")
           print("system.img.zst: verified uncompressed identity " + json.dumps(actual, sort_keys=True))
           PY
+      - name: Build the installer and the unsigned ZIP payload
+        run: |
+          set -euo pipefail
+          make -C installer test
+          make -C installer CROSS=aarch64-linux-gnu-
+          delivery="$RUNNER_TEMP/result/delivery"
+          work="$RUNNER_TEMP/zip-work"
+          mkdir -p "$work"
+          zstd -dc -- "$delivery/system.img.zst" > "$work/system.img"
+          simg2img "$work/system.img" "$work/system.raw.img"
+          rm -f -- "$work/system.img"
+          simg2img "$delivery/vendor.img" "$work/vendor.raw.img"
+          build=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["build_number"])' \
+            "$delivery/delivery-record.json")
+          profile=$(python3 -c 'import json; print(json.load(open("config/install-twrp.json"))["profile_id"])')
+          python3 scripts/crux_zip.py prepare --system "$work/system.raw.img" --vendor "$work/vendor.raw.img" \
+            --recovery-fit "$delivery/recovery-cepheus.itb" --rom-fit "$delivery/rom-cepheus.itb" \
+            --installer installer/build/crux-installer --build-number "$build" --any-serial \
+            --twrp-profile "$profile" --out "$RUNNER_TEMP/result/zip-payload" \
+            2>&1 | tee "$RUNNER_TEMP/result/zip-payload.log"
+          rm -f -- "$work"/*.raw.img
       - name: Retain unpublished ROM images and validation evidence
         if: always()
         uses: ./.github/actions/retain-artifact
