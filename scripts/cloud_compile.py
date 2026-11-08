@@ -30,7 +30,7 @@ CONTEXT_IDENTITY_FIELDS = (
 FRESH_BUILD_FIELDS = ("execution_id", "pack_run", "shard_run", "plan_sha256",
                       "source_manifest_sha256")
 RUN_ID_FIELDS = ("execution_id", "pack_run", "shard_run", "graph_run", "index_run", "source_run")
-SHORT_KERNEL_SOURCE_REVISION = "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e"
+SHORT_KERNEL_SOURCE_REVISION = "086b838e3a50f76e3e25b67b41862a401d3fa7a5"
 SHORT_KERNEL_SOURCE_PROJECT = "kernel/xiaomi/crux-pe-cepheus"
 SHORT_KERNEL_SOURCE_ALIAS = Path("/k")
 SHORT_KERNEL_SOURCE_POLICY = {

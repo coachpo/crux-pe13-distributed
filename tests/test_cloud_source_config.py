@@ -25,6 +25,17 @@ class SourceConfigTest(unittest.TestCase):
                     data = (CONFIG.parent / patch["path"]).read_bytes()
                     self.assertEqual(hashlib.sha256(data).hexdigest(), patch["sha256"])
 
+    def test_kernel_short_source_policy_follows_the_kernel_pin(self):
+        """The compile refuses short-source mode unless both policy copies name the pinned kernel."""
+        import sys
+        sys.path.insert(0, str(CONFIG.parent / "scripts"))
+        import cloud_compile
+        pins = {project["path"]: project["revision"]
+                for project in json.loads((CONFIG / "cloud-source-manifest.json").read_text())["projects"]}
+        runtime = json.loads((CONFIG / "standard-build-runtime.json").read_text())["kernel_source_alias"]
+        self.assertEqual(runtime, cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
+        self.assertEqual(pins[cloud_compile.SHORT_KERNEL_SOURCE_PROJECT], cloud_compile.SHORT_KERNEL_SOURCE_REVISION)
+
 
 if __name__ == "__main__":
     unittest.main()

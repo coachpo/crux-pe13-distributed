@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kernel_source_alias": {
     "project": "kernel/xiaomi/crux-pe-cepheus",
-    "revision": "5e4950d2619f2e2119765b6b48c5b3be2efcaa9e",
+    "revision": "086b838e3a50f76e3e25b67b41862a401d3fa7a5",
     "alias": "/k",
     "validated_probe_run": "41801581346"
   },
