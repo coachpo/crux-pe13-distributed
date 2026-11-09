@@ -88,8 +88,39 @@ class PinSourcesTests(unittest.TestCase):
         self.assertEqual((self.marked, projects[nightly.DEVICE]["revision"]), (revision, revision))
         self.assertEqual(overrides[nightly.DEVICE]["patches"], projects[nightly.DEVICE]["patches"])
 
+    def test_all_maintained_forks_keep_manifest_and_overrides_consistent(self):
+        changes = {path: {"revision": f"{number:040x}"}
+                   for number, path in enumerate(nightly.TRACKED, start=1)}
+        nightly.pin_sources(self.root, changes, "2026111052", marker=self.fake_marker)
+        projects, overrides = self.config()
+        for path, fields in changes.items():
+            self.assertEqual(projects[path]["revision"], fields["revision"])
+        for path, fields in overrides.items():
+            for key, value in fields.items():
+                self.assertEqual(projects[path][key], value, (path, key))
+
 
 class ChangeDetectionTests(unittest.TestCase):
+    def test_fork_uses_the_explicit_android13_branch_not_default_branch(self):
+        project = {"path": "system/core", "url": "https://github.com/coachpo/crux-pe13-system-core"}
+        with mock.patch.object(nightly, "api", return_value={"sha": "c" * 40}) as api:
+            self.assertEqual(nightly.fork_head(project), "c" * 40)
+        api.assert_called_once_with("repos/coachpo/crux-pe13-system-core/commits/crux-pe13-baseline")
+
+    def test_fit_recipe_change_starts_a_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "--quiet")
+            recipe = root / "references/pe13-boot-contracts/package-pe13.py"
+            recipe.parent.mkdir(parents=True)
+            recipe.write_text("before\n")
+            git(root, "add", "-A")
+            git(root, "commit", "--quiet", "-m", "base")
+            baseline = git(root, "rev-parse", "HEAD")
+            recipe.write_text("after\n")
+            git(root, "commit", "--quiet", "-am", "recipe")
+            self.assertTrue(nightly.build_paths_changed(baseline, root))
+
     def test_only_build_paths_since_the_last_full_freeze_start_a_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -142,7 +173,7 @@ class ChangeDetectionTests(unittest.TestCase):
 
 
 class NightlyRunTests(unittest.TestCase):
-    def run_night(self, *, moved=None, paths_changed=False, active=None):
+    def run_night(self, *, moved=None, paths_changed=False, active=None, force=False):
         manifest = json.loads((ROOT / "config/cloud-source-manifest.json").read_text())
         pins = {project["path"]: project["revision"] for project in manifest["projects"]}
         moved = moved or {}
@@ -157,7 +188,7 @@ class NightlyRunTests(unittest.TestCase):
                 mock.patch.object(nightly, "pin_sources") as pin, \
                 mock.patch.object(nightly, "commit_and_push") as push, \
                 mock.patch.object(nightly.subprocess, "run") as run:
-            result = nightly.run(REPOSITORY, "token", "20261110")
+            result = nightly.run(REPOSITORY, "token", "20261110", force=force)
         return result, changed, pin, push, run
 
     def test_quiet_night_neither_commits_nor_dispatches(self):
@@ -167,6 +198,28 @@ class NightlyRunTests(unittest.TestCase):
         pin.assert_not_called()
         push.assert_not_called()
         run.assert_not_called()
+
+    def test_manual_force_builds_without_changes(self):
+        result, changed, pin, push, run = self.run_night(force=True)
+        self.assertEqual(result["result"], "started")
+        changed.assert_not_called()
+        self.assertEqual(pin.call_args.args[1:], ({}, "2026111051"))
+        push.assert_called_once()
+        self.assertIn("build_number=2026111051", run.call_args.args[0])
+
+    def test_manual_force_does_not_duplicate_an_active_chain(self):
+        result, _, pin, push, run = self.run_night(force=True, active="compile running")
+        self.assertEqual(result["result"], "skipped")
+        pin.assert_not_called()
+        push.assert_not_called()
+        run.assert_not_called()
+
+    def test_each_maintained_fork_can_trigger_the_chain(self):
+        for path in nightly.TRACKED:
+            with self.subTest(path=path):
+                result, _, pin, _, _ = self.run_night(moved={path: "9" * 40})
+                self.assertEqual(result["result"], "started")
+                self.assertEqual(pin.call_args.args[1], {path: {"revision": "9" * 40}})
 
     def test_running_chain_skips_the_night(self):
         result, _, pin, _, run = self.run_night(moved={"art": "9" * 40}, active="release.yml run 1 is queued")

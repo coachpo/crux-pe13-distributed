@@ -53,6 +53,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Bind assembly code before accessing the signing key
+        run: python3 scripts/pipeline_code.py --run "$ASSEMBLY_RUN"
       - name: Sign the assembly's install manifest
         id: sign
         env:
@@ -70,6 +72,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Bind assembly to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$ASSEMBLY_RUN"
       - name: Verify the assembly payload and the signed ZIP without release writes
         run: |
           python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
@@ -89,6 +93,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Bind assembly to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$ASSEMBLY_RUN"
       - name: Prepare, publish or release the signed ZIP
         run: |
           python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \

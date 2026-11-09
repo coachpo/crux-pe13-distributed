@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Pin changed sources for a new CI build and start its cloud build chain.
 
-nightly.yml runs this once a night. It does nothing while a chain run is queued or
-running, or when no tracked fork head or snapshot Release moved and main changed no
+nightly.yml runs this once a night; manual dispatch uses --force. It does nothing
+while a chain run is queued or running, or (unless forced) when no tracked fork
+maintenance branch or snapshot Release moved and main changed no
 build path since the last full freeze. Otherwise it takes the next CI build number
 of the Helsinki day (YYYYMMDD50 to YYYYMMDD99; local B builds use 01 to 49), pins
 the moved sources, regenerates the device marker patch and its patched tree on the
@@ -29,14 +30,28 @@ import cloud_source
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = "device/xiaomi/crux"
-# Default-branch heads of these forks are pinned automatically (D2).
-TRACKED = (DEVICE, "kernel/xiaomi/crux-pe-cepheus", "bootable/recovery", "frameworks/base", "art",
-           "hardware/qcom-caf/sm8150/display")
+# Explicit maintenance branches; changing a repository's default branch must not
+# silently move this Android 13 build to a different platform generation.
+TRACKED = {
+    DEVICE: "thirteen-plus",
+    "vendor/xiaomi/crux": "thirteen-plus",
+    "kernel/xiaomi/crux-pe-cepheus": "thirteen",
+    "bootable/recovery": "crux-pe13-functional",
+    "frameworks/base": "crux-pe13-baseline",
+    "art": "crux-pe13-baseline",
+    "hardware/qcom-caf/sm8150/display": "crux-pe13-baseline",
+    "system/core": "crux-pe13-baseline",
+    "packages/modules/adb": "crux-pe13-baseline",
+    "vendor/aosp": "crux-pe13-baseline",
+    "build/make": "crux-pe13-baseline",
+    "prebuilts/build-tools": "crux-pe13-baseline",
+}
 CHAIN = tuple(".github/workflows/" + name for name in (
     "freeze-standard.yml", "prepare-standard.yml", "build-standard.yml", "assemble-standard.yml", "release.yml"))
 ACTIVE = ("queued", "in_progress", "waiting", "requested", "pending")
 # Changes elsewhere (docs, tests, guides) do not start a build.
-BUILD_PATHS = ("scripts", "config", "installer", "keys", "manifests", ".github")
+BUILD_PATHS = ("scripts", "config", "installer", "keys", "manifests", ".github",
+               "references/pe13-boot-contracts")
 CI_NUMBERS = range(50, 100)
 BUILD_RE = re.compile(r"(?<![0-9])(20[0-9]{8})(?![0-9])")
 FREEZE_TITLE = re.compile(r"PE13 standard freeze full ([0-9]{10})")
@@ -72,7 +87,7 @@ def chain_in_flight(repository):
 
 def fork_head(project):
     repository = project["url"].removeprefix("https://github.com/")
-    branch = api(f"repos/{repository}")["default_branch"]
+    branch = TRACKED[project["path"]]
     return api(f"repos/{repository}/commits/{quote(branch, safe='')}")["sha"]
 
 
@@ -194,7 +209,7 @@ def commit_and_push(root, build, notes):
     subprocess.run(["git", "push", "--quiet", "origin", "HEAD:main"], cwd=root, check=True)
 
 
-def run(repository, snapshot_token, today, dispatch=True, root=ROOT):
+def run(repository, snapshot_token, today, dispatch=True, root=ROOT, force=False):
     active = chain_in_flight(repository)
     if active:
         return {"result": "skipped", "reason": active}
@@ -212,11 +227,12 @@ def run(repository, snapshot_token, today, dispatch=True, root=ROOT):
             changes[path] = fields
             notes.append(f"- {path}: snapshot {projects[path]['revision'][:12]} -> {fields['revision'][:12]}")
     freezes = full_freezes(repository)
-    if not changes and not build_paths_changed(freezes[0]["head_sha"] if freezes else None, root):
+    if not force and not changes and not build_paths_changed(freezes[0]["head_sha"] if freezes else None, root):
         return {"result": "no-change"}
     build = next_build(today, used_builds(repository, freezes, root))
     pin_sources(root, changes, build)
-    notes = notes or ["- No tracked source moved; main changed a build path since the last full freeze."]
+    notes = notes or ["- Manual full build requested." if force else
+                      "- No tracked source moved; main changed a build path since the last full freeze."]
     notes.append(f"- {DEVICE}: delivery marker crux-pe13-dev-{build}.")
     reuse = next((str(run["id"]) for run in freezes if run.get("conclusion") == "success"), "")
     if dispatch:
@@ -231,13 +247,15 @@ def run(repository, snapshot_token, today, dispatch=True, root=ROOT):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--force", action="store_true",
+                        help="build even without source changes; an active chain still prevents duplicates")
     parser.add_argument("--no-dispatch", action="store_true",
                         help="pin the sources in this checkout without committing, pushing or dispatching")
     args = parser.parse_args(argv)
     today = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%Y%m%d")
     try:
         result = run(os.environ["GITHUB_REPOSITORY"], os.environ.get(cloud_release_snapshot.TOKEN_ENV),
-                     today, dispatch=not args.no_dispatch)
+                     today, dispatch=not args.no_dispatch, force=args.force)
     except (KeyError, NightlyError, cloud_source.SourceError, cloud_release_snapshot.SnapshotError,
             OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"nightly: {error}\n")

@@ -9,10 +9,11 @@ publish here.
 ## Standard-runner build chain
 
 `nightly.yml` checks the sources every night at 23:37 UTC (01:37 in Helsinki in
-winter). When the default-branch head of a tracked fork (device, kernel,
-recovery, `frameworks/base`, `art`, the CAF display HAL) or the commit recorded
+winter). When the configured Android 13 maintenance branch of a tracked fork
+or the commit recorded
 by a snapshot repository moved, or `main` changed `scripts/`, `config/`,
-`installer/`, `keys/`, `manifests/` or `.github/` since the last full freeze, it
+`installer/`, `keys/`, `manifests/`, `.github/` or the production
+`references/pe13-boot-contracts/` since the last full freeze, it
 takes the next CI build number of the Helsinki day (`YYYYMMDD50` to
 `YYYYMMDD99`; local builds use `01` to `49`), pins the sources, regenerates the
 device marker patch and its patched tree, commits as `github-actions[bot]` and
@@ -24,6 +25,15 @@ chain. The last manually released build is `2026110804`
 from [assembly 42553763990](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42553763990)).
 The entire path uses public-repository standard `ubuntu-22.04` runners.
 
+Manual dispatch of `nightly.yml` forces a complete build even with no changes,
+but does not start a duplicate while another chain is active. It allocates the
+build number and marker just like the scheduled entry. `scripts/nightly.py`'s
+`TRACKED` table names the explicit branches of all twelve maintained ROM forks:
+device, vendor blobs, kernel, recovery, frameworks, ART, display, system/core,
+ADB, vendor/aosp, build/make and build-tools. Other upstream projects stay pinned;
+the two private snapshot inputs keep their separate identity checks. A repository
+default-branch change never selects another Android version implicitly.
+
 | Stage | Maintained inputs and handoff |
 | --- | --- |
 | [Prepare](docs/standard-runner-freeze.md) | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a pack registry and one cold capsule per shard. |
@@ -33,7 +43,11 @@ The entire path uses public-repository standard `ubuntu-22.04` runners.
 
 A failed stage, dispatch or nightly check opens the issue `PE13 cloud build
 <build> failed`, assigned to the owner, or comments on it if it is open. Re-run
-the failed jobs, or dispatch that stage again from the fixed commit.
+the failed jobs on the same commit. Every consuming stage checks that its
+upstream runs used its execution commit before consuming inputs or signing.
+If pipeline code changes, start a new full freeze (manual nightly is the unified
+entry); do not continue new code against older prepared stage artifacts.
+Verified source-layer reuse remains governed by its existing byte contracts.
 
 [`docs/evidence/`](docs/evidence/) keeps the admission records of the manually
 admitted builds as history; bootstrap no longer reads them. See the

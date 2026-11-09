@@ -38,7 +38,10 @@ jobs:
         id: check
         env:
           CRUX_SOURCE_SNAPSHOTS_TOKEN: ${{ secrets.CRUX_SOURCE_SNAPSHOTS_TOKEN }}
-        run: python3 scripts/nightly.py --github-output "$GITHUB_OUTPUT"
+        run: |
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then args+=(--force); fi
+          python3 scripts/nightly.py "${args[@]}" --github-output "$GITHUB_OUTPUT"
 
   report:
     needs: check

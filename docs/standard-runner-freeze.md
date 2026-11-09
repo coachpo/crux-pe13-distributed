@@ -143,18 +143,38 @@ changes.
 Maintained Crux forks are selected in `config/cloud-source-overrides.json`. From build
 `2026110804` the device tree is fetched at fork commit `978a10a` (the development
 product only), `bootable/recovery` at `44443e3`, the kernel at `086b838`, and
-`packages/apps/Updates`, which is not built, at the upstream commit `50c6109`.
+`packages/apps/Updates`, which is not built, at upstream commit `50c6109`.
+The Updates transport now points directly to
+`PixelExperience/packages_apps_Updates` at the same full commit
+`50c6109df4a3af5ecba94a1382a2d5d2460422fa` (Git tree
+`d19e8d96acbf4d332acfbf9052e1f2c593779771`). The Updates project remains in
+the source graph; only its transport changes from the retired Crux fork to
+the official repository at the identical commit and tree. Rebuilding a retained
+build whose source lock names the old fork requires this explicit URL migration;
+the loader does not silently redirect historical source locks.
 Each build adds its own image marker,
 `config/source-patches/device-crux-dev-marker-<build>.patch`, and the patched
 device tree is checked against the pinned `expected_tree`. `nightly.yml`
-(`scripts/nightly.py`) moves these pins to the tracked forks' default-branch
-heads and to the commits the snapshot repositories record, and writes each CI
+(`scripts/nightly.py`) moves these pins to the explicit Android 13 maintenance
+branches in its `TRACKED` table and to the commits the snapshot repositories
+record, and writes each CI
 build's marker patch and `expected_tree` the same way the freeze checks them; a
 manual pin change must keep `tests.test_cloud_source_config` passing. A local
 build of the same commits is the same code; `scripts/check_local_source.py`
 checks a local tree against these pins. The pinned snapshot omits Git
 object databases, old build outputs and local diagnostics; repo copy/link
 entries are explicit manifest inputs.
+
+Manual dispatch of `nightly.yml` forces this full chain even without a source
+change, allocating its build number and marker automatically. An active chain
+still prevents a duplicate. Scheduled checks retain change-only behavior; a
+failed chain is reported and is not automatically retried without a new change.
+
+Consuming stages require the upstream execution commit to match their own,
+including partial preparation and offline-signature release operations. Retry
+failed jobs on the same revision; after a pipeline code fix start a new full
+freeze instead of mixing old stage artifacts with new code. Reusable source
+layers still follow their existing content/contract verification.
 
 ## 2. Index, shard and pack
 

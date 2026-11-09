@@ -53,6 +53,8 @@ jobs:
       BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind the graph to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$GRAPH_RUN"
       - name: Install index transport tools
         run: |
           mkdir -p "$RUNNER_TEMP/index-evidence"
@@ -136,6 +138,8 @@ jobs:
       BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind the graph and index to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$GRAPH_RUN" --run "$INDEX_RUN"
       - name: Install source actor and transport tools
         run: |
           mkdir -p "$RUNNER_TEMP/shard-evidence"
@@ -235,6 +239,10 @@ jobs:
       source_manifest_sha256: ${{ steps.plan.outputs.source_manifest_sha256 }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind selected preparation inputs to this pipeline revision
+        run: |
+          python3 scripts/pipeline_code.py --run "$GRAPH_RUN" \
+            --run "$INPUT_INDEX_RUN" --run "$INPUT_SHARD_RUN"
       - name: Install shard inventory decompressor
         run: |
           sudo apt-get update
@@ -394,6 +402,8 @@ jobs:
       SHARD_ID: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind the capsule inputs to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$GRAPH_RUN" --run "$INDEX_RUN" --run "$SHARD_RUN"
       - name: Install capsule verification and source mount tools
         run: |
           mkdir -p "$RUNNER_TEMP/capsule-evidence"
@@ -519,6 +529,8 @@ jobs:
       EXPECTED_SOURCE_MANIFEST_SHA256: ${{ needs.pack-plan.outputs.source_manifest_sha256 }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind the aggregate inputs to this pipeline revision
+        run: python3 scripts/pipeline_code.py --run "$GRAPH_RUN" --run "$INDEX_RUN" --run "$SHARD_RUN"
       - name: Download only tiny matrix pack receipts
         run: |
           set -euo pipefail

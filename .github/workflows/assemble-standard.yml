@@ -21,6 +21,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Bind compilation to this pipeline revision
+        env:
+          BUILD_RUN: ${{ inputs.build_run }}
+        run: python3 scripts/pipeline_code.py --run "$BUILD_RUN"
       - name: Install image validation tools
         run: |
           set -euo pipefail
