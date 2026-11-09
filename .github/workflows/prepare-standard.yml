@@ -136,15 +136,6 @@ jobs:
       BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Free disk space
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'true'
       - name: Install source actor and transport tools
         run: |
           mkdir -p "$RUNNER_TEMP/shard-evidence"
@@ -403,15 +394,6 @@ jobs:
       SHARD_ID: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Free disk space
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'true'
       - name: Install capsule verification and source mount tools
         run: |
           mkdir -p "$RUNNER_TEMP/capsule-evidence"
@@ -628,3 +610,48 @@ jobs:
           compression-level: 0
           retention-days: 14
           if-no-files-found: warn
+
+  next:
+    needs: [pack-plan, pack-summary]
+    if: ${{ !cancelled() && (inputs.stage == 'full' || inputs.stage == 'pack') && needs.pack-summary.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      SHARD_RUN: ${{ needs.pack-plan.outputs.shard_run }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile these capsules
+        id: dispatch
+        continue-on-error: true
+        run: |
+          gh workflow run build-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f pack_run="$GITHUB_RUN_ID" -f shard_run="$SHARD_RUN" -f build_number="$BUILD_NUMBER"
+      - name: Report the failed dispatch
+        if: steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage prepare --detail 'The compilation could not be dispatched.'
+
+  report:
+    needs: [index, shard, pack-plan, pack, pack-summary, next]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed preparation
+        run: python3 scripts/pipeline_report.py --stage prepare

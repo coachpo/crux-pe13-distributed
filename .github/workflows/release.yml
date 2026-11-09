@@ -1,5 +1,5 @@
 name: Publish a verified PE13 flashable ZIP
-run-name: ZIP release ${{ inputs.operation }} ${{ inputs.tag }} from assembly ${{ inputs.assembly_run }}
+run-name: ZIP ${{ inputs.operation }} ${{ inputs.tag || '(next version)' }} from assembly ${{ inputs.assembly_run }}
 
 on:
   workflow_dispatch:
@@ -9,18 +9,20 @@ on:
         required: true
         type: string
       tag:
-        description: "Release version: crux-pe13-<build>-v<n>"
-        required: true
+        description: "Release version crux-pe13-<build>-v<n>; empty takes this assembly's release or the next free version"
+        required: false
+        default: ''
         type: string
       operation:
-        description: Preflight (read only), prepare a draft, or publish a complete draft
+        description: Preflight (read only), prepare a draft, publish a complete draft, or release (draft, then publish)
         required: true
         default: preflight
         type: choice
-        options: [preflight, draft, publish]
+        options: [preflight, draft, publish, release]
       signature:
-        description: Offline P-256 signature of the payload's crux-install.txt (128 hex digits)
-        required: true
+        description: Offline P-256 signature of the payload's crux-install.txt (128 hex digits); empty signs it in the install-signing environment
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -35,14 +37,35 @@ env:
   ASSEMBLY_RUN: ${{ inputs.assembly_run }}
   RELEASE_TAG: ${{ inputs.tag }}
   OPERATION: ${{ inputs.operation }}
-  SIGNATURE: ${{ inputs.signature }}
   GH_TOKEN: ${{ github.token }}
 
 jobs:
+  # The only job that sees the install key: no third-party action, no upload,
+  # and nothing but the 128-hex-digit signature leaves it.
+  sign:
+    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.signature == ''
+    environment: install-signing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      signature: ${{ steps.sign.outputs.signature }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sign the assembly's install manifest
+        id: sign
+        env:
+          CRUX_INSTALL_SIGNING_KEY: ${{ secrets.CRUX_INSTALL_SIGNING_KEY }}
+        run: python3 scripts/release_sign.py --assembly-run "$ASSEMBLY_RUN" --github-output "$GITHUB_OUTPUT"
+
   preflight:
-    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation == 'preflight'
+    needs: sign
+    if: ${{ !cancelled() && github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation == 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      SIGNATURE: ${{ inputs.signature || needs.sign.outputs.signature }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -53,17 +76,36 @@ jobs:
             --signature "$SIGNATURE"
 
   release:
-    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && (inputs.operation == 'draft' || inputs.operation == 'publish')
+    needs: sign
+    if: ${{ !cancelled() && github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation != 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
     permissions:
       actions: read
       contents: write
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      SIGNATURE: ${{ inputs.signature || needs.sign.outputs.signature }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Prepare or publish the signed ZIP release
+      - name: Prepare, publish or release the signed ZIP
         run: |
           python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
             --operation "$OPERATION" --signature "$SIGNATURE"
+
+  report:
+    needs: [sign, preflight, release]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed release
+        run: python3 scripts/pipeline_report.py --stage release

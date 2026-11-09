@@ -178,6 +178,33 @@ class ReleaseZipTests(unittest.TestCase):
         self.assertEqual(self.deliver("publish"), {"state": "published", "release_id": 123, "changed": False})
         self.assertEqual(self.api.writes, [])
 
+    def test_tag_is_this_assemblys_release_or_the_next_free_version(self):
+        build, assembly = self.source.build, self.source.assembly_run
+        self.assertEqual(release_zip.next_tag(self.api, build, assembly), "crux-pe13-2026110303-v1")
+        self.deliver("draft")
+        self.assertEqual(release_zip.next_tag(self.api, build, assembly), self.source.tag)
+        self.assertEqual(release_zip.next_tag(self.api, build, "42059779501"), "crux-pe13-2026110303-v2")
+        self.api.refs = [{"ref": "refs/tags/crux-pe13-2026110303-v3", "object": {"type": "commit"}}]
+        self.assertEqual(release_zip.next_tag(self.api, build, "42059779501"), "crux-pe13-2026110303-v4")
+        self.assertEqual(release_zip.next_tag(self.api, "2026110304", assembly), "crux-pe13-2026110304-v1")
+
+    def test_release_operation_drafts_and_publishes_the_selected_tag(self):
+        argv = ["release_zip.py", "--operation", "release", "--assembly-run", self.source.assembly_run,
+                "--signature", "a" * 128]
+        environment = {"GITHUB_WORKFLOW_REF": f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+                       "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
+        with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
+                mock.patch.object(release_zip, "Releases", return_value=self.api), \
+                mock.patch.object(release_zip, "assembly_build", return_value=self.source.build), \
+                mock.patch.object(release_zip, "verify_source", return_value=self.source) as verify, \
+                mock.patch.object(release_zip, "stage_assets", return_value=(self.staged, self.assets)), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release_zip.main(), 0)
+        self.assertEqual(verify.call_args.args[1], "crux-pe13-2026110303-v1")
+        self.assertEqual([write[0] for write in self.api.writes],
+                         ["create"] + ["upload"] * len(self.assets) + ["publish"])
+        self.assertFalse(self.api.release["draft"])
+
     def test_unpinned_install_twrp_stops_before_any_upload(self):
         with TemporaryDirectory() as directory, \
                 self.assertRaisesRegex(release_zip.ReleaseError, "has no pinned asset yet"):

@@ -101,13 +101,18 @@ class ReleaseSourceTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def invoke(self, *, mutate_summary=None, mutate_assembly=None, bad_zip_digest=False, tag=TAG, **kwargs):
+    def invoke(self, *, mutate_summary=None, mutate_assembly=None, bad_zip_digest=False, tag=TAG,
+               manifest_build=BUILD, sign=False, **kwargs):
         summary = valid_summary()
         if mutate_summary:
             mutate_summary(summary)
         summary_zip = BytesIO()
         with zipfile.ZipFile(summary_zip, "w") as archive:
             archive.writestr("build-summary.json", json.dumps(summary))
+        manifest_zip = BytesIO()
+        with zipfile.ZipFile(manifest_zip, "w") as archive:
+            archive.writestr("crux-install.txt", f"schema=crux-install/1\nkind=zip\nproduct={source.PRODUCT}\n"
+                                                 f"serialno=any\ndata_policy=discard\ntarget_build={manifest_build}\n")
         assembly_zip = make_artifact(**kwargs)
         runs = {
             ASSEMBLY_RUN: {"id": int(ASSEMBLY_RUN), "conclusion": "success", "status": "completed",
@@ -124,15 +129,30 @@ class ReleaseSourceTests(unittest.TestCase):
             return {name: {"id": ident, "name": name, "digest": "sha256:" + ("f" * 64 if wrong else sha(data)),
                            "size_in_bytes": len(data), "expired": False}}
 
-        inventory = {ASSEMBLY_RUN: info(77, f"cloud-fresh-rom-{COMPILE_RUN}", assembly_zip, wrong=bad_zip_digest),
+        inventory = {ASSEMBLY_RUN: {**info(77, f"cloud-fresh-rom-{COMPILE_RUN}", assembly_zip, wrong=bad_zip_digest),
+                                    **info(88, source.ZIP_MANIFEST_ARTIFACT, manifest_zip.getvalue())},
                      COMPILE_RUN: info(66, "cloud-fresh-build-summary", summary_zip.getvalue())}
-        data_by_id = {"77": assembly_zip, "66": summary_zip.getvalue()}
+        data_by_id = {"77": assembly_zip, "66": summary_zip.getvalue(), "88": manifest_zip.getvalue()}
         with mock.patch.dict("os.environ", {"GH_TOKEN": "test-token"}), \
                 mock.patch.object(source, "_json_api", side_effect=lambda path, _: runs[path.rsplit("/", 1)[1]]), \
                 mock.patch.object(source.cloud_layers, "artifact_inventory", side_effect=lambda run, *_: inventory[run]), \
                 mock.patch.object(source.cloud_layers, "_open_retry",
                                   side_effect=lambda request: BytesIO(data_by_id[request.full_url.split("/")[-2]])):
-            return source.verify_source(ASSEMBLY_RUN, tag, Path(tempfile.mkdtemp(dir=self.root)))
+            work = Path(tempfile.mkdtemp(dir=self.root))
+            if sign:
+                return source.signing_manifest(ASSEMBLY_RUN, work)
+            return source.verify_source(ASSEMBLY_RUN, tag, work)
+
+    def test_signing_manifest_is_the_install_manifest_of_the_assembly_build(self):
+        build, manifest = self.invoke(sign=True)
+        self.assertEqual(build, BUILD)
+        self.assertIn(f"target_build={BUILD}\n", manifest.read_text())
+
+    def test_signing_refuses_another_build_or_an_unsuccessful_assembly(self):
+        with self.assertRaisesRegex(source.SourceError, "identity-free clean-install package"):
+            self.invoke(sign=True, manifest_build="2026110304")
+        with self.assertRaisesRegex(source.SourceError, "did not complete successfully"):
+            self.invoke(sign=True, mutate_assembly=lambda run: run.update(conclusion="failure"))
 
     def test_verifies_lineage_delivery_and_payload(self):
         result = self.invoke()

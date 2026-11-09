@@ -19,6 +19,8 @@ REPOSITORY = "coachpo/crux-pe13-distributed"
 PRODUCT = "aosp_crux-userdebug"
 COMPILE_WORKFLOW = ".github/workflows/build-standard.yml"
 ASSEMBLY_WORKFLOW = ".github/workflows/assemble-standard.yml"
+COMPILE_TITLE_RE = re.compile(r"Fresh PE13 compile ([0-9]{10})")
+ZIP_MANIFEST_ARTIFACT = "zip-manifest"
 TAG_RE = re.compile(r"crux-pe13-([0-9]{10})-v([1-9][0-9]*)")
 DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
                   "rom-cepheus.itb", "recovery-cepheus.itb", "system.img.zst", "vendor.img")
@@ -240,6 +242,44 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
     _require(waves == set(range(8)), "compile summary does not cover all eight waves")
 
 
+def _lineage(assembly_run: str, token: str):
+    """Return the successful assembly, its artifacts, compile run and build number."""
+    assembly = _run(assembly_run, ASSEMBLY_WORKFLOW, token)
+    inventory = _inventory(assembly_run, token)
+    candidates = [(name, match.group(1)) for name in inventory
+                  if (match := re.fullmatch(r"cloud-fresh-rom-([1-9][0-9]*)", name))]
+    _require(len(candidates) == 1, "assembly run does not identify exactly one fresh compile artifact")
+    artifact_name, compile_run = candidates[0]
+    _require(assembly.get("display_title") == "Verify fresh PE13 compilation " + compile_run,
+             "assembly run title does not match its cold compilation artifact")
+    compile = _run(compile_run, COMPILE_WORKFLOW, token)
+    match = COMPILE_TITLE_RE.fullmatch(compile.get("display_title") or "")
+    _require(match is not None, "compile run title does not name its build number")
+    return assembly, inventory, artifact_name, compile_run, compile, match.group(1)
+
+
+def assembly_build(assembly_run: str) -> str:
+    """Return the build number of a successful assembly run's compilation."""
+    return _lineage(assembly_run, _token())[-1]
+
+
+def signing_manifest(assembly_run: str, work: Path) -> tuple[str, Path]:
+    """Download the install manifest a successful assembly retained for signing.
+
+    Only the identity fields are checked here; the release verifies the whole payload
+    and the signature over these exact bytes before it publishes anything.
+    """
+    work = Path(work)
+    _require(work.is_dir() and not any(work.iterdir()), "signing work directory must be empty")
+    token = _token()
+    _, inventory, _, _, _, build = _lineage(assembly_run, token)
+    zip_path, _ = _download_zip(_artifact(inventory, ZIP_MANIFEST_ARTIFACT), work, token)
+    manifest = _read_members(zip_path, {"crux-install.txt"}, work / "manifest")["crux-install.txt"]
+    zip_path.unlink()
+    _manifest_fields(manifest.read_bytes(), build)
+    return build, manifest
+
+
 def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
     """Download and verify the fresh assembly artifact, its same-run lineage and ZIP payload.
 
@@ -251,17 +291,8 @@ def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
     parsed = parse_tag(tag)
     _require(parsed is not None, "invalid release tag")
     token = _token()
-    assembly = _run(assembly_run, ASSEMBLY_WORKFLOW, token)
-    inventory = _inventory(assembly_run, token)
-    candidates = [(name, match.group(1)) for name in inventory
-                  if (match := re.fullmatch(r"cloud-fresh-rom-([1-9][0-9]*)", name))]
-    _require(len(candidates) == 1, "assembly run does not identify exactly one fresh compile artifact")
-    artifact_name, compile_run = candidates[0]
-    _require(assembly.get("display_title") == "Verify fresh PE13 compilation " + compile_run,
-             "assembly run title does not match its cold compilation artifact")
-    compile = _run(compile_run, COMPILE_WORKFLOW, token)
-    _require(compile.get("display_title") == "Fresh PE13 compile " + parsed["build"],
-             "compile run title does not match the requested build")
+    assembly, inventory, artifact_name, compile_run, compile, build = _lineage(assembly_run, token)
+    _require(build == parsed["build"], "compile run title does not match the requested build")
     summary = _artifact_json(compile_run, "cloud-fresh-build-summary", "build-summary.json", work, token)
     _validate_summary(summary, compile_run, compile["head_sha"])
 
@@ -337,13 +368,18 @@ def _verify_delivery(build: str, work: Path, summary: dict) -> dict:
     return record
 
 
-def _verify_payload(build: str, payload: Path, record: dict) -> str:
-    text = (payload / "crux-install.txt").read_bytes()
+def _manifest_fields(text: bytes, build: str) -> dict:
     fields = dict(line.split("=", 1) for line in text.decode().splitlines() if "=" in line)
     _require(fields.get("schema") == "crux-install/1" and fields.get("kind") == "zip"
              and fields.get("product") == PRODUCT and fields.get("target_build") == build
              and fields.get("serialno") == "any" and fields.get("data_policy") == "discard",
              "the ZIP payload manifest is not this build's identity-free clean-install package")
+    return fields
+
+
+def _verify_payload(build: str, payload: Path, record: dict) -> str:
+    text = (payload / "crux-install.txt").read_bytes()
+    fields = _manifest_fields(text, build)
     delivery = record["delivery"]
     for role, name in (("recovery", "recovery-cepheus.itb"), ("rom", "rom-cepheus.itb")):
         _require(fields.get(f"fit.{role}.entry") == name

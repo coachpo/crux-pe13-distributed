@@ -2,9 +2,8 @@
   "schema_version": 1,
   "kernel_source_alias": {
     "project": "kernel/xiaomi/crux-pe-cepheus",
-    "revision": "086b838e3a50f76e3e25b67b41862a401d3fa7a5",
     "alias": "/k",
     "validated_probe_run": "41801581346"
   },
-  "rationale": "The admitted QCA kernel shell recipe exceeded Linux MAX_ARG_STRLEN because of repeated absolute source paths. The identical bind-mounted source and command-line srctree alias passed a complete standard-runner kernel build without editing source, Ninja, output paths or compiler options other than source-path spelling. Production still starts every task cold and accepts only current-execution dependencies."
+  "rationale": "The admitted QCA kernel shell recipe exceeded Linux MAX_ARG_STRLEN because of repeated absolute source paths. The identical bind-mounted source and command-line srctree alias passed a complete standard-runner kernel build without editing source, Ninja, output paths or compiler options other than source-path spelling. Production still starts every task cold and accepts only current-execution dependencies. The alias follows the kernel revision that the source manifest pins."
 }

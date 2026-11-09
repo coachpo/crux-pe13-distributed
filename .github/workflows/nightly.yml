@@ -1,0 +1,60 @@
+name: Check PE13 sources nightly
+run-name: Nightly PE13 source check
+
+on:
+  schedule:
+    # 01:37 in Helsinki in winter and 02:37 in summer; GitHub cron is UTC.
+    - cron: '37 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly-source-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: write
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Keep the schedule enabled
+        # Public repositories lose scheduled workflows after 60 days without activity.
+        run: gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/enable"
+      - name: Pin changed sources and start the build chain
+        id: check
+        env:
+          CRUX_SOURCE_SNAPSHOTS_TOKEN: ${{ secrets.CRUX_SOURCE_SNAPSHOTS_TOKEN }}
+        run: python3 scripts/nightly.py --github-output "$GITHUB_OUTPUT"
+
+  report:
+    needs: check
+    if: ${{ always() && (needs.check.result == 'failure' || needs.check.result == 'cancelled') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD: ${{ needs.check.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed source check
+        run: python3 scripts/pipeline_report.py --stage nightly --build "$BUILD"

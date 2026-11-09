@@ -174,16 +174,6 @@ jobs:
       GOGC_PERCENT: ${{ inputs.gogc }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Free disk space
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'true'
-          remove-swapfile: 'true'
       - name: Install native Linux build dependencies
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
@@ -233,3 +223,47 @@ jobs:
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
+
+  next:
+    needs: graph
+    if: ${{ !cancelled() && inputs.mode == 'full' && needs.graph.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare this graph
+        id: dispatch
+        continue-on-error: true
+        run: |
+          gh workflow run prepare-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f stage=full -f graph_run="$GITHUB_RUN_ID" -f build_number="$BUILD_NUMBER"
+      - name: Report the failed dispatch
+        if: steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage freeze --detail 'The preparation could not be dispatched.'
+
+  report:
+    needs: [plan, sources, graph, next]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed freeze
+        run: python3 scripts/pipeline_report.py --stage freeze

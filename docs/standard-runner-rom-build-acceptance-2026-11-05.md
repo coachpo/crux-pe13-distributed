@@ -127,10 +127,11 @@ artifact from `41769467686`, and the registry and all 39 capsules from
 `42001383332`. A compact receipt in Git is not a replacement for an Actions
 payload. The graph artifact is scheduled to expire on **2026-11-17**.
 Check availability before dispatch.
-For expired preparation inputs or a new build identity, follow
-[standard preparation and admission](standard-runner-freeze.md#3-admit-preparation-for-a-cold-compile).
-Entering a new run ID alone does not admit it. Do not use an incomplete
-historical registry or a legacy reuse-state.
+For expired preparation inputs or a new build identity, run a full freeze on
+`main` (or let `nightly.yml` start one): the chain prepares, admits, compiles,
+assembles and releases it, as
+[standard preparation and admission](standard-runner-freeze.md#3-admit-preparation-for-a-cold-compile)
+describes. Do not use an incomplete historical registry or a legacy reuse-state.
 
 SOURCE artifacts are retained seven days, prep artifacts fourteen days, and
 compile/assembly artifacts thirty days. Assemble before the compile inputs

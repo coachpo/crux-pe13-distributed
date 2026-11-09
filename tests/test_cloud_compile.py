@@ -15,6 +15,7 @@ SCRIPTS = ROOT / "scripts"
 spec = importlib.util.spec_from_file_location("cloud_compile", SCRIPTS / "cloud_compile.py")
 cloud_compile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cloud_compile)
+KERNEL_REVISION = "086b838e3a50f76e3e25b67b41862a401d3fa7a5"
 
 
 class CloudCompileTests(unittest.TestCase):
@@ -557,14 +558,13 @@ class CloudCompileTests(unittest.TestCase):
         self.fresh_context["assembly_exports"] = {
             str(self.out_root / "target/product/crux/obj/KERNEL_OBJ"): self.shard_id}
         self.fresh_context["source_selection"] = {"projects": [{
-            "path": cloud_compile.SHORT_KERNEL_SOURCE_PROJECT,
-            "revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
+            "path": cloud_compile.SHORT_KERNEL_SOURCE_PROJECT, "revision": KERNEL_REVISION,
         }]}
         self.fresh_context["kernel_source_alias"] = dict(cloud_compile.SHORT_KERNEL_SOURCE_POLICY)
 
     def test_short_source_rejects_unpinned_revision(self):
         self._prepare_short_source_context()
-        self.fresh_context["source_selection"]["projects"][0]["revision"] = "0" * 40
+        self.fresh_context["source_selection"]["projects"][0]["revision"] = "thirteen"
         self.context_path.write_text(json.dumps(self.fresh_context))
         code, receipt = self.run_compile()
         self.assertEqual(code, 1)
@@ -589,7 +589,7 @@ class CloudCompileTests(unittest.TestCase):
         self.assertEqual(receipt["runtime_source_alias"], {
             "source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
             "alias": "/k", "mount": "bind",
-            "source_revision": cloud_compile.SHORT_KERNEL_SOURCE_REVISION,
+            "source_revision": KERNEL_REVISION,
             "makeflags_addition": "srctree=/k",
             "validation_policy": cloud_compile.SHORT_KERNEL_SOURCE_POLICY,
             "makeflags": "srctree=/k",

@@ -146,9 +146,13 @@ product only), `bootable/recovery` at `44443e3`, the kernel at `086b838`, and
 `packages/apps/Updates`, which is not built, at the upstream commit `50c6109`.
 Each build adds its own image marker,
 `config/source-patches/device-crux-dev-marker-<build>.patch`, and the patched
-device tree is checked against the pinned `expected_tree`. A local build of the
-same commits is the same code; `scripts/check_local_source.py` checks a local
-tree against these pins. The pinned snapshot omits Git
+device tree is checked against the pinned `expected_tree`. `nightly.yml`
+(`scripts/nightly.py`) moves these pins to the tracked forks' default-branch
+heads and to the commits the snapshot repositories record, and writes each CI
+build's marker patch and `expected_tree` the same way the freeze checks them; a
+manual pin change must keep `tests.test_cloud_source_config` passing. A local
+build of the same commits is the same code; `scripts/check_local_source.py`
+checks a local tree against these pins. The pinned snapshot omits Git
 object databases, old build outputs and local diagnostics; repo copy/link
 entries are explicit manifest inputs.
 
@@ -274,19 +278,24 @@ source revisions and required archive sources.
 
 ## 3. Admit preparation for a cold compile
 
-Preparing a new graph or repacking an expired snapshot does not automatically
-admit a new pack run in `build-standard.yml`. Review the resulting graph and
-index receipts, source manifest, plan, capsule identities and registry. The
-shard count follows the graph (39 for `2026110501`, 40 for `2026110704`); the
-compile, assembly and release checks take it from the admitted registry and
-keep the eight dependency waves.
-For a replacement, record the reviewed registry and update its entry in
-`scripts/cloud_build_plan.py` (`PACK_REGISTRIES`) and the workflow defaults.
-If the graph is regenerated, also review and update the pinned graph summary
-and index receipt read by bootstrap; they bind the exact graph receipt and the
-independent image identity. If source or graph shape changes, review the
-runtime/kernel policy, slice and producer requirements and image/FIT
-expectations against the new inputs. Do not bypass the admission checks.
+A successful full freeze dispatches its full preparation, and a successful
+`full` or `pack` preparation dispatches `build-standard.yml` with its own run as
+`pack_run`, its shard run and the same build number. Bootstrap admits the
+preparation from run artifacts alone: the pack registry and slice plan of the
+preparation, the graph receipt of the freeze run that registry names and the
+canonical index receipt of its index run. The graph receipt must be the
+successful graph of this build and source manifest, and the index receipt must
+name that graph run, build and manifest and the SHA-256 of that exact graph
+receipt. Every other check stays: registry and shard receipt bindings, plan
+digest, eight dependency waves, shard manifest digests, unique output owners,
+frontend identity, product namespace and kernel exports. The shard count follows
+the graph (39 for `2026110501` and `2026110804`, 40 for `2026110704`). If source
+or graph shape changes beyond a fixed policy (runtime/kernel policy, slice and
+producer requirements, image/FIT expectations), the chain stops at that check
+and reports it; fix the policy and resume from the failed stage. Do not bypass
+the admission checks. The records under `docs/evidence/` are the admissions of
+earlier, manually admitted builds.
 
-Once the replacement is admitted, follow the
-[compile → assemble runbook](standard-runner-rom-build-acceptance-2026-11-05.md#re-run-without-a-local-build-environment).
+The compile then dispatches its assembly, and the assembly its release; see the
+[compile → assemble runbook](standard-runner-rom-build-acceptance-2026-11-05.md#re-run-without-a-local-build-environment)
+for manual runs.

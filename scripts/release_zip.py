@@ -3,8 +3,11 @@
 
 The release carries crux-pe13-<build>.zip, its .sha256, README.txt and the pinned
 RAM-only install TWRP (config/install-twrp.json) with its .sha256. The ZIP is
-made here from the assembly's verified payload and the offline signature of
-its manifest, checked against keys/crux-b-install-2026-11-07.pub.pem.
+made here from the assembly's verified payload and the signature of its
+manifest (made by release.yml's install-signing job, or offline), checked
+against keys/crux-b-install-2026-11-07.pub.pem. Without --tag, the release
+takes this assembly's existing tag or the next free version of its build;
+the release operation stages the draft and publishes it in one run.
 """
 
 import argparse
@@ -21,7 +24,7 @@ import urllib.request
 from urllib.parse import urlencode
 
 import crux_zip
-from release_source import REPOSITORY, SourceError, parse_tag, sha256, verify_source
+from release_source import REPOSITORY, SourceError, assembly_build, parse_tag, sha256, verify_source
 
 
 RELEASE_TARGET = "main"
@@ -126,6 +129,24 @@ def release_body(source):
         "device acceptance is recorded separately.\n\n" + provenance(source))
 
 
+def next_tag(api, build, assembly_run):
+    """Return the tag of this assembly's release, or the next free version of its build."""
+    marker = f"<!-- crux-zip-source assembly={assembly_run} "
+    versions = set()
+    for release in api.api("releases?per_page=100", pages=True):
+        parsed = parse_tag(release.get("tag_name", ""))
+        if parsed is None or parsed["build"] != build:
+            continue
+        if any(line.startswith(marker) for line in (release.get("body") or "").splitlines()):
+            return release["tag_name"]
+        versions.add(parsed["version"])
+    for ref in api.api(f"git/matching-refs/tags/crux-pe13-{build}-v"):
+        parsed = parse_tag(ref.get("ref", "").removeprefix("refs/tags/"))
+        if parsed is not None and parsed["build"] == build:
+            versions.add(parsed["version"])
+    return f"crux-pe13-{build}-v{max(versions, default=0) + 1}"
+
+
 def find_release(api, source):
     releases = api.api("releases?per_page=100", pages=True)
     matches = [release for release in releases if release.get("tag_name") == source.tag]
@@ -222,14 +243,15 @@ def deliver(api, source, staged, assets, operation):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--assembly-run", required=True)
-    parser.add_argument("--tag", required=True)
-    parser.add_argument("--operation", choices=["preflight", "draft", "publish"], default="preflight")
+    parser.add_argument("--tag", default="",
+                        help="crux-pe13-<build>-v<n>; empty selects this assembly's release or the next free version")
+    parser.add_argument("--operation", choices=["preflight", "draft", "publish", "release"], default="preflight")
     parser.add_argument("--signature", required=True,
-                        help="offline P-256 r||s over the payload's crux-install.txt, 128 hex digits")
+                        help="P-256 r||s over the payload's crux-install.txt, 128 hex digits")
     args = parser.parse_args()
     if not re.fullmatch(r"[1-9][0-9]*", args.assembly_run):
         parser.error("--assembly-run must be a positive Actions run ID")
-    if parse_tag(args.tag) is None:
+    if args.tag and parse_tag(args.tag) is None:
         parser.error("--tag must be crux-pe13-<10-digit build>-v<positive version> (no leading zero)")
     if not re.fullmatch(r"[0-9a-f]{128}", args.signature):
         parser.error("--signature must be 128 lowercase hex digits")
@@ -238,19 +260,23 @@ def main():
             == f"{REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
             and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
             and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"):
-        parser.error("draft and publish must be dispatched through release.yml on main")
+        parser.error("draft, publish and release must be dispatched through release.yml on main")
     try:
+        api = Releases()
+        tag = args.tag or next_tag(api, assembly_build(args.assembly_run), args.assembly_run)
         with tempfile.TemporaryDirectory(prefix="crux-release-") as work:
             work = Path(work)
             (work / "source").mkdir()
-            source = verify_source(args.assembly_run, args.tag, work / "source")
+            source = verify_source(args.assembly_run, tag, work / "source")
             staged, assets = stage_assets(source, args.signature, work)
             print(json.dumps({"tag": source.tag, "assembly_run": source.assembly_run,
                               "compile_run": source.compile_run, "artifact_id": source.artifact_id,
                               "artifact_digest": source.artifact_digest,
                               "manifest_sha256": source.manifest_sha256, "assets": assets}, indent=2), flush=True)
-            print(json.dumps({"tag": source.tag, "operation": args.operation,
-                              **deliver(Releases(), source, staged, assets, args.operation)}, indent=2))
+            # One signature is staged once, so the draft and its publication carry identical ZIP bytes.
+            for operation in ("draft", "publish") if args.operation == "release" else (args.operation,):
+                print(json.dumps({"tag": source.tag, "operation": operation,
+                                  **deliver(api, source, staged, assets, operation)}, indent=2), flush=True)
     except (ReleaseError, SourceError, OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"release-zip: {error}\n")
     return 0

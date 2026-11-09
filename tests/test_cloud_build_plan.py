@@ -1,8 +1,10 @@
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
-from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
@@ -11,20 +13,55 @@ plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
 
 
-class BuildPlanTests(unittest.TestCase):
-    def test_pack_revision_requires_its_reviewed_registry_contents(self):
-        original = {'capsules': [{'archive_sha256': 'original'}]}
-        repaired = {'capsules': [{'archive_sha256': 'repaired'}]}
-        with patch.dict(plan.PACK_REGISTRIES, {'1': 'original.json', '2': 'repaired.json'}, clear=True), \
-                patch.object(plan, 'read', side_effect=lambda path: {'original.json': original,
-                                                                    'repaired.json': repaired}[path]):
-            plan.admit_pack_registry(original, '1')
-            plan.admit_pack_registry(repaired, '2')
-            with self.assertRaisesRegex(ValueError, 'differs'):
-                plan.admit_pack_registry(original, '2')
-            with self.assertRaisesRegex(ValueError, 'no reviewed'):
-                plan.admit_pack_registry(repaired, '3')
+class GraphAdmissionTests(unittest.TestCase):
+    """The freeze's graph receipt is admitted through the index of the same preparation run."""
 
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / 'graph-receipt.json'
+        self.receipt = {'schema_version': 1, 'status': 'success', 'build_number': '2026110950',
+                        'build_fingerprint': 'Xiaomi/crux/crux:13/TQ3A.230901.001.B1/2026110950:userdebug/test-keys',
+                        'source_manifest': {'path': '/m.json', 'sha256': 'source', 'project_count': 2,
+                                            'projects': [{'path': 'a', 'revision': '1' * 40}]}}
+        self.registry = {'graph_run': '41', 'source_manifest_sha256': 'source'}
+
+    def write(self, receipt):
+        self.path.write_text(json.dumps(receipt, indent=2) + '\n')
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        return {'status': 'success', 'graph_run': '41', 'build_number': '2026110950',
+                'manifest_sha256': 'source', 'graph_receipt_sha256': digest}
+
+    def test_summary_is_the_indexed_receipt_without_its_project_list(self):
+        index = self.write(self.receipt)
+        summary = plan.admit_graph(self.path, index, self.registry, '2026110950')
+        self.assertEqual(summary['receipt_sha256'], index['graph_receipt_sha256'])
+        self.assertEqual(summary['source_manifest'], {'path': '/m.json', 'sha256': 'source', 'project_count': 2})
+        self.assertEqual(summary['build_fingerprint'], self.receipt['build_fingerprint'])
+
+    def test_receipt_that_is_not_the_indexed_graph_is_rejected(self):
+        index = self.write(self.receipt)
+        self.write({**self.receipt, 'build_fingerprint': 'tampered'})
+        with self.assertRaisesRegex(ValueError, 'canonical index'):
+            plan.admit_graph(self.path, index, self.registry, '2026110950')
+
+    def test_index_of_another_graph_build_or_manifest_is_rejected(self):
+        index = self.write(self.receipt)
+        for field, value in [('graph_run', '42'), ('build_number', '2026110951'),
+                             ('manifest_sha256', 'other'), ('status', 'failed')]:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'canonical index'):
+                plan.admit_graph(self.path, {**index, field: value}, self.registry, '2026110950')
+
+    def test_unsuccessful_or_foreign_graph_receipt_is_rejected(self):
+        for field, value in [('status', 'failed'), ('build_number', '2026110951'),
+                             ('source_manifest', {'sha256': 'other'})]:
+            with self.subTest(field=field):
+                index = self.write({**self.receipt, field: value})
+                with self.assertRaisesRegex(ValueError, 'graph receipt'):
+                    plan.admit_graph(self.path, index, self.registry, '2026110950')
+
+
+class BuildPlanTests(unittest.TestCase):
     def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 1)):
         waves, capsules, inventory = [], [], {}
         prior = []
@@ -52,7 +89,7 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(len(tasks), 39)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
 
-    def test_task_count_comes_from_the_reviewed_registry(self):
+    def test_task_count_comes_from_the_preparation_registry(self):
         waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1)), 'plan')
         self.assertEqual(len(tasks), 40)
         args = self.inputs()

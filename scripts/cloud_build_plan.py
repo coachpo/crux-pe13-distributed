@@ -17,12 +17,6 @@ from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
 
 
-EVIDENCE = Path(__file__).resolve().parents[1] / 'docs/evidence/standard-preparation-2026110804'
-PACK_REGISTRIES = {
-    '42513733439': EVIDENCE / 'pack-registry-42513733439.json',
-}
-
-
 def read(path):
     return json.loads(Path(path).read_text())
 
@@ -45,12 +39,20 @@ def fresh_binding(context):
                                           'plan_sha256', 'source_manifest_sha256')}
 
 
-def admit_pack_registry(registry, pack_run):
-    expected = PACK_REGISTRIES.get(pack_run)
-    if expected is None:
-        raise ValueError('Pack run has no reviewed cold-capsule registry: ' + pack_run)
-    if registry != read(expected):
-        raise ValueError('Pack registry differs from the reviewed cold-capsule registry')
+def admit_graph(graph_receipt_path, index_receipt, registry, build_number):
+    """Bind the freeze run's graph receipt to the index that sliced it; return its summary."""
+    graph_receipt = read(graph_receipt_path)
+    receipt_sha = sha(graph_receipt_path)
+    if (graph_receipt.get('status') != 'success' or graph_receipt.get('build_number') != build_number
+            or graph_receipt.get('source_manifest', {}).get('sha256') != registry['source_manifest_sha256']):
+        raise ValueError('Fresh graph receipt is not the successful graph of this build and source manifest')
+    if (index_receipt.get('status') != 'success' or index_receipt.get('graph_run') != registry['graph_run']
+            or index_receipt.get('build_number') != build_number
+            or index_receipt.get('manifest_sha256') != registry['source_manifest_sha256']
+            or index_receipt.get('graph_receipt_sha256') != receipt_sha):
+        raise ValueError('Fresh graph metadata differs from the canonical index of the preparation run')
+    manifest = {key: value for key, value in graph_receipt['source_manifest'].items() if key != 'projects'}
+    return {**graph_receipt, 'source_manifest': manifest, 'receipt_sha256': receipt_sha}
 
 
 def producer_binding(context, task_id):
@@ -201,11 +203,11 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
     waves = [[task['id'] for task in wave] for wave in plan['waves']]
     ids = [task for wave in waves for task in wave]
     capsules = {row['shard_id']: row for row in registry['capsules']}
-    # The task count is the reviewed registry's: admit_pack_registry pins it exactly.
+    # The task count is the preparation registry's, which pack-summary checked against the slice plan.
     if (len(waves) != 8 or len(set(ids)) != len(ids)
             or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
             or set(ids) != set(inventory['shards'])):
-        raise ValueError('Expected the complete eight-wave inventory of the reviewed registry')
+        raise ValueError('Expected the complete eight-wave inventory of the preparation registry')
     tasks, seen = {}, set()
     for number, wave in enumerate(plan['waves']):
         for task in wave:
@@ -233,7 +235,6 @@ def bootstrap(args):
     cloud_artifacts.download_artifacts(args.shard_run, repository, staging / 'shards',
                                       name='cloud-shards-' + args.build_number)
     registry = read(staging / 'pack/pack-registry.json')
-    admit_pack_registry(registry, args.pack_run)
     shard_dir = staging / 'shards'
     receipt, inventory = read(shard_dir / 'shard-receipt.json'), read(shard_dir / 'slice-inventory.json')
     if registry['shard_run'] != args.shard_run or registry['build_number'] != args.build_number:
@@ -272,14 +273,15 @@ def bootstrap(args):
     host_bundles = admit_host_jar_bundles(tasks, owners, task_commands, receipt['source_root'], receipt['out_root'])
     rust_inputs = admit_rust_native_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
     license_readers = admit_license_metadata_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
-    graph = read(EVIDENCE / 'graph-receipt-summary.json')['receipt_summary']
     if buildinfo is None or len(branding) != 2:
         raise ValueError('Missing independent graph-derived build identity')
     cloud_artifacts.download_artifacts(registry['graph_run'], repository, staging / 'graph',
                                       name='cloud-graph-' + args.build_number)
+    cloud_artifacts.download_artifacts(registry['index_run'], repository, staging / 'index',
+                                      name='cloud-index-' + args.build_number)
     graph_directory = staging / 'graph'
-    if sha(graph_directory / 'graph/graph-receipt.json') != read(EVIDENCE / 'index-receipt.json')['graph_receipt_sha256']:
-        raise ValueError('Fresh graph metadata differs from the accepted canonical index')
+    graph = admit_graph(graph_directory / 'graph/graph-receipt.json', read(staging / 'index/index-receipt.json'),
+                        registry, args.build_number)
     scalars = {}
     for key, relative in {'build_number': 'soong/build_number.txt', 'build_date': 'build_date.txt',
                           'build_fingerprint': 'target/product/crux/build_fingerprint.txt',

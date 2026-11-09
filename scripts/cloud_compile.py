@@ -30,12 +30,12 @@ CONTEXT_IDENTITY_FIELDS = (
 FRESH_BUILD_FIELDS = ("execution_id", "pack_run", "shard_run", "plan_sha256",
                       "source_manifest_sha256")
 RUN_ID_FIELDS = ("execution_id", "pack_run", "shard_run", "graph_run", "index_run", "source_run")
-SHORT_KERNEL_SOURCE_REVISION = "086b838e3a50f76e3e25b67b41862a401d3fa7a5"
 SHORT_KERNEL_SOURCE_PROJECT = "kernel/xiaomi/crux-pe-cepheus"
 SHORT_KERNEL_SOURCE_ALIAS = Path("/k")
+# The alias only shortens source-path spelling, so it applies to whichever kernel
+# revision the admitted source selection pins.
 SHORT_KERNEL_SOURCE_POLICY = {
     "project": SHORT_KERNEL_SOURCE_PROJECT,
-    "revision": SHORT_KERNEL_SOURCE_REVISION,
     "alias": str(SHORT_KERNEL_SOURCE_ALIAS),
     "validated_probe_run": "41801581346",
 }
@@ -299,15 +299,16 @@ def _verify_runtime_inputs(task: dict, dependency_receipts: dict,
     return admitted
 
 
-def _validate_short_kernel_source(context: dict, shard_id: str, source_root: Path) -> Path:
+def _validate_short_kernel_source(context: dict, shard_id: str, source_root: Path) -> tuple[Path, str]:
     kernel_output = str(Path(context["out_root"]) / "target/product/crux/obj/KERNEL_OBJ")
     if context.get("assembly_exports", {}).get(kernel_output) != shard_id:
         raise CompileError("Short-source mode is restricted to the task owning the kernel output")
     projects = context.get("source_selection", {}).get("projects", [])
     pins = {project.get("path"): project.get("revision") for project in projects
             if isinstance(project, dict)}
-    if pins.get(SHORT_KERNEL_SOURCE_PROJECT) != SHORT_KERNEL_SOURCE_REVISION:
-        raise CompileError("Short-source mode requires the pinned kernel source revision")
+    revision = pins.get(SHORT_KERNEL_SOURCE_PROJECT)
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise CompileError("Short-source mode requires a pinned kernel source revision")
     kernel_source = source_root / SHORT_KERNEL_SOURCE_PROJECT
     try:
         kernel_source.relative_to(source_root)
@@ -315,7 +316,7 @@ def _validate_short_kernel_source(context: dict, shard_id: str, source_root: Pat
         raise CompileError("Pinned kernel source escapes source_root") from error
     if kernel_source.is_symlink() or not kernel_source.is_dir():
         raise CompileError("Pinned kernel source must be a regular directory in the restored capsule")
-    return kernel_source
+    return kernel_source, revision
 
 
 def _mount_short_source_alias(kernel_source: Path) -> dict:
@@ -402,11 +403,11 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
         _verify_required_notice_sources(task, source_root, out_root)
         if alias_enabled:
-            kernel_source = _validate_short_kernel_source(context, shard_id, source_root)
+            kernel_source, kernel_revision = _validate_short_kernel_source(context, shard_id, source_root)
             alias_record = _mount_short_source_alias(kernel_source)
             source_alias_mounted = True
             runtime_source_alias = {
-                **alias_record, "source_revision": SHORT_KERNEL_SOURCE_REVISION,
+                **alias_record, "source_revision": kernel_revision,
                 "makeflags_addition": "srctree=/k",
                 "validation_policy": alias_policy,
             }

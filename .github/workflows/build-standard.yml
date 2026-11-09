@@ -4,19 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       pack_run:
-        description: Accepted cold-capsule preparation run
+        description: Successful cold-capsule preparation run (its pack registry is admitted here)
         required: true
-        default: '42513733439'
         type: string
       shard_run:
-        description: Accepted slice plan run
+        description: Successful slice plan run named by that pack registry
         required: true
-        default: '42513733439'
         type: string
       build_number:
         description: Identity embedded in the admitted capsules
         required: true
-        default: '2026110804'
         type: string
 permissions:
   contents: read
@@ -117,3 +114,45 @@ jobs:
           name: cloud-fresh-build-summary
           path: ${{ runner.temp }}/result/
           retention-days: 30
+
+  next:
+    needs: summary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assemble this compilation
+        id: dispatch
+        continue-on-error: true
+        run: |
+          gh workflow run assemble-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f build_run="$GITHUB_RUN_ID"
+      - name: Report the failed dispatch
+        if: steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage compile --detail 'The assembly could not be dispatched.'
+
+  report:
+    needs: [bootstrap, wave0, wave1, wave2, wave3, wave4, wave5, wave6, wave7, summary, next]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed compilation
+        run: python3 scripts/pipeline_report.py --stage compile

@@ -21,15 +21,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Free disk space
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'true'
       - name: Install image validation tools
         run: |
           set -euo pipefail
@@ -114,6 +105,13 @@ jobs:
             --twrp-profile "$profile" --out "$RUNNER_TEMP/result/zip-payload" \
             2>&1 | tee "$RUNNER_TEMP/result/zip-payload.log"
           rm -f -- "$work"/*.raw.img
+      - name: Retain the ZIP manifest for the release signature
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: zip-manifest
+          path: ${{ runner.temp }}/result/zip-payload/crux-install.txt
+          retention-days: 30
+          if-no-files-found: error
       - name: Retain unpublished ROM images and validation evidence
         if: always()
         uses: ./.github/actions/retain-artifact
@@ -122,3 +120,45 @@ jobs:
           path: ${{ runner.temp }}/result/
           retention-days: 30
           compression-level: 0
+
+  next:
+    needs: assemble
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sign and release this assembly
+        id: dispatch
+        continue-on-error: true
+        run: |
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f assembly_run="$GITHUB_RUN_ID" -f operation=release
+      - name: Report the failed dispatch
+        if: steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage assemble --detail 'The release could not be dispatched.'
+
+  report:
+    needs: [assemble, next]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed assembly
+        run: python3 scripts/pipeline_report.py --stage assemble
