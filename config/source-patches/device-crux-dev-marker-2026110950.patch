@@ -1,7 +1,7 @@
 diff --git a/aosp_crux.mk b/aosp_crux.mk
 --- a/aosp_crux.mk
 +++ b/aosp_crux.mk
-@@ -43 +43,6 @@ TARGET_USES_AOSP_RECOVERY := true
+@@ -43 +43,6 @@
  PRODUCT_BUILD_USERDATA_IMAGE := false
 +
 +ifeq ($(TARGET_BUILD_VARIANT),userdebug)
@@ -13,4 +13,4 @@ new file mode 100644
 --- /dev/null
 +++ b/crux-delivery-verification.txt
 @@ -0,0 +1 @@
-+crux-pe13-dev-2026110804
++crux-pe13-dev-2026110950

@@ -50,11 +50,11 @@
       "url": "https://github.com/coachpo/crux-pe13-vendor-gms-snapshot"
     },
     "device/xiaomi/crux": {
-      "expected_tree": "24798504c9559919afb770eec5e8ab366b459978",
+      "expected_tree": "ed975e6dca1830950fc05acbfcf8123760d93ea1",
       "patches": [
         {
-          "path": "config/source-patches/device-crux-dev-marker-2026110804.patch",
-          "sha256": "53c33b91f71b2c400110cf748b45661d8840d9f78440d4e6b5ff4340ae33b526"
+          "path": "config/source-patches/device-crux-dev-marker-2026110950.patch",
+          "sha256": "1e73380cfc158da44cb182d34e2c6f70a7dc29f198bb63b504ab46b655e92f42"
         }
       ],
       "revision": "978a10aa6368f3a983d32a7c0d117913cff3916e"
