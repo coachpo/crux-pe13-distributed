@@ -58,16 +58,16 @@ class RamTwrpTests(unittest.TestCase):
         session.send.return_value = good
         ram_twrp.read_environment(session, ram, "version")
         ram.verify_environment.assert_called_once_with(session, "version")
-        self.assertIn("if crux_ota bootargs; then bootm prep; run boot_go; fi", ram_twrp.ROM_BOOT)
+        self.assertIn("if crux_install bootargs; then bootm prep; run boot_go; fi", ram_twrp.ROM_BOOT)
         for text, error in ((good.replace(ram_twrp.UBOOT_ROLE, "recovery-container-crux-install-1"), "identity build"),
                             (good.replace("crux_uboot_role", "other_role"), "identity build"),
-                            (good.replace("if crux_ota bootargs; then ", "").replace("; fi", ""), "ROM menu command")):
+                            (good.replace("if crux_install bootargs; then ", "").replace("; fi", ""), "ROM menu command")):
             with self.subTest(error=error):
                 session.send.return_value = text
                 with self.assertRaisesRegex(ram_twrp.RamTwrpError, error):
                     ram_twrp.read_environment(session, ram, "version")
         ram_twrp.boot_rom(ram, session)
-        ram.guarded_handoff.assert_called_once_with(session, "setenv crux_ota_extra; run crux_boot_pe_rom")
+        ram.guarded_handoff.assert_called_once_with(session, "run crux_boot_pe_rom")
         session.save.assert_called_once_with()
 
     def test_fit_windows_are_the_uboot_read_lengths(self):

@@ -32,11 +32,11 @@ GEOMETRY = {
 }
 # The Boot identity U-Boot's PE ROM entry. It replaces the FIT's device
 # identity with the values ABL passed, so it also boots identity-free FITs
-# (2026110801 and later); without them, crux_ota refuses and nothing starts.
+# (2026110801 and later); without them, crux_install refuses and nothing starts.
 UBOOT_ROLE = "boot-crux-identity-1"
 ROM_BOOT = ("scsi dev 0; scsi read 0xC0000000 0x3c000 0x3100; "
             "setenv fdt_high; setenv initrd_high; setenv bootargs; bootm start 0xC0000000; "
-            "bootm loados; bootm ramdisk; if crux_ota bootargs; then bootm prep; run boot_go; fi")
+            "bootm loados; bootm ramdisk; if crux_install bootargs; then bootm prep; run boot_go; fi")
 
 
 def validate_manifest(path, expected_sha, ram):
@@ -93,7 +93,7 @@ def reboot_to_shell(ram, serial, out, expected_version):
 
 def boot_rom(ram, session):
     try:
-        ram.guarded_handoff(session, "setenv crux_ota_extra; run crux_boot_pe_rom")
+        ram.guarded_handoff(session, "run crux_boot_pe_rom")
     finally:
         session.save()
 
