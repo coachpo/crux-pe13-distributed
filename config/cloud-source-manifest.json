@@ -6479,9 +6479,10 @@
       "url": "https://android.googlesource.com/platform/prebuilts/bazel/linux-x86_64"
     },
     {
+      "expected_tree": "cc04d5c641361efacb1a746ec2642abd17b4a9f9",
       "path": "prebuilts/build-tools",
-      "revision": "e4ce2f62e149361cebc7a00349d0600062cc6b07",
-      "url": "https://github.com/coachpo/crux-pe13-build-tools"
+      "revision": "7d311e630d48dcd46e6036e34e4d588bd9c064c9",
+      "url": "https://github.com/PixelExperience/prebuilts_build-tools"
     },
     {
       "path": "prebuilts/bundletool",

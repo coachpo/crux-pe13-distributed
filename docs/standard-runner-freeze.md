@@ -318,6 +318,25 @@ These artifacts can be regenerated from the pinned source manifest, workflow
 code and run inputs, subject to continued availability of their pinned public
 source revisions and required archive sources.
 
+### Official build-tools and host-profile boundary
+
+The production manifest/override fix `prebuilts/build-tools` at official
+`7d311e630d48dcd46e6036e34e4d588bd9c064c9`, tree
+`cc04d5c641361efacb1a746ec2642abd17b4a9f9`. It is not a moving fork input.
+A receives the normal nsjail executable for Soong's supported runtime probe.
+`graph-host-sandbox.json` and the graph receipt record actual Soong command-log
+observations: wrapped commands, explicit fallback, mixed, or unobserved. A
+binary's presence alone is not evidence of selection. This observation reads
+logs without changing the probe or forcing success, and does not describe the
+separate direct-Ninja workers as sandboxed.
+
+B's own private source overlay hides only nsjail for Rosetta; it does not rename
+the binary in shared source or modify A. The Make pin and inherited dexpreopt
+settings remain unchanged in this A1 migration; restoring their official
+defaults is the separate A2 decision. Legacy transport profiles and dated source
+records are not current production manifests and retain their original pins
+for historical rebuild contracts; existing forks are not deleted.
+
 ## 3. Admit preparation for a cold compile
 
 A successful full freeze dispatches its full preparation, and a successful

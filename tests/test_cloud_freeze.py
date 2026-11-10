@@ -53,6 +53,29 @@ class CloudFreezeTests(unittest.TestCase):
         self.assertIn("/usr/bin/time", command)
         self.assertIn("m --skip-ninja bootimage recoveryimage systemimage vendorimage -j4", command[-1])
 
+    def test_graph_sandbox_requires_a_real_wrapped_command_not_just_a_binary(self):
+        binary = self.source / "prebuilts/build-tools/linux-x86/bin/nsjail"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("fixture")
+        self.assertEqual(cloud_freeze.observe_graph_sandbox(self.source, self.out)["status"], "unobserved")
+        self.out.mkdir()
+        log = self.out / "soong.log"
+        log.write_text('[prebuilts/build-tools/linux-x86/bin/nsjail -H android-build]\n')
+        self.assertEqual(cloud_freeze.observe_graph_sandbox(self.source, self.out)["status"], "unobserved")
+        log.write_text('exec.go:64: "ckati" executing "prebuilts/build-tools/linux-x86/bin/nsjail" [-x ckati]\n')
+        record = cloud_freeze.observe_graph_sandbox(self.source, self.out)
+        self.assertEqual(record["status"], "wrapped-commands-observed")
+        self.assertEqual(record["wrapped_commands"], 1)
+
+    def test_graph_sandbox_reports_fallback_and_mixed_logs_without_guessing(self):
+        self.out.mkdir()
+        log = self.out / "soong.log"
+        log.write_text('Build sandboxing disabled due to nsjail error.\nnsjail failed with missing binary\n')
+        self.assertEqual(cloud_freeze.observe_graph_sandbox(self.source, self.out)["status"], "disabled-observed")
+        with log.open('a') as stream:
+            stream.write('"dumpvars" executing "prebuilts/build-tools/linux-x86/bin/nsjail" [-x ckati]\n')
+        self.assertEqual(cloud_freeze.observe_graph_sandbox(self.source, self.out)["status"], "mixed-observed")
+
     def test_gogc_injection_is_unique_and_reports_source_digests(self):
         source_file = self.source / "build/soong/ui/build/soong.go"
         original = source_file.read_text()

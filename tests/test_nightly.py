@@ -62,16 +62,17 @@ class PinSourcesTests(unittest.TestCase):
     def test_moved_forks_and_the_new_marker_are_pinned_consistently(self):
         projects, _ = self.config()
         old_patch = projects[nightly.DEVICE]["patches"][0]["path"]
+        build = str(int(Path(old_patch).stem.rsplit("-", 1)[-1]) + 1)
         changes = {nightly.DEVICE: {"revision": "d" * 40}, "bootable/recovery": {"revision": "e" * 40},
                    "kernel/xiaomi/crux-pe-cepheus": {"revision": "f" * 40}}
-        nightly.pin_sources(self.root, changes, "2026111050", marker=self.fake_marker)
+        nightly.pin_sources(self.root, changes, build, marker=self.fake_marker)
         projects, overrides = self.config()
         self.assertEqual(self.marked, "d" * 40)
         for path, fields in changes.items():
             self.assertEqual(projects[path]["revision"], fields["revision"])
         device = projects[nightly.DEVICE]
         self.assertEqual(device["expected_tree"], "c" * 40)
-        self.assertEqual(device["patches"][0]["path"], "config/source-patches/device-crux-dev-marker-2026111050.patch")
+        self.assertEqual(device["patches"][0]["path"], f"config/source-patches/device-crux-dev-marker-{build}.patch")
         self.assertFalse((self.root / old_patch).exists())
         # The same invariants tests.test_cloud_source_config checks on the real configuration.
         for path, fields in overrides.items():
@@ -195,6 +196,13 @@ class NightlyRunTests(unittest.TestCase):
         result, changed, pin, push, run = self.run_night()
         self.assertEqual(result, {"result": "no-change"})
         changed.assert_called_once_with("a" * 40, nightly.ROOT)
+        pin.assert_not_called()
+        push.assert_not_called()
+        run.assert_not_called()
+
+    def test_fixed_upstream_build_tools_do_not_follow_a_moving_head(self):
+        result, _, pin, push, run = self.run_night(moved={"prebuilts/build-tools": "9" * 40})
+        self.assertEqual(result, {"result": "no-change"})
         pin.assert_not_called()
         push.assert_not_called()
         run.assert_not_called()

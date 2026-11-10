@@ -44,7 +44,6 @@ TRACKED = {
     "packages/modules/adb": "crux-pe13-baseline",
     "vendor/aosp": "crux-pe13-baseline",
     "build/make": "crux-pe13-baseline",
-    "prebuilts/build-tools": "crux-pe13-baseline",
 }
 CHAIN = tuple(".github/workflows/" + name for name in (
     "freeze-standard.yml", "prepare-standard.yml", "build-standard.yml", "assemble-standard.yml", "release.yml"))

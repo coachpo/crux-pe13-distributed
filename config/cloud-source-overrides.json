@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "projects": {
+    "prebuilts/build-tools": {
+      "url": "https://github.com/PixelExperience/prebuilts_build-tools",
+      "revision": "7d311e630d48dcd46e6036e34e4d588bd9c064c9",
+      "expected_tree": "cc04d5c641361efacb1a746ec2642abd17b4a9f9"
+    },
     "bootable/recovery": {
       "url": "https://github.com/coachpo/crux-pe13-recovery",
       "revision": "44443e382969fdd96f7d3fc5917f7bd9bd81ad4c"

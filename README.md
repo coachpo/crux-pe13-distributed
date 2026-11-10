@@ -28,11 +28,19 @@ The entire path uses public-repository standard `ubuntu-22.04` runners.
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
 but does not start a duplicate while another chain is active. It allocates the
 build number and marker just like the scheduled entry. `scripts/nightly.py`'s
-`TRACKED` table names the explicit branches of all twelve maintained ROM forks:
+`TRACKED` table names the explicit branches of all eleven maintained ROM forks:
 device, vendor blobs, kernel, recovery, frameworks, ART, display, system/core,
-ADB, vendor/aosp, build/make and build-tools. Other upstream projects stay pinned;
+ADB, vendor/aosp and build/make. Build-tools is fixed at the official
+`7d311e630d48dcd46e6036e34e4d588bd9c064c9` source/tree; it is not refreshed from
+the retained historical fork. Other upstream projects stay pinned;
 the two private snapshot inputs keep their separate identity checks. A repository
 default-branch change never selects another Android version implicitly.
+
+The official build-tools pin supplies nsjail normally to A's Soong host probe.
+Graph receipts record actual command-log sandbox observations, not a guess from
+binary presence. B keeps its Rosetta nsjail workaround only in its private source
+overlay; Make/dexpreopt behavior is unchanged by this A1 migration. Historical
+source forks remain available for their retained build pins.
 
 | Stage | Maintained inputs and handoff |
 | --- | --- |

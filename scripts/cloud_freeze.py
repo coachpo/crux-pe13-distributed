@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
@@ -113,6 +114,27 @@ def build_command() -> list[str]:
     return ["/usr/bin/time", "-v", "bash", "-c", shell]
 
 
+def observe_graph_sandbox(source_root: Path, out_root: Path) -> dict:
+    """Read Soong's actual post-wrap command log; never run a replacement probe."""
+    log = out_root / "soong.log"
+    wrapped, disabled, samples = 0, False, []
+    if log.is_file():
+        with log.open(errors="replace") as stream:
+            for line in stream:
+                selected = re.search(r'executing "[^"\n]*\bnsjail"', line) is not None
+                fallback = "Build sandboxing disabled due to nsjail error." in line
+                wrapped += int(selected)
+                disabled = disabled or fallback
+                if (selected or fallback or "nsjail failed with" in line) and len(samples) < 8:
+                    samples.append(line.strip()[:1200])
+    status = ("mixed-observed" if wrapped and disabled else "wrapped-commands-observed" if wrapped
+              else "disabled-observed" if disabled else "unobserved")
+    return {"scope": "Soong graph-host commands only; not direct-Ninja worker sandboxing",
+            "status": status, "wrapped_commands": wrapped, "fallback_observed": disabled,
+            "binary_present": (source_root / "prebuilts/build-tools/linux-x86/bin/nsjail").is_file(),
+            "log": str(log), "samples": samples}
+
+
 def monitor_resources(directory: Path, stop: threading.Event) -> None:
     with (directory / "resources.jsonl").open("x") as stream:
         while True:
@@ -213,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
                                        stdout=log, stderr=subprocess.STDOUT, check=False)
         receipt["elapsed_seconds"] = round(time.monotonic() - start, 3)
         receipt["exit_code"] = completed.returncode
+        observation = observe_graph_sandbox(source_root, out_root)
+        receipt["graph_host_sandbox"] = observation
+        (evidence_dir / "graph-host-sandbox.json").write_text(json.dumps(observation, indent=2) + "\n")
+        print(json.dumps({"graph_host_sandbox": observation}))
         expected = [out_root / relative for relative in EXPECTED_GRAPHS]
         receipt["graph_files"] = [{"path": str(path), "size": path.stat().st_size,
                                    "sha256": sha256(path)} for path in expected if path.is_file()]
