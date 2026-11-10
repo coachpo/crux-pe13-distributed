@@ -135,6 +135,25 @@ def observe_graph_sandbox(source_root: Path, out_root: Path) -> dict:
             "log": str(log), "samples": samples}
 
 
+def observe_graph_dexpreopt(out_root: Path) -> dict:
+    """Report generated Make/Soong settings, not assumptions from a source pin."""
+    path = out_root / "soong/dexpreopt.config"
+    record = {"scope": "generated graph configuration, not boot/runtime acceptance",
+              "path": str(path), "status": "unobserved", "flags": {}}
+    if not path.is_file():
+        return record
+    try:
+        config = json.loads(path.read_text())
+    except (ValueError, OSError) as error:
+        return {**record, "status": "invalid", "error": str(error)}
+    keys = ("DisablePreopt", "DisablePreoptBootImages", "DisableGenerateProfile",
+            "OnlyPreoptBootImageAndSystemServer")
+    if not isinstance(config, dict) or any(type(config.get(key)) is not bool for key in keys):
+        return {**record, "status": "invalid", "error": "missing/non-boolean preopt configuration"}
+    return {**record, "status": "observed", "flags": {key: config[key] for key in keys},
+            "disabled_modules": config.get("DisablePreoptModules")}
+
+
 def monitor_resources(directory: Path, stop: threading.Event) -> None:
     with (directory / "resources.jsonl").open("x") as stream:
         while True:
@@ -164,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--source-manifest", required=True)
     parser.add_argument("--source-receipts")
+    parser.add_argument("--require-dexpreopt", action="store_true",
+                        help="require global dexpreopt/boot/profile defaults (A2), not override module exclusions")
     parser.add_argument("--gogc", type=int, default=50,
                         help="Go GC target percentage passed to soong_build (default: 50)")
     args = parser.parse_args(argv)
@@ -239,6 +260,13 @@ def main(argv: list[str] | None = None) -> int:
         receipt["graph_host_sandbox"] = observation
         (evidence_dir / "graph-host-sandbox.json").write_text(json.dumps(observation, indent=2) + "\n")
         print(json.dumps({"graph_host_sandbox": observation}))
+        dexpreopt = observe_graph_dexpreopt(out_root)
+        receipt["graph_dexpreopt"] = dexpreopt
+        (evidence_dir / "graph-dexpreopt.json").write_text(json.dumps(dexpreopt, indent=2) + "\n")
+        print(json.dumps({"graph_dexpreopt": dexpreopt}))
+        if (completed.returncode == 0 and args.require_dexpreopt and
+                (dexpreopt["status"] != "observed" or any(dexpreopt["flags"].values()))):
+            raise FreezeError("A2 graph must enable full dexpreopt, boot preopt and profile generation")
         expected = [out_root / relative for relative in EXPECTED_GRAPHS]
         receipt["graph_files"] = [{"path": str(path), "size": path.stat().st_size,
                                    "sha256": sha256(path)} for path in expected if path.is_file()]

@@ -363,6 +363,13 @@ def integrate(args):
             mutations.publish()
         (output / 'source-reads.json').write_text(json.dumps(source_reads, indent=2) + '\n')
         (output / 'host-runtime.json').write_text(json.dumps(host_reads, indent=2) + '\n')
+        # Keep the new preopt actors inspectable in the job log without fetching
+        # the large graph/index artifact. This reports existing derivation only.
+        receipt['host_runtime_summary'] = {
+            'tool_count': len(host_reads['tools']),
+            'unresolved_host_paths': host_reads['unresolved_host_paths'],
+            'dexpreopt_tools': {path: metadata for path, metadata in host_reads['tools'].items()
+                               if Path(path).name.startswith(('dex2oat', 'dexpreopt', 'profman'))}}
         (output / 'rust-native.json').write_text(json.dumps(rust_reads, indent=2) + '\n')
         (output / 'runtime-adaptations.json').write_text(json.dumps(mutations.publish(), indent=2) + '\n')
         receipt['cold_frontend_probe'] = cold_probe(source_root, out_root, output / 'cold-frontend-probe')

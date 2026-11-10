@@ -40,11 +40,13 @@ class CloudFreezeTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def run_freeze(self, runner, gogc="50"):
+    def run_freeze(self, runner, gogc="50", require_dexpreopt=False):
         argv = ["--source-root", str(self.source), "--out-root", str(self.out),
                 "--build-number", "runner-1", "--build-datetime", "1790000000",
                 "--evidence", str(self.evidence), "--source-manifest", str(self.manifest),
                 "--gogc", gogc]
+        if require_dexpreopt:
+            argv.append("--require-dexpreopt")
         with mock.patch.object(cloud_freeze.subprocess, "run", side_effect=runner):
             return cloud_freeze.main(argv)
 
@@ -52,6 +54,46 @@ class CloudFreezeTests(unittest.TestCase):
         command = cloud_freeze.build_command()
         self.assertIn("/usr/bin/time", command)
         self.assertIn("m --skip-ninja bootimage recoveryimage systemimage vendorimage -j4", command[-1])
+
+    def test_preopt_observation_requires_complete_boolean_generated_configuration(self):
+        path = self.out / "soong/dexpreopt.config"
+        self.assertEqual(cloud_freeze.observe_graph_dexpreopt(self.out)["status"], "unobserved")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"DisablePreopt":"false"}')
+        self.assertEqual(cloud_freeze.observe_graph_dexpreopt(self.out)["status"], "invalid")
+        flags = {key: False for key in ("DisablePreopt", "DisablePreoptBootImages", "DisableGenerateProfile",
+                                       "OnlyPreoptBootImageAndSystemServer")}
+        path.write_text(json.dumps(flags))
+        self.assertEqual(cloud_freeze.observe_graph_dexpreopt(self.out)["flags"], flags)
+        path.write_text(json.dumps({**flags, "DisablePreoptModules": ["SourceConfiguredModule"]}))
+        record = cloud_freeze.observe_graph_dexpreopt(self.out)
+        self.assertEqual(record["flags"], flags)
+        self.assertEqual(record["disabled_modules"], ["SourceConfiguredModule"])
+
+    def test_a2_accepts_full_preopt_graph_but_refuses_disabled_partial_or_missing(self):
+        for disabled in (None, "DisablePreopt", "DisablePreoptBootImages", "DisableGenerateProfile",
+                         "OnlyPreoptBootImageAndSystemServer", "missing"):
+            with self.subTest(disabled=disabled), tempfile.TemporaryDirectory() as directory:
+                self.out = Path(directory) / "out"
+                self.evidence = Path(directory) / "evidence"
+                def run(command, cwd, env, stdout, stderr, check):
+                    for relative in cloud_freeze.EXPECTED_GRAPHS:
+                        path = self.out / relative
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(relative)
+                    flags = {key: key == disabled for key in (
+                        "DisablePreopt", "DisablePreoptBootImages", "DisableGenerateProfile",
+                        "OnlyPreoptBootImageAndSystemServer")}
+                    if disabled != "missing":
+                        (self.out / "soong/dexpreopt.config").write_text(json.dumps(flags))
+                    return subprocess.CompletedProcess(command, 0)
+                if disabled is None:
+                    self.assertEqual(self.run_freeze(run, require_dexpreopt=True), 0)
+                else:
+                    with self.assertRaisesRegex(cloud_freeze.FreezeError, "A2 graph must enable"):
+                        self.run_freeze(run, require_dexpreopt=True)
+                    receipt = json.loads((self.evidence / "graph-receipt.json").read_text())
+                    self.assertEqual(receipt["status"], "failed")
 
     def test_graph_sandbox_requires_a_real_wrapped_command_not_just_a_binary(self):
         binary = self.source / "prebuilts/build-tools/linux-x86/bin/nsjail"
@@ -147,6 +189,15 @@ class CloudFreezeTests(unittest.TestCase):
         receipt = json.loads((self.evidence / "graph-receipt.json").read_text())
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(receipt["exit_code"], 7)
+
+    def test_failed_build_is_not_masked_by_missing_preopt_configuration(self):
+        result = self.run_freeze(lambda command, **kwargs: subprocess.CompletedProcess(command, 7),
+                                 require_dexpreopt=True)
+        self.assertEqual(result, 7)
+        receipt = json.loads((self.evidence / "graph-receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["exit_code"], 7)
+        self.assertEqual(receipt["graph_dexpreopt"]["status"], "unobserved")
 
     def test_missing_expected_graph_output_fails_even_after_zero_exit(self):
         result = self.run_freeze(lambda command, **kwargs: subprocess.CompletedProcess(command, 0))

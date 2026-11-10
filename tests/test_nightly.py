@@ -207,6 +207,13 @@ class NightlyRunTests(unittest.TestCase):
         push.assert_not_called()
         run.assert_not_called()
 
+    def test_fixed_upstream_make_does_not_follow_a_moving_head(self):
+        result, _, pin, push, run = self.run_night(moved={"build/make": "9" * 40})
+        self.assertEqual(result, {"result": "no-change"})
+        pin.assert_not_called()
+        push.assert_not_called()
+        run.assert_not_called()
+
     def test_manual_force_builds_without_changes(self):
         result, changed, pin, push, run = self.run_night(force=True)
         self.assertEqual(result["result"], "started")

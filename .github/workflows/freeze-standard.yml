@@ -201,7 +201,8 @@ jobs:
             --source-root /home/qingli/crux-pe13-offline-2026-09-25/pe13 \
             --out-root "$RUNNER_TEMP/android-out" --build-number "$BUILD_NUMBER" \
             --build-datetime "$BUILD_DATETIME" --gogc "$GOGC_PERCENT" \
-            --source-receipts "$RUNNER_TEMP/evidence/source" --evidence "$RUNNER_TEMP/evidence/graph"
+            --source-receipts "$RUNNER_TEMP/evidence/source" --evidence "$RUNNER_TEMP/evidence/graph" \
+            --require-dexpreopt
       - name: Archive fresh graph and frontend metadata
         run: |
           tar --zstd -cf "$RUNNER_TEMP/evidence/graph-out.tar.zst" -C "$RUNNER_TEMP" android-out

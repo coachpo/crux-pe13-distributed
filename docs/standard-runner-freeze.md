@@ -318,11 +318,13 @@ These artifacts can be regenerated from the pinned source manifest, workflow
 code and run inputs, subject to continued availability of their pinned public
 source revisions and required archive sources.
 
-### Official build-tools and host-profile boundary
+### Official Make/build-tools and host-profile boundary
 
 The production manifest/override fix `prebuilts/build-tools` at official
 `7d311e630d48dcd46e6036e34e4d588bd9c064c9`, tree
 `cc04d5c641361efacb1a746ec2642abd17b4a9f9`. It is not a moving fork input.
+Make is fixed at official `0189aa1e52e4461d6bfd9976f6d602e23738b34c`, tree
+`5e0dd4eaced959b83860c62ff57a269c828f7057`, also outside fork tracking.
 A receives the normal nsjail executable for Soong's supported runtime probe.
 `graph-host-sandbox.json` and the graph receipt record actual Soong command-log
 observations: wrapped commands, explicit fallback, mixed, or unobserved. A
@@ -330,10 +332,19 @@ binary's presence alone is not evidence of selection. This observation reads
 logs without changing the probe or forcing success, and does not describe the
 separate direct-Ninja workers as sandboxed.
 
-B's own private source overlay hides only nsjail for Rosetta; it does not rename
-the binary in shared source or modify A. The Make pin and inherited dexpreopt
-settings remain unchanged in this A1 migration; restoring their official
-defaults is the separate A2 decision. Legacy transport profiles and dated source
+B's own private source overlay hides nsjail and disables dexpreopt/profile for
+Rosetta; shared source stays official and clean. A2 enables the official defaults
+in A. `graph-dexpreopt.json` and the receipt report the actual generated
+`soong/dexpreopt.config`; normal freeze uses `--require-dexpreopt` and refuses
+disabled, boot-only, missing or invalid configurations after successful graph
+generation. The observation never changes those flags or suppresses build errors.
+Module-level `DisablePreoptModules` exclusions are recorded separately as supplied
+by upstream/product configuration; the global gate does not rewrite or prohibit them.
+Graph configuration and host build success do not establish device boot/performance.
+
+The Android target-files re-signing interface and its former local fix are out
+of maintained Crux scope; do not use it as a ZIP signing alternative. The supported
+format/key path remains crux-install/1 with `crux_zip.py`. Legacy transport profiles and dated source
 records are not current production manifests and retain their original pins
 for historical rebuild contracts; existing forks are not deleted.
 
