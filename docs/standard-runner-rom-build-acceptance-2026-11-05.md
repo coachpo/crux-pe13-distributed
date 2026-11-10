@@ -1,5 +1,11 @@
 # PE13 fresh ROM — standard-runner acceptance
 
+Historical acceptance only. The frozen branch, artifact defaults and re-run
+commands below document that version, not a current alternative pipeline. Use
+the [hosted operation guide](standard-runner-freeze.md) for new builds and stage
+recovery. Preserve the original observations; publication and device acceptance
+have separate evidence.
+
 **Accepted on 2026-11-05:** a complete cold compile, assembly and image
 verification of `aosp_crux-userdebug` succeeded using only standard
 `ubuntu-22.04` GitHub-hosted Linux runners in the public
@@ -94,7 +100,7 @@ was published from the original assembly `42059779500` and artifact
 the same bytes; the rerun does not replace the Dev v1 delivery or establish
 device acceptance.
 
-## Re-run without a local build environment
+## Historical re-run procedure (frozen revision only)
 
 In the repository's **Actions** page, run **Compile fresh PE13 on standard
 runners** (`build-standard.yml`) on `verify/pe13-standard-4423f08` with the defaults

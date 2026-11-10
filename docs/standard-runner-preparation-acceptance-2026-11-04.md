@@ -1,5 +1,9 @@
 # Standard runner PE13 preparation — acceptance handoff
 
+Historical acceptance for the named build only. Original source/delivery claims
+below retain their dated scope; current pins, automatic continuation and ZIP
+publication follow the [hosted operation guide](standard-runner-freeze.md).
+
 **Status: accepted for standard-runner build preparation.** Source acquisition,
 fresh graph generation, canonical indexing, runtime dependency completion and
 pruning, sharding, and parallel cold-input capsule packing passed on public

@@ -3,7 +3,8 @@
 Plan: standard-runner-build / revision 13 / complete (2026-11-05).
 
 Historical execution record. For current dispatch and admitted inputs, see the
-[standard-runner runbook](standard-runner-rom-build-acceptance-2026-11-05.md).
+[hosted operation guide](standard-runner-freeze.md). Its original contracts and
+authority below are historical, not current build/publication policy.
 
 ## Authority, baseline and acceptance
 

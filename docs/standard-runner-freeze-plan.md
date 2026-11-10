@@ -2,6 +2,10 @@
 
 Plan: standard-runner-freeze / revision 7 / done (2026-11-04).
 
+Historical execution snapshot only. Paths, delivery names, authority and commands
+below describe that run; they are not current installation or dispatch entries.
+Use the [hosted operation guide](standard-runner-freeze.md) for maintained operation.
+
 ## Outcome and scope
 
 The complete preparation chain is accepted on public-repository standard

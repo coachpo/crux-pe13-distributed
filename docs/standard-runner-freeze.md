@@ -1,4 +1,27 @@
-# PE13 build preparation on standard GitHub-hosted runners
+# PE13 hosted build and ZIP release operation guide
+
+This is the current operation guide; [README](../README.md) is the pipeline
+overview. Dated plans/acceptances retain evidence for their original inputs and
+versions, not additional supported dispatch paths.
+
+## Normal entry
+
+The scheduled nightly checks for changes. To request a complete build even with
+unchanged sources, manually dispatch `nightly.yml` on main:
+
+```sh
+gh workflow run nightly.yml --repo coachpo/crux-pe13-distributed --ref main
+```
+
+It allocates the build number, pins sources and marker, then starts freeze →
+prepare → compile → assembly → CI signing/publication without local inputs or
+per-stage manual dispatch. An active chain prevents a duplicate. Assistants need
+explicit owner authorization for dispatch/publication; the configured schedule
+runs independently. Installation is a separate, destructive device operation.
+
+The stage controls below are for diagnosis/recovery, not a second normal build
+procedure. Do not dispatch a stage again when its automatic successor is already
+queued/running. Preserve matching build, source and execution-code identities.
 
 `freeze-standard.yml` and `prepare-standard.yml` move PE13 source acquisition,
 Soong/Kati graph generation, graph indexing, sharding and cold-input capsule
@@ -9,20 +32,18 @@ This workflow prepares build inputs. `m --skip-ninja bootimage recoveryimage
 systemimage vendorimage` generates the four-image build graph; it does not compile
 the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
 and packs input capsules; it does not assemble or deploy ROM/Recovery images,
-publish an OTA, or install anything on a device. The accepted
-`dev-pe13-2026101105-v3` delivery remains a separate existing build. The complete
-preparation chain has [passed acceptance](standard-runner-preparation-acceptance-2026-11-04.md).
-The separate [fresh ROM acceptance and runbook](standard-runner-rom-build-acceptance-2026-11-05.md)
-continues through native compilation and verified unpublished images on the same
-standard runner class; these two preparation workflows remain preparation-only.
+publish the ZIP, or install anything on a device. Historical
+[preparation](standard-runner-preparation-acceptance-2026-11-04.md) and
+[compile/assembly](standard-runner-rom-build-acceptance-2026-11-05.md) acceptances
+record the original standard-runner validation. Current publication is the
+signed TWRP ZIP, not the retired phone OTA channel.
 
 Both workflows can be dispatched entirely from the repository's GitHub Actions
 page. The CLI commands below are optional remote controls, not local build steps.
-For a new build, run full freeze first; then choose Prepare with `stage=full`,
-that successful freeze run's ID, and the same build number. Leave `index_run`
-empty to create its new canonical index. Preparation automatically slices and
-packs the complete plan. Accept the result only after every planned pack job
-and the aggregate registry succeed.
+For a new build use nightly rather than inventing a build number against an old
+marker patch. A successful full freeze automatically dispatches full preparation;
+preparation automatically slices, packs and continues the chain. Accept it only
+after every planned pack job and the aggregate registry succeed.
 
 ## Identities and reuse
 
@@ -118,8 +139,8 @@ Set `CRUX_SOURCE_SNAPSHOTS_TOKEN` in the consuming repository's Actions
 secrets using a fine-grained token with **Contents: read** on exactly
 `coachpo/crux-pe13-vendor-gms-snapshot` and
 `coachpo/crux-pe13-faceunlock-snapshot`. The normal consuming-repository
-workflow token does not cover these private repositories. Only the manual
-trusted `main` snapshot-layer steps receive the credential. The secret is
+workflow token does not cover these private repositories. Only trusted `main`
+snapshot-layer steps receive the credential. The secret is
 not sent to redirected asset hosts or native Git/build subprocesses. This
 protects the private source origin and credential; the resulting source
 layers and downstream artifacts in the public build repository are public.
@@ -133,10 +154,12 @@ complete-run `source_run` override remains exact-manifest only.
 When replacing one of these snapshots, review its `snapshot.json`, private
 repository and uploaded Release asset, and independently verify the tarball
 bytes, embedded commit and extracted Git tree. Update the commit, tree and
-release/asset lock together in `config/cloud-source-overrides.json` and
-regenerate the source manifest from the matching resolved XML and source
-layout. The generator requires these overrides and never substitutes a
-public archive. Rotate the credential under the same Actions secret name
+release/asset lock consistently in `config/cloud-source-manifest.json` and
+`config/cloud-source-overrides.json`, using nightly's validated snapshot update
+route for routine builds. Manual lock changes must pass source-configuration
+tests and all three source checks. Do not regenerate the entire manifest without
+the matching complete layout inputs or substitute a public archive. Rotate the
+credential under the same Actions secret name
 with the same two-repository read scope; neither operation needs Python code
 changes.
 
@@ -278,20 +301,19 @@ Record the workflow commit, build number and datetime, manifest digest, source,
 graph, index, shard and pack run IDs, and the relevant receipts/logs. An unverified
 required gate leaves acceptance pending; an intentionally skipped stage with a
 compatible accepted upstream run is a supported resume, not a missing gate.
-The accepted build `2026110303` uses graph/source run `41677764699`, index run
-`41685367061`, and successful shard job `126375516290` in `41769467686`.
-Pack run `41779197896` passed the original
-[preparation acceptance](standard-runner-preparation-acceptance-2026-11-04.md),
-but later native runs exposed additional SOURCE reads. The final admitted pack
-is **`42001383332`**, with the same graph/index/shard identity and all 39
-repacked cold capsules. See the [ROM acceptance](standard-runner-rom-build-acceptance-2026-11-05.md)
-for the complete cold compile and assembly evidence.
+Original build/run bindings remain in the dated preparation and ROM acceptance
+records. Select current inputs from the successful runs of the chain being
+operated, not from a historical table.
 
 Artifacts are temporary Actions records: `cloud-source-<nn>` and
 `failure-source-<nn>` are retained for 7 days; `cloud-graph-<build>`,
 `cloud-index-<build>`, `cloud-shards-<build>`, `cloud-capsule-<shard>`,
 `cloud-pack-receipt-<shard>` and `cloud-pack-registry-<build>` are retained for
-14 days. Download and preserve required acceptance evidence before expiry.
+14 days. Keep compact receipts/logs needed for validation, not permanent local
+archives of Actions ZIPs, source layers or compiled inputs. The retained output
+is the signed Release; reconstruct intermediate inputs from their pins when
+needed. Existing specifically retained artifact exceptions belong to the
+workspace component record, not a general archiving rule.
 These artifacts can be regenerated from the pinned source manifest, workflow
 code and run inputs, subject to continued availability of their pinned public
 source revisions and required archive sources.
@@ -312,10 +334,37 @@ frontend identity, product namespace and kernel exports. The shard count follows
 the graph (39 for `2026110501` and `2026110804`, 40 for `2026110704`). If source
 or graph shape changes beyond a fixed policy (runtime/kernel policy, slice and
 producer requirements, image/FIT expectations), the chain stops at that check
-and reports it; fix the policy and resume from the failed stage. Do not bypass
+and reports it. Retry failed jobs on the same revision; after a code/policy change
+start a new full freeze rather than mixing stage revisions. Do not bypass
 the admission checks. The records under `docs/evidence/` are the admissions of
 earlier, manually admitted builds.
 
-The compile then dispatches its assembly, and the assembly its release; see the
-[compile → assemble runbook](standard-runner-rom-build-acceptance-2026-11-05.md#re-run-without-a-local-build-environment)
-for manual runs.
+## 4. Compile, assemble and publish
+
+Compile automatically dispatches assembly; assembly automatically dispatches
+`release.yml` with `operation=release`. The release verifies lineage, signs the
+assembly's install manifest in the main-only `install-signing` environment,
+checks its public-key signature and payload digests, then publishes the ZIP,
+checksum, README and pinned install TWRP/checksum. No offline signature or draft
+approval is required by the normal chain. Releasing does not install anything.
+
+Only if an automatic handoff did not start, or for a reviewed stage retry, the
+equivalent advanced controls are:
+
+```sh
+gh workflow run build-standard.yml --repo coachpo/crux-pe13-distributed --ref main \
+  -f pack_run=PACK_RUN -f shard_run=SHARD_RUN -f build_number=BUILD_NUMBER
+gh workflow run assemble-standard.yml --repo coachpo/crux-pe13-distributed --ref main \
+  -f build_run=BUILD_RUN
+gh workflow run release.yml --repo coachpo/crux-pe13-distributed --ref main \
+  -f assembly_run=ASSEMBLY_RUN -f operation=preflight
+```
+
+These are alternatives at separate stage boundaries, not a sequence to launch
+at once. Each upstream run must be successful and use the current execution
+commit. `preflight` verifies without Release writes; `release` stages and publishes
+in one run. `draft`/`publish` and a public offline signature remain supported for
+controlled recovery. Do not pass local ROM output or bypass source/receipt gates.
+
+Inspect the published Release's source provenance and required assets. Hosted
+acceptance is not device acceptance, UI/function testing or a rollback change.

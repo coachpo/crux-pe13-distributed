@@ -20,9 +20,9 @@ device marker patch and its patched tree, commits as `github-actions[bot]` and
 dispatches a full freeze. A night without changes, or with a chain run still
 queued or running, starts nothing. Each stage then dispatches the next one from
 its last job; partial runs (`source-only`, `index`, `shard`) do not continue the
-chain. The last manually released build is `2026110804`
-([crux-pe13-2026110804-v1](https://github.com/coachpo/crux-pe13-distributed/releases/tag/crux-pe13-2026110804-v1),
-from [assembly 42553763990](https://github.com/coachpo/crux-pe13-distributed/actions/runs/42553763990)).
+chain. Build identities and upstream run provenance are recorded with the
+[published ZIP releases](https://github.com/coachpo/crux-pe13-distributed/releases),
+not maintained as a second mutable baseline in this overview.
 The entire path uses public-repository standard `ubuntu-22.04` runners.
 
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
@@ -36,7 +36,7 @@ default-branch change never selects another Android version implicitly.
 
 | Stage | Maintained inputs and handoff |
 | --- | --- |
-| [Prepare](docs/standard-runner-freeze.md) | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a pack registry and one cold capsule per shard. |
+| Prepare | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a pack registry and one cold capsule per shard. |
 | Compile | `build-standard.yml` admits the pack registry of the preparation run it is given. The graph receipt, the canonical index receipt and the slice plan come from the freeze and preparation runs that registry names and must bind to each other; with the runtime policy they form `cloud-build-context`, which drives eight calls to `compile-standard-wave.yml`. Shards import only declared predecessor outputs from this execution; the final summary verifies a fresh receipt for every admitted shard. |
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and seven same-run producer bindings. It verifies the four images and both identity-free FITs, writes `delivery-record.json` and `SHA256SUMS`, checks that the compressed system payload decodes to the native system image identity, then builds `installer/` and writes the unsigned ZIP payload (`zip-payload/`) with `scripts/crux_zip.py prepare`. `cloud-fresh-rom-<build_run>` is an Actions artifact, not a release; `zip-manifest` holds the payload's `crux-install.txt` for signing. |
 | Release | The `sign` job runs in the `install-signing` environment: it waits for the assembly run to finish, checks its lineage and the manifest identity and signs `crux-install.txt` with the `CRUX_INSTALL_SIGNING_KEY` secret. The `release` job verifies the whole assembly artifact, builds the ZIP, checks the signature against `keys/crux-b-install-2026-11-07.pub.pem` and stages, then publishes, the prerelease `crux-pe13-<build>-v<n>`: this assembly's tag, or the next free version of its build. Manual dispatches keep `preflight` (read only), `draft` and `publish`, and accept an offline signature in place of the CI one. |
@@ -48,6 +48,11 @@ upstream runs used its execution commit before consuming inputs or signing.
 If pipeline code changes, start a new full freeze (manual nightly is the unified
 entry); do not continue new code against older prepared stage artifacts.
 Verified source-layer reuse remains governed by its existing byte contracts.
+
+Use the [hosted operation guide](docs/standard-runner-freeze.md) for the normal
+entry, stage recovery, input reuse and release checks. Dated plans and acceptance
+records describe their original runs; their old branches, defaults and commands
+are not current dispatch instructions.
 
 [`docs/evidence/`](docs/evidence/) keeps the admission records of the manually
 admitted builds as history; bootstrap no longer reads them. See the
@@ -74,6 +79,9 @@ python3 -m unittest discover -s tests
 make -C installer test
 ```
 
-For hosted diagnostics, `probe.yml` measures runner resources and
-`test-artifact-retention.yml` exercises the live retry/failure contract of
-`retain-artifact`. Neither produces compilation inputs.
+`test-artifact-retention.yml` remains a maintenance test of the production
+`retain-artifact` helper's live retry/failure contract; it produces no compilation
+inputs. Production stages collect their own runner resource samples. The old
+Release-backed wave dispatchers and one-time resource probe are retired; only
+the artifact-backed chain above is maintained. Shared graph/capsule/worker and
+assembly libraries remain production dependencies, with their behavior tests.
