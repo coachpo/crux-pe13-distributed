@@ -204,10 +204,11 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
     ids = [task for wave in waves for task in wave]
     capsules = {row['shard_id']: row for row in registry['capsules']}
     # The task count is the preparation registry's, which pack-summary checked against the slice plan.
-    if (len(waves) != 8 or len(set(ids)) != len(ids)
+    # Match build-standard.yml's serial calls, including the dexpreopt-enabled final wave.
+    if (len(waves) != 9 or any(not wave for wave in waves) or len(set(ids)) != len(ids)
             or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
             or set(ids) != set(inventory['shards'])):
-        raise ValueError('Expected the complete eight-wave inventory of the preparation registry')
+        raise ValueError('Expected the complete nine-wave inventory of the preparation registry')
     tasks, seen = {}, set()
     for number, wave in enumerate(plan['waves']):
         for task in wave:

@@ -359,9 +359,10 @@ canonical index receipt of its index run. The graph receipt must be the
 successful graph of this build and source manifest, and the index receipt must
 name that graph run, build and manifest and the SHA-256 of that exact graph
 receipt. Every other check stays: registry and shard receipt bindings, plan
-digest, eight dependency waves, shard manifest digests, unique output owners,
+digest, nine dependency waves, shard manifest digests, unique output owners,
 frontend identity, product namespace and kernel exports. The shard count follows
-the graph (39 for `2026110501` and `2026110804`, 40 for `2026110704`). If source
+the graph (40 for the official-Make, dexpreopt-enabled A2 graph). Earlier
+eight-wave graphs use their matching pipeline revision when rebuilt. If source
 or graph shape changes beyond a fixed policy (runtime/kernel policy, slice and
 producer requirements, image/FIT expectations), the chain stops at that check
 and reports it. Retry failed jobs on the same revision; after a code/policy change

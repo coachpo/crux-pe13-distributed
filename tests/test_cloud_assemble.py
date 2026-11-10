@@ -28,8 +28,8 @@ class CloudAssembleTests(unittest.TestCase):
         self.product = self.out / 'target/product/crux'
         self.kernel = self.product / 'obj/KERNEL_OBJ'
         self.qcom = self.kernel / 'arch/arm64/boot/dts/qcom'
-        self.ids = [f'task-{index:02d}' for index in range(39)]
-        sizes = (13, 3, 7, 6, 5, 2, 2, 1)
+        self.ids = [f'task-{index:02d}' for index in range(40)]
+        sizes = (13, 3, 7, 6, 5, 2, 2, 1, 1)
         self.waves, cursor = [], 0
         for size in sizes:
             self.waves.append(self.ids[cursor:cursor + size])
@@ -179,9 +179,21 @@ class CloudAssembleTests(unittest.TestCase):
             self.context, self.root / 'staging', downloader, self.manifest_path)
         self.assertEqual(len(bindings), 2)
         self.assertEqual({item['id'] for item in bindings}, {self.image_owner, self.kernel_owner})
-        self.assertEqual(len([name for name in downloads if name.startswith('fresh-receipt-')]), 39)
+        self.assertEqual(len([name for name in downloads if name.startswith('fresh-receipt-')]), 40)
         self.assertEqual(len([name for name in downloads if name.startswith('shard-')]), 2)
         self.assertTrue(dependency_root.is_dir())
+
+    def test_final_wave_cannot_be_omitted_from_context(self):
+        self.context['waves'] = self.waves[:8]
+        self.context['tasks'].pop(self.ids[-1])
+        with self.assertRaisesRegex(cloud_assemble.AssembleError, 'nine-wave'):
+            cloud_assemble.validate_context(self.context, self.manifest_path)
+
+    def test_final_wave_receipt_must_match_this_execution(self):
+        receipt = self._receipt(self.ids[-1], [])
+        receipt['run_id'] = '9000'
+        with self.assertRaises(cloud_assemble.AssembleError):
+            cloud_assemble._validate_receipt(self.context, self.ids[-1], receipt)
 
     def test_missing_kernel_child_export_fails_closed(self):
         receipts = {task_id: self._receipt(task_id, []) for task_id in self.ids}

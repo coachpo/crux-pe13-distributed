@@ -26,15 +26,15 @@ def sha(data):
 
 def valid_summary():
     producers = []
-    for wave in range(8):
-        count = 5 if wave < 7 else 4
+    for wave in range(9):
+        count = 5 if wave < 4 else 4
         for shard in range(count):
             ident = f"w{wave:03}-s{shard:03}"
             producers.append({"id": ident, "run_id": COMPILE_RUN,
                               "artifact": "shard-" + ident,
                               "expected_worker_commit": WORKER,
                               "expected_manifest_sha256": "c" * 64})
-    return {"schema_version": 1, "status": "success", "task_count": 39, "execution_id": COMPILE_RUN,
+    return {"schema_version": 1, "status": "success", "task_count": 40, "execution_id": COMPILE_RUN,
             "worker_commit": WORKER,
             "fresh_build": {"execution_id": COMPILE_RUN, "pack_run": "1", "shard_run": "2",
                             "plan_sha256": "d" * 64, "source_manifest_sha256": "e" * 64},
@@ -196,7 +196,7 @@ class ReleaseSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(source.SourceError, "identity-free clean-install package"):
             self.invoke(serial="8bd37df4")
 
-    def test_summary_requires_every_task_and_all_eight_waves(self):
+    def test_summary_requires_every_task_and_all_nine_waves(self):
         def grow(summary):
             summary["producers"].append(dict(summary["producers"][-1], id="w005-s005", artifact="shard-w005-s005"))
             summary["task_count"] = len(summary["producers"])
@@ -205,9 +205,9 @@ class ReleaseSourceTests(unittest.TestCase):
             self.invoke(mutate_summary=lambda summary: summary["producers"].pop())
 
         def drop_last_wave(summary):
-            summary["producers"] = [p for p in summary["producers"] if not p["id"].startswith("w007-")]
+            summary["producers"] = [p for p in summary["producers"] if not p["id"].startswith("w008-")]
             summary["task_count"] = len(summary["producers"])
-        with self.assertRaisesRegex(source.SourceError, "all eight waves"):
+        with self.assertRaisesRegex(source.SourceError, "all nine waves"):
             self.invoke(mutate_summary=drop_last_wave)
 
 

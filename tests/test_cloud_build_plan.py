@@ -62,7 +62,7 @@ class GraphAdmissionTests(unittest.TestCase):
 
 
 class BuildPlanTests(unittest.TestCase):
-    def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 1)):
+    def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 1, 1)):
         waves, capsules, inventory = [], [], {}
         prior = []
         for wave, count in enumerate(counts):
@@ -85,16 +85,31 @@ class BuildPlanTests(unittest.TestCase):
 
     def test_admits_exact_inventory_and_prior_wave_dependencies(self):
         waves, tasks = plan.admit_inputs(*self.inputs(), 'plan')
-        self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 1])
-        self.assertEqual(len(tasks), 39)
+        self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 1, 1])
+        self.assertEqual(len(tasks), 40)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
 
     def test_task_count_comes_from_the_preparation_registry(self):
-        waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1)), 'plan')
-        self.assertEqual(len(tasks), 40)
+        waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1, 1)), 'plan')
+        self.assertEqual(len(tasks), 41)
         args = self.inputs()
-        args[0]['shard_count'] = 40
-        with self.assertRaisesRegex(ValueError, 'complete eight-wave inventory'):
+        args[0]['shard_count'] = 41
+        with self.assertRaisesRegex(ValueError, 'complete nine-wave inventory'):
+            plan.admit_inputs(*args, 'plan')
+
+    def test_incomplete_final_wave_and_capsules_are_rejected(self):
+        for counts in ((13, 3, 7, 6, 5, 2, 2, 1), (13, 3, 7, 6, 5, 2, 2, 1, 0)):
+            with self.subTest(counts=counts), self.assertRaisesRegex(ValueError, 'complete nine-wave'):
+                plan.admit_inputs(*self.inputs(counts), 'plan')
+        args = self.inputs()
+        args[0]['capsules'].pop()
+        with self.assertRaisesRegex(ValueError, 'complete nine-wave'):
+            plan.admit_inputs(*args, 'plan')
+
+    def test_final_wave_cannot_depend_on_uncompleted_task(self):
+        args = self.inputs()
+        args[3]['waves'][8][0]['depends_on'] = ['w008-s000']
+        with self.assertRaisesRegex(ValueError, 'same wave'):
             plan.admit_inputs(*args, 'plan')
 
     def test_identity_and_same_wave_dependency_are_rejected(self):

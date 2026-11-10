@@ -97,8 +97,14 @@ jobs:
     with:
       wave: 7
 
-  summary:
+  wave8:
     needs: wave7
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 8
+
+  summary:
+    needs: wave8
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -145,7 +151,7 @@ jobs:
         run: python3 scripts/pipeline_report.py --stage compile --detail 'The assembly could not be dispatched.'
 
   report:
-    needs: [bootstrap, wave0, wave1, wave2, wave3, wave4, wave5, wave6, wave7, summary, next]
+    needs: [bootstrap, wave0, wave1, wave2, wave3, wave4, wave5, wave6, wave7, wave8, summary, next]
     if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10

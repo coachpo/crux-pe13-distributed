@@ -239,7 +239,7 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
                  and producer.get("expected_worker_commit") == worker
                  and _is_sha(producer.get("expected_manifest_sha256")),
                  "compile producer provenance mismatch: " + ident)
-    _require(waves == set(range(8)), "compile summary does not cover all eight waves")
+    _require(waves == set(range(9)), "compile summary does not cover all nine waves")
 
 
 def _lineage(assembly_run: str, token: str):
