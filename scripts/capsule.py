@@ -26,7 +26,9 @@ COMPILED_SUFFIXES = {
     ".o", ".a", ".so", ".jar", ".apk", ".dex", ".class", ".art",
     ".odex", ".vdex", ".img", ".dtb", ".dtbo", ".ko", ".bc", ".zip",
 }
-HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal", ".rsh"}
+# Generated translation units can include assembly bodies from their -I namespace;
+# their contents are not available to the source-only collector for direct scanning.
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal", ".rsh", ".s", ".S"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
 # A preprocessor include can name a body whose suffix is not a header, such as
 # BoringSSL's fipsmodule/aes/aes.c, libc++'s exception_libcxxabi.ipp or a

@@ -1404,6 +1404,36 @@ class CapsuleTests(unittest.TestCase):
         for relative in ["macros/outer.s", "macros/inner.S", "macros/payload.bin"]:
             self.assertIn(str(self.source / relative).lstrip("/"), archive.getnames())
 
+    def test_generated_assembly_can_include_source_bodies_after_cold_transport(self):
+        generated = self.out / "gen/interpreter.S"
+        self.write(generated, '#include "warm-only.S"\n')
+        self.write(self.source / "runtime/arch/support.S", '#include "nested.s"\n')
+        self.write(self.source / "runtime/arch/nested.s", '#define ASSEMBLY_VALUE 42\n')
+        self.write(self.source / "runtime/unrelated.cpp", 'unrelated source\n')
+        self.write(self.source / "runtime/stale.o", b"\x7fELFstale")
+        self.manifest["leaf_inputs"] = [str(generated)]
+        self.manifest["external_inputs"] = [str(generated)]
+        self.manifest["commands"] = ["cc -Iruntime -c " + str(generated)
+                                     + " -o " + str(self.out / "unit.o")]
+        original = Path.read_text
+        def reject_generated_read(path, *args, **kwargs):
+            if path == generated:
+                raise AssertionError("Capsule must not read an earlier OUT assembly")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", reject_generated_read):
+            _, metadata, archive = self.collect()
+        self.assertEqual(metadata["external_inputs"], [{"path": str(generated)}])
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        for path in [generated, self.source / "runtime/unrelated.cpp", self.source / "runtime/stale.o"]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        # A fresh producer supplies the generated input, not the source capsule.
+        self.write(generated, '#include "arch/support.S"\nASSEMBLY_VALUE\n')
+        result = subprocess.run(["cc", "-E", "-P", "-x", "assembler-with-cpp", "-Iruntime", str(generated)],
+                                cwd=self.source, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), "42")
+
     def test_external_produced_objects_are_required_from_receipts(self):
         external = self.out / "upstream.o"
         self.write(external, b"\x7fELFold")

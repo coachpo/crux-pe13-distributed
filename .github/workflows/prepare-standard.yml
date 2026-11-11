@@ -492,6 +492,7 @@ jobs:
         uses: ./.github/actions/retain-artifact
         with:
           name: cloud-capsule-${{ matrix.shard }}
+          overwrite: true
           path: |
             ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.tar.zst
             ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.json
@@ -507,6 +508,7 @@ jobs:
         uses: ./.github/actions/retain-artifact
         with:
           name: cloud-pack-receipt-${{ matrix.shard }}
+          overwrite: true
           path: ${{ runner.temp }}/capsules/${{ matrix.shard }}/workflow-pack-receipt.json
           compression-level: 0
           retention-days: 14
