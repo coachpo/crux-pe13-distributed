@@ -28,6 +28,12 @@ Soong/Kati graph generation, graph indexing, sharding and cold-input capsule
 packing to the public repository's standard `ubuntu-22.04` GitHub-hosted Linux
 runners. No larger or self-hosted runner is used.
 
+Package provisioning uses `scripts/install_runner_packages.py` at every build
+stage. It omits the Azure entry from the runner's existing Ubuntu mirror list
+after repeated provisioning DNS failures; the official archive/security entries,
+package arguments and APT signature verification remain unchanged. It does not
+clear package lists or build caches, or turn dependency failures into success.
+
 This workflow prepares build inputs. `m --skip-ninja bootimage recoveryimage
 systemimage vendorimage` generates the four-image build graph; it does not compile
 the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,

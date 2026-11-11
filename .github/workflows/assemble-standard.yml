@@ -29,8 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/result"
-          sudo apt-get update
-          sudo apt-get install -y zstd u-boot-tools device-tree-compiler e2fsprogs \
+          python3 scripts/install_runner_packages.py zstd u-boot-tools device-tree-compiler e2fsprogs \
             android-sdk-libsparse-utils cpio python-is-python3 gcc-aarch64-linux-gnu
           sudo mkdir -p /home/qingli
           sudo chown "$(id -u):$(id -g)" /home/qingli

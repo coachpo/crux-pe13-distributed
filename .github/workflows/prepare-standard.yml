@@ -58,8 +58,7 @@ jobs:
       - name: Install index transport tools
         run: |
           mkdir -p "$RUNNER_TEMP/index-evidence"
-          sudo apt-get update
-          sudo apt-get install -y zstd
+          python3 scripts/install_runner_packages.py zstd
           uname -a > "$RUNNER_TEMP/index-evidence/runner.txt"
           nproc >> "$RUNNER_TEMP/index-evidence/runner.txt"
           free -b >> "$RUNNER_TEMP/index-evidence/runner.txt"
@@ -143,8 +142,7 @@ jobs:
       - name: Install source actor and transport tools
         run: |
           mkdir -p "$RUNNER_TEMP/shard-evidence"
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools zstd ninja-build build-essential
+          python3 scripts/install_runner_packages.py squashfs-tools zstd ninja-build build-essential
           df -B1 > "$RUNNER_TEMP/shard-evidence/disk-before.txt"
           free -b > "$RUNNER_TEMP/shard-evidence/memory-before.txt"
       - name: Restore accepted graph and canonical index
@@ -244,9 +242,7 @@ jobs:
           python3 scripts/pipeline_code.py --run "$GRAPH_RUN" \
             --run "$INPUT_INDEX_RUN" --run "$INPUT_SHARD_RUN"
       - name: Install shard inventory decompressor
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zstd
+        run: python3 scripts/install_runner_packages.py zstd
       - name: Validate selected shard run and construct exact pack matrix
         id: plan
         run: |
@@ -407,8 +403,7 @@ jobs:
       - name: Install capsule verification and source mount tools
         run: |
           mkdir -p "$RUNNER_TEMP/capsule-evidence"
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools zstd python3
+          python3 scripts/install_runner_packages.py squashfs-tools zstd python3
           df -B1 > "$RUNNER_TEMP/capsule-evidence/disk-before.txt"
           free -b > "$RUNNER_TEMP/capsule-evidence/memory-before.txt"
       - name: Restore accepted graph, slice, and pruned-index artifacts

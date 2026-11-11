@@ -35,7 +35,7 @@ jobs:
           SHARD_RUN: ${{ inputs.shard_run }}
         run: python3 scripts/pipeline_code.py --run "$PACK_RUN" --run "$SHARD_RUN"
       - name: Install metadata transport
-        run: sudo apt-get update && sudo apt-get install -y zstd
+        run: python3 scripts/install_runner_packages.py zstd
       - name: Admit cold inputs and create empty execution
         run: |
           set -euo pipefail

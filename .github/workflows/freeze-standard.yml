@@ -111,8 +111,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install source image tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools git curl
+          python3 scripts/install_runner_packages.py squashfs-tools git curl
           df -B1
           free -b
       - name: Fetch complete pinned projects and build compressed layer
@@ -177,8 +176,7 @@ jobs:
       - name: Install native Linux build dependencies
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools zstd build-essential git curl flex bison gperf \
+          python3 scripts/install_runner_packages.py squashfs-tools zstd build-essential git curl flex bison gperf \
             libssl-dev libxml2-utils xsltproc zip unzip rsync python-is-python3 \
             lib32z1 lib32stdc++6 libncurses5 libtinfo5 bc lz4
           sudo fallocate -l 16G "$RUNNER_TEMP/soong.swap"
