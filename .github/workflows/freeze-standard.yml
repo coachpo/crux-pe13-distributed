@@ -111,7 +111,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install source image tools
         run: |
-          python3 scripts/install_runner_packages.py squashfs-tools git curl
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools git curl
           df -B1
           free -b
       - name: Fetch complete pinned projects and build compressed layer
@@ -176,7 +177,16 @@ jobs:
       - name: Install native Linux build dependencies
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          python3 scripts/install_runner_packages.py squashfs-tools zstd build-essential git curl flex bison gperf \
+          for file in /etc/apt/apt-mirrors.txt /etc/resolv.conf; do
+            printf 'DNS diagnostic file: %s\n' "$file"
+            cat "$file" || printf 'DNS diagnostic file unavailable: %s\n' "$file"
+          done
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            getent ahostsv4 "$host" || printf 'DNS diagnostic failed: %s\n' "$host"
+            sudo -u _apt getent ahostsv4 "$host" || printf 'APT-user DNS diagnostic failed: %s\n' "$host"
+          done
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools zstd build-essential git curl flex bison gperf \
             libssl-dev libxml2-utils xsltproc zip unzip rsync python-is-python3 \
             lib32z1 lib32stdc++6 libncurses5 libtinfo5 bc lz4
           sudo fallocate -l 16G "$RUNNER_TEMP/soong.swap"

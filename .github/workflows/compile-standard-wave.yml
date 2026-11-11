@@ -42,7 +42,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/result"
-          python3 scripts/install_runner_packages.py libncurses5 python-is-python3 flex bison libssl-dev libelf-dev zstd \
+          sudo apt-get update
+          sudo apt-get install -y libncurses5 python-is-python3 flex bison libssl-dev libelf-dev zstd \
             ccache build-essential libxml2-utils zip unzip cpio lz4 xz-utils bc rsync
           sudo fallocate -l 8G "$RUNNER_TEMP/build.swap"
           sudo chmod 600 "$RUNNER_TEMP/build.swap"
