@@ -48,7 +48,7 @@ CHAIN = tuple(".github/workflows/" + name for name in (
     "freeze-standard.yml", "prepare-standard.yml", "build-standard.yml", "assemble-standard.yml", "release.yml"))
 ACTIVE = ("queued", "in_progress", "waiting", "requested", "pending")
 # Changes elsewhere (docs, tests, guides) do not start a build.
-BUILD_PATHS = ("scripts", "config", "installer", "keys", "manifests", ".github",
+BUILD_PATHS = ("scripts", "config", "installer", "keys", ".github",
                "references/pe13-boot-contracts")
 CI_NUMBERS = range(50, 100)
 BUILD_RE = re.compile(r"(?<![0-9])(20[0-9]{8})(?![0-9])")

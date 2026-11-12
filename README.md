@@ -12,7 +12,7 @@ publish here.
 winter). When the configured Android 13 maintenance branch of a tracked fork
 or the commit recorded
 by a snapshot repository moved, or `main` changed `scripts/`, `config/`,
-`installer/`, `keys/`, `manifests/`, `.github/` or the production
+`installer/`, `keys/`, `.github/` or the production
 `references/pe13-boot-contracts/` since the last full freeze, it
 takes the next CI build number of the Helsinki day (`YYYYMMDD50` to
 `YYYYMMDD99`; local builds use `01` to `49`), pins the sources, regenerates the
@@ -35,6 +35,13 @@ and build-tools at official `7d311e630d48dcd46e6036e34e4d588bd9c064c9`, with
 their expected trees; neither follows the retained historical forks. Other upstream projects stay pinned;
 the two private snapshot inputs keep their separate identity checks. A repository
 default-branch change never selects another Android version implicitly.
+
+Historical XML/source audit records are indexed under
+[`docs/evidence/legacy-source-inputs/`](docs/evidence/legacy-source-inputs/README.md),
+not used as current configuration or CLI defaults. Standalone FIT packaging
+requires explicit source selection and source-declarative contract inputs;
+the normal A/B callers already supply them. Retained reference DTBs are test
+oracles only. Native, Recovery-only and diagnostic packaging modes remain.
 
 The official build-tools pin supplies nsjail normally to A's Soong host probe.
 Graph receipts record actual command-log sandbox observations, not a guess from

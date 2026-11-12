@@ -291,9 +291,15 @@ def gate_images(product, identity, thumbprint_path, debugfs, simg2img, dumpimage
 
 
 def assemble(producers, dependency_root, output_dir, identity_path, build_number,
-             source_selection, mkimage="mkimage", fdtoverlay="fdtoverlay",
-             debugfs="debugfs", simg2img="simg2img", dumpimage="dumpimage", source_contract=None):
+             source_selection, *, source_contract, mkimage="mkimage", fdtoverlay="fdtoverlay",
+             debugfs="debugfs", simg2img="simg2img", dumpimage="dumpimage"):
     started = time.monotonic()
+    source_contract = Path(source_contract).resolve()
+    if not source_contract.is_file():
+        raise ValueError("Missing source-declarative boot contract: " + str(source_contract))
+    package_fits.load_recipe().load_source_contract(source_contract)
+    if not isinstance(source_selection, dict):
+        raise ValueError("Source selection must be an explicit JSON object")
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     identity = json.loads(Path(identity_path).read_text())
@@ -347,9 +353,11 @@ def assemble(producers, dependency_root, output_dir, identity_path, build_number
         fit_stage = output_dir / "fit-stage"
         if fit_stage.exists():
             shutil.rmtree(fit_stage)
-        packaged = package_fits.prepare(accepted, native_receipts, fit_stage, product,
-                                        product / "obj/KERNEL_OBJ", source_selection, True,
-                                        mkimage, fdtoverlay, source_contract=source_contract)
+        packaged = package_fits.prepare(
+            accepted, native_receipts, fit_stage, source_selection=source_selection,
+            source_contract=source_contract, product_dir=product,
+            kernel_dir=product / "obj/KERNEL_OBJ", build_fits=True,
+            mkimage=mkimage, fdtoverlay=fdtoverlay)
         if packaged["status"] != "success" or not packaged["fits_generated"]:
             raise ValueError("FIT packaging failed: " + packaged.get("error", "unknown"))
         fits_dir = fit_stage / "fits"
@@ -434,6 +442,7 @@ def main():
     parser.add_argument("--identity", required=True)
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--source-selection", required=True)
+    parser.add_argument("--source-contract", required=True)
     parser.add_argument("--mkimage", default="mkimage")
     parser.add_argument("--fdtoverlay", default="fdtoverlay")
     parser.add_argument("--debugfs", default="debugfs")
@@ -443,8 +452,9 @@ def main():
     producers = worker.read_json(args.producer_runs)
     source_selection = worker.read_json(args.source_selection)
     receipt = assemble(producers, args.dependency_root, args.output_dir, args.identity,
-                       args.build_number, source_selection, args.mkimage, args.fdtoverlay,
-                       args.debugfs, args.simg2img, args.dumpimage)
+                       args.build_number, source_selection, source_contract=args.source_contract,
+                       mkimage=args.mkimage, fdtoverlay=args.fdtoverlay,
+                       debugfs=args.debugfs, simg2img=args.simg2img, dumpimage=args.dumpimage)
     return 0 if receipt["status"] == "success" else 1
 
 

@@ -57,11 +57,9 @@ def fresh_inputs(accepted, receipts, paths):
     return owners
 
 
-def boot_contract_args(reference_dir=REFERENCES, source_contract=None):
-    """Select exactly one contract representation; source mode never names legacy FDTs."""
-    if source_contract is not None:
-        return ["--source-contract", str(Path(source_contract).resolve())]
-    return ["--reference-dir", str(Path(reference_dir).resolve())]
+def boot_contract_args(source_contract):
+    """Pass the required declarative policy without opening oracle DTBs."""
+    return ["--source-contract", str(Path(source_contract).resolve())]
 
 
 def validate_lto_initcall_order(text):
@@ -193,26 +191,28 @@ def relative_archive(directory, archive_path):
             process.wait()
 
 
-def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
-            source_selection=None, build_fits=True, mkimage="mkimage", fdtoverlay="fdtoverlay",
-            recipe_path=RECIPE, reference_dir=REFERENCES, source_contract=None):
+def prepare(accepted, receipts, output_dir, *, source_selection, source_contract,
+            product_dir=None, kernel_dir=None, build_fits=True, mkimage="mkimage", fdtoverlay="fdtoverlay",
+            recipe_path=RECIPE):
     """Consume already-restored successful worker receipts; never use ambient OUT files."""
     started = time.monotonic()
+    source_contract = Path(source_contract).resolve()
+    if not source_contract.is_file():
+        raise ValueError("Missing source-declarative boot contract: " + str(source_contract))
+    if not isinstance(source_selection, dict):
+        raise ValueError("Source selection must be an explicit JSON object")
+    recipe = load_recipe(recipe_path)
+    recipe.load_source_contract(source_contract)
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     result = {"schema_version": 1, "status": "failed", "started_at": datetime.now(timezone.utc).isoformat(),
               "hardware_verified": False, "physical_recovery_container_generated": False,
               "fits_generated": False, "build_profile": "aosp_crux-userdebug"}
-    source_contract_record = None
     with open(output / "fit-packaging.log", "w", buffering=1) as log:
         try:
-            if source_contract is not None:
-                source_contract = Path(source_contract).resolve()
-                if not source_contract.is_file():
-                    raise ValueError("Missing source-declarative boot contract: " + str(source_contract))
-                source_contract_record = {"path": str(source_contract),
-                                          "sha256": worker.digest(source_contract), "schema_version": 1}
-                result["source_contract"] = source_contract_record
+            source_contract_record = {"path": str(source_contract),
+                                      "sha256": worker.digest(source_contract), "schema_version": 1}
+            result["source_contract"] = source_contract_record
             if product_dir is None:
                 roots = {receipt.get("out_root") for receipt in receipts}
                 if len(roots) != 1 or None in roots:
@@ -249,7 +249,6 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
                 core.append(order)
                 symbols.append(order)
             primary = sorted(kernel_producers)[0]
-            recipe = load_recipe(recipe_path)
             image_report = recipe.validate_image(image.read_bytes())
             with symbols[0].open("rb") as stream:
                 elf = stream.read(20)
@@ -324,8 +323,7 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
                         "watchdog": {"device": "watchdog@17c10000", "timeout_ms": 30000,
                                      "handoff": "run boot_go", "actual_handoff_verification_required": True},
                         "hardware_verified": False, "fits_generated": False}
-            if source_contract_record is not None:
-                manifest["source_contract"] = source_contract_record
+            manifest["source_contract"] = source_contract_record
             if lto_report is not None:
                 manifest["lto_initcall_order"] = lto_report
             (symbols_dir / "README.md").write_text("# Fresh Crux PE13 kernel symbols\n\nKeep Image, vmlinux, System.map and .config paired with the same kernel producer and Image SHA256 in kernel-build.json. These symbols belong to this fresh build. Runtime/device validation is separate.\n")
@@ -339,7 +337,7 @@ def prepare(accepted, receipts, output_dir, product_dir=None, kernel_dir=None,
                            "--base-dir", str(inputs / "base-dtbs"), "--overlay", str(inputs / "crux-sm8150-overlay.dtbo"),
                            "--boot-ramdisk", str(inputs / "ramdisk.img"), "--recovery-ramdisk", str(inputs / "ramdisk-recovery.img"),
                            "--dualboot", "--development-adb", "--without-identity",
-                           *boot_contract_args(reference_dir, source_contract),
+                           *boot_contract_args(source_contract),
                            "--output-dir", str(output / "fits"), "--mkimage", str(mkimage), "--fdtoverlay", str(fdtoverlay)]
                 print(json.dumps(command), file=log)
                 subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
@@ -389,17 +387,20 @@ def main():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--product-dir")
     parser.add_argument("--kernel-dir")
-    parser.add_argument("--source-selection", default="manifests/source-revisions.json")
-    parser.add_argument("--source-contract", help="Reviewed source-declarative boot policy; avoids legacy reference DTBs")
+    parser.add_argument("--source-selection", required=True)
+    parser.add_argument("--source-contract", required=True,
+                        help="Required source-declarative boot policy; avoids legacy reference DTBs")
     parser.add_argument("--inputs-only", action="store_true")
     parser.add_argument("--mkimage", default="mkimage")
     parser.add_argument("--fdtoverlay", default="fdtoverlay")
     args = parser.parse_args()
     accepted, _ = worker.merge_dependencies(args.producer_dir)
     receipts = [worker.read_json(Path(path) / "receipt.json") for path in args.producer_dir]
-    result = prepare(accepted, receipts, args.output_dir, args.product_dir, args.kernel_dir,
-                     worker.read_json(args.source_selection), not args.inputs_only, args.mkimage, args.fdtoverlay,
-                     source_contract=args.source_contract)
+    result = prepare(accepted, receipts, args.output_dir,
+                     source_selection=worker.read_json(args.source_selection),
+                     source_contract=args.source_contract, product_dir=args.product_dir,
+                     kernel_dir=args.kernel_dir, build_fits=not args.inputs_only,
+                     mkimage=args.mkimage, fdtoverlay=args.fdtoverlay)
     print(json.dumps(result, indent=2))
     return 0 if result["status"] == "success" else 1
 

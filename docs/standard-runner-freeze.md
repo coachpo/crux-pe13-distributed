@@ -4,6 +4,13 @@ This is the current operation guide; [README](../README.md) is the pipeline
 overview. Dated plans/acceptances retain evidence for their original inputs and
 versions, not additional supported dispatch paths.
 
+The source pins come from `config/cloud-source-manifest.json`. Historical XML,
+revision and offline-transport records are retained in
+[`evidence/legacy-source-inputs/`](evidence/legacy-source-inputs/README.md), never
+used as an implicit packaging source selection. FIT packaging requires the
+explicit source-declarative boot contract; binary reference DTBs remain only
+independent equivalence fixtures. The A/B main paths are unchanged.
+
 ## Normal entry
 
 The scheduled nightly checks for changes. To request a complete build even with

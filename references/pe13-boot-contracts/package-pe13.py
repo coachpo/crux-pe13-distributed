@@ -5,6 +5,7 @@ Example (after copying the completed build artifacts from cruxbuild):
   python3 package-pe13.py --image Image --base-dir dts/qcom \
       --overlay dts/qcom/crux-sm8150-overlay.dtbo \
       --recovery-ramdisk ramdisk-recovery.img --boot-ramdisk ramdisk.img \
+      --source-contract source-declarative-boot-contract.json \
       --dualboot --output-dir output
 
 This script never accesses a device or changes an input artifact.  All four
@@ -15,8 +16,8 @@ boot contracts remain available as development profiles. --boot-ramdisk selects
 native Android first-stage init and removes the legacy ROM/debug arguments;
 --dualboot selects the source crux_uboot fstab for Recovery too. Packaging does
 not establish source provenance or hardware/release validation. Fresh artifact
-assembly passes --source-contract, a property-level policy that does not open
-the retained reference DTBs; omission preserves the legacy default. Diagnostic
+assembly passes the required --source-contract, a property-level policy that
+does not open the retained reference DTBs. Diagnostic
 ramdisks must be selected explicitly with --diagnostic-recovery-ramdisk.
 --development-adb permits source-built ROM/Recovery ADB authentication
 overrides for development while retaining native boot/storage validation.
@@ -296,28 +297,14 @@ def source_contract_reference(contract, mode):
     return SimpleNamespace(root=root)
 
 
-def boot_contract_inputs(reference_dir, source_contract=None):
-    if source_contract is not None:
-        path = Path(source_contract).resolve()
-        contract = load_source_contract(path)
-        references = {mode: source_contract_reference(contract, mode) for mode in READ_BLOCKS}
-        return references, cells(bytes.fromhex(contract["qcom_msm_id"])), PSTORE, {
-            "mode": "source-declarative", "path": str(path), "sha256": sha256(path.read_bytes()),
-            "schema_version": contract["schema_version"],
-            "legacy_oracle_sha256": dict(REFERENCE_SHA256),
-        }
-    references = {}
-    for mode in READ_BLOCKS:
-        path = Path(reference_dir) / f"{mode}-pstore.dtb"
-        require(sha256(path.read_bytes()) == REFERENCE_SHA256[path.name],
-                f"Recorded {mode} device tree changed")
-        references[mode] = read_tree(path)
-    require(cells(references["rom"].root["props"]["qcom,msm-id"]) ==
-            cells(references["recovery"].root["props"]["qcom,msm-id"]),
-            "Recorded device trees disagree on SoC revision")
-    return references, cells(references["rom"].root["props"]["qcom,msm-id"]), PSTORE, {
-        "mode": "legacy-binary-reference", "path": str(Path(reference_dir).resolve()),
-        "sha256": dict(REFERENCE_SHA256),
+def boot_contract_inputs(source_contract):
+    path = Path(source_contract).resolve()
+    contract = load_source_contract(path)
+    references = {mode: source_contract_reference(contract, mode) for mode in READ_BLOCKS}
+    return references, cells(bytes.fromhex(contract["qcom_msm_id"])), PSTORE, {
+        "mode": "source-declarative", "path": str(path), "sha256": sha256(path.read_bytes()),
+        "schema_version": contract["schema_version"],
+        "legacy_oracle_sha256": dict(REFERENCE_SHA256),
     }
 
 
@@ -839,10 +826,9 @@ def main():
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--base-dir", type=Path, required=True)
     parser.add_argument("--overlay", type=Path, required=True)
-    parser.add_argument("--reference-dir", type=Path,
-                        default=workspace / "u-boot-port/references/pe13-boot-contracts")
     parser.add_argument("--source-contract", type=Path,
-                        help="Use source-declarative boot policy; does not read legacy reference DTBs")
+                        required=True,
+                        help="Required source-declarative boot policy; does not read legacy reference DTBs")
     ramdisk_group = parser.add_mutually_exclusive_group(required=True)
     ramdisk_group.add_argument("--recovery-ramdisk", type=Path,
                                help="PE recovery ramdisk, authenticated unless --development-adb is selected")
@@ -883,8 +869,7 @@ def main():
     native = boot_ramdisk is not None
     modes = ["recovery"] if args.recovery_only else list(READ_BLOCKS)
     header = validate_image(image_data)
-    references, device_id, pstore_contract, boot_contract_info = boot_contract_inputs(
-        args.reference_dir, args.source_contract)
+    references, device_id, pstore_contract, boot_contract_info = boot_contract_inputs(args.source_contract)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     outputs = [f"{name}-crux-merged.dtb" for name in BASE_IDS]
     outputs += [f"{mode}-cepheus.{ext}" for mode in modes for ext in ("dtb", "its", "itb")]

@@ -83,6 +83,25 @@ class AssembleDevTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_assembly_requires_valid_contract_before_creating_output(self):
+        output = self.root / "assembly"
+        args = ([], self.root / "deps", output, self.root / "identity.json", "2026111201",
+                {"kernel": "fresh-source"})
+        with self.assertRaisesRegex(ValueError, "Missing source-declarative boot contract"):
+            assemble_dev.assemble(*args, source_contract=self.root / "missing.json")
+        self.assertFalse(output.exists())
+        invalid = self.root / "invalid.json"
+        invalid.write_text("{}\n")
+        with self.assertRaisesRegex(ValueError, "Unsupported source-declarative boot contract"):
+            assemble_dev.assemble(*args, source_contract=invalid)
+        self.assertFalse(output.exists())
+
+        contract = (Path(__file__).resolve().parents[1]
+                    / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
+        with self.assertRaisesRegex(ValueError, "Source selection must be an explicit JSON object"):
+            assemble_dev.assemble(*args[:5], None, source_contract=contract)
+        self.assertFalse(output.exists())
+
     def test_failed_image_property_report_stops_assembly(self):
         identity = {"required_final_keys": {"ro.build.fingerprint": "expected-fingerprint"}}
         report = {"status": "failed", "errors": [{"key": "ro.build.fingerprint",

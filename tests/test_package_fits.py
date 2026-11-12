@@ -78,6 +78,8 @@ class PackagingTests(unittest.TestCase):
         self.qcom = self.kernel / "arch/arm64/boot/dts/qcom"
         self.qcom.mkdir(parents=True)
         self.output = self.root / "package"
+        self.source_contract = (Path(__file__).resolve().parents[1]
+                                / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
         self.image = self.kernel / "arch/arm64/boot/Image"
         image = bytearray(64)
         struct.pack_into("<3Q", image, 8, 0x80000, 64, 0)
@@ -109,7 +111,9 @@ class PackagingTests(unittest.TestCase):
                          / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
         contract = recipe.load_source_contract(contract_path)
         for mode in ("rom", "recovery"):
-            oracle = recipe.read_tree(package_fits.REFERENCES / (mode + "-pstore.dtb"))
+            oracle_path = package_fits.REFERENCES / (mode + "-pstore.dtb")
+            self.assertEqual(recipe.sha256(oracle_path.read_bytes()), recipe.REFERENCE_SHA256[oracle_path.name])
+            oracle = recipe.read_tree(oracle_path)
             projected = recipe.source_contract_reference(contract, mode)
             self.assertEqual(projected.root["props"]["qcom,msm-id"], oracle.root["props"]["qcom,msm-id"])
             self.assertEqual(recipe.find(projected.root, "/chosen")["props"],
@@ -152,27 +156,46 @@ class PackagingTests(unittest.TestCase):
     def test_source_contract_route_does_not_open_legacy_reference_dtbs(self):
         contract_path = (Path(__file__).resolve().parents[1]
                          / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
-        missing_reference_dir = self.root / "no-binary-reference-files"
         with patch.object(recipe, "read_tree", side_effect=AssertionError("source route opened an FDT file")):
-            references, device_id, pstore, identity = recipe.boot_contract_inputs(
-                missing_reference_dir, contract_path)
+            references, device_id, pstore, identity = recipe.boot_contract_inputs(contract_path)
         self.assertEqual(set(references), {"rom", "recovery"})
         self.assertEqual(device_id, (0x153, 0x20000))
         self.assertEqual(pstore, recipe.PSTORE)
         self.assertEqual(identity["mode"], "source-declarative")
-        self.assertFalse(missing_reference_dir.exists())
+
+    def test_missing_or_invalid_contract_fails_before_package_output_creation(self):
+        with self.assertRaisesRegex(ValueError, "Missing source-declarative boot contract"):
+            package_fits.prepare(self.accepted, self.receipts, self.output,
+                                 source_selection={"kernel": "fresh-source"},
+                                 source_contract=self.root / "missing-contract.json")
+        self.assertFalse(self.output.exists())
+        invalid = self.root / "invalid-contract.json"
+        invalid.write_text("{}\n")
+        with self.assertRaisesRegex(ValueError, "Unsupported source-declarative boot contract"):
+            package_fits.prepare(self.accepted, self.receipts, self.output,
+                                 source_selection={"kernel": "fresh-source"},
+                                 source_contract=invalid)
+        self.assertFalse(self.output.exists())
+
+    def test_source_selection_must_be_explicit_object(self):
+        with self.assertRaisesRegex(ValueError, "Source selection must be an explicit JSON object"):
+            package_fits.prepare(self.accepted, self.receipts, self.output,
+                                 source_selection=None, source_contract=self.source_contract)
+        self.assertFalse(self.output.exists())
 
     def test_package_command_selects_source_contract_without_legacy_reference_argument(self):
         contract = (Path(__file__).resolve().parents[1]
                     / "references/pe13-boot-contracts/source-declarative-boot-contract.json")
-        args = package_fits.boot_contract_args(self.root / "missing-reference-dir", contract)
+        args = package_fits.boot_contract_args(contract)
         self.assertEqual(args, ["--source-contract", str(contract.resolve())])
         self.assertNotIn("--reference-dir", args)
-        self.assertEqual(package_fits.boot_contract_args(self.root / "legacy")[0], "--reference-dir")
 
     def prepare(self, **kwargs):
-        return package_fits.prepare(self.accepted, self.receipts, self.output, self.product,
-                                    self.kernel, source_selection={"kernel": "fresh-source"}, **kwargs)
+        options = {"product_dir": self.product, "kernel_dir": self.kernel,
+                   "source_selection": {"kernel": "fresh-source"},
+                   "source_contract": self.source_contract}
+        options.update(kwargs)
+        return package_fits.prepare(self.accepted, self.receipts, self.output, **options)
 
     def record_kernel_inputs(self, paths):
         for path in paths:
@@ -397,9 +420,9 @@ class PackagingTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0)
             return original_run(command, **kwargs)
         with patch("package_fits.subprocess.run", run):
-            result = self.prepare(source_contract=contract, reference_dir=self.root / "no-legacy-dtbs")
+            result = self.prepare(source_contract=contract)
         self.assertEqual(result["status"], "success", result.get("error"))
-        self.assertEqual(package_fits.boot_contract_args(self.root / "no-legacy-dtbs", contract),
+        self.assertEqual(package_fits.boot_contract_args(contract),
                          ["--source-contract", str(contract.resolve())])
         self.assertIn("--source-contract", commands[0])
         self.assertNotIn("--reference-dir", commands[0])
