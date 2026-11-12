@@ -177,14 +177,6 @@ jobs:
       - name: Install native Linux build dependencies
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          for file in /etc/apt/apt-mirrors.txt /etc/resolv.conf; do
-            printf 'DNS diagnostic file: %s\n' "$file"
-            cat "$file" || printf 'DNS diagnostic file unavailable: %s\n' "$file"
-          done
-          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
-            getent ahostsv4 "$host" || printf 'DNS diagnostic failed: %s\n' "$host"
-            sudo -u _apt getent ahostsv4 "$host" || printf 'APT-user DNS diagnostic failed: %s\n' "$host"
-          done
           sudo apt-get update
           sudo apt-get install -y squashfs-tools zstd build-essential git curl flex bison gperf \
             libssl-dev libxml2-utils xsltproc zip unzip rsync python-is-python3 \

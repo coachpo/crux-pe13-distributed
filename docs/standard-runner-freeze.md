@@ -379,6 +379,11 @@ checks its public-key signature and payload digests, then publishes the ZIP,
 checksum, README and pinned install TWRP/checksum. No offline signature or draft
 approval is required by the normal chain. Releasing does not install anything.
 
+Release verification reads the successful compile's context and summary, binds
+every task to that execution/source/plan, then derives the exact assembly owners
+from the required image, identity and paired-kernel exports. The delivery must
+name exactly those complete producer bindings; their count is not fixed.
+
 Only if an automatic handoff did not start, or for a reviewed stage retry, the
 equivalent advanced controls are:
 

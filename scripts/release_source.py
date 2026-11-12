@@ -280,6 +280,58 @@ def signing_manifest(assembly_run: str, work: Path) -> tuple[str, Path]:
     return build, manifest
 
 
+def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
+                                compile: dict, build: str) -> dict[str, dict]:
+    """Derive the exact assembly owner set from the same successful compile context."""
+    # Keep the key-bearing manifest-signing path from importing assembly/compile
+    # planning code it does not use.
+    import cloud_assemble
+    import cloud_build_plan
+
+    _require(isinstance(context, dict) and context.get("schema_version") == 1,
+             "compile build context is malformed")
+    _require(context.get("execution_id") == compile_run
+             and context.get("repository") == REPOSITORY
+             and context.get("build_number") == build
+             and context.get("worker_commit") == compile.get("head_sha"),
+             "compile build context identity differs from the successful compile run")
+
+    try:
+        fresh = cloud_build_plan.fresh_binding(context)
+    except (KeyError, TypeError) as error:
+        raise SourceError("compile build context has incomplete fresh-build bindings") from error
+    _require(fresh == summary.get("fresh_build"),
+             "compile build context fresh binding differs from its successful summary")
+
+    tasks, producers = context.get("tasks"), summary.get("producers")
+    _require(isinstance(tasks, dict) and isinstance(producers, list),
+             "compile build context has no task inventory")
+    producer_ids = {producer.get("id") for producer in producers if isinstance(producer, dict)}
+    _require(len(producer_ids) == len(producers) and set(tasks) == producer_ids,
+             "compile build context tasks differ from its successful producer summary")
+    selected = {}
+    for producer in producers:
+        ident = producer["id"]
+        task = tasks[ident]
+        _require(isinstance(task, dict) and task.get("id") == ident,
+                 "compile build context task identity differs: " + ident)
+        try:
+            binding = cloud_build_plan.producer_binding(context, ident)
+        except (KeyError, TypeError) as error:
+            raise SourceError("compile build context producer binding is incomplete: " + ident) from error
+        _require(binding == producer,
+                 "compile build context producer binding differs from its successful summary: " + ident)
+        selected[ident] = producer
+
+    try:
+        _, owner_ids = cloud_assemble.required_exports(context)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SourceError("compile build context has invalid assembly output owners: " + str(error)) from error
+    _require(bool(owner_ids) and owner_ids <= set(tasks),
+             "assembly output owners are outside the successful compile task inventory")
+    return {ident: selected[ident] for ident in owner_ids}
+
+
 def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
     """Download and verify the fresh assembly artifact, its same-run lineage and ZIP payload.
 
@@ -295,6 +347,8 @@ def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
     _require(build == parsed["build"], "compile run title does not match the requested build")
     summary = _artifact_json(compile_run, "cloud-fresh-build-summary", "build-summary.json", work, token)
     _validate_summary(summary, compile_run, compile["head_sha"])
+    context = _artifact_json(compile_run, "cloud-build-context", "context.json", work, token)
+    assembly_producers = _assembly_producer_bindings(context, summary, compile_run, compile, build)
 
     artifact = _artifact(inventory, artifact_name)
     zip_path, zip_digest = _download_zip(artifact, work, token)
@@ -302,13 +356,14 @@ def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
              | {"assembly-receipt.json"})
     _read_members(zip_path, names, work)
     zip_path.unlink()
-    record = _verify_delivery(parsed["build"], work, summary)
+    record = _verify_delivery(parsed["build"], work, summary, assembly_producers)
     manifest_sha = _verify_payload(parsed["build"], work / "zip-payload", record)
     return VerifiedBuild(tag, parsed["build"], work / "zip-payload", assembly["head_sha"], assembly_run,
                          compile_run, artifact["id"], zip_digest, manifest_sha)
 
 
-def _verify_delivery(build: str, work: Path, summary: dict) -> dict:
+def _verify_delivery(build: str, work: Path, summary: dict,
+                     assembly_producers: dict[str, dict]) -> dict:
     delivery_dir = work / "delivery"
     record = json.loads((delivery_dir / "delivery-record.json").read_text())
     sums = parse_sums((delivery_dir / "SHA256SUMS").read_text())
@@ -346,13 +401,16 @@ def _verify_delivery(build: str, work: Path, summary: dict) -> dict:
     _require(isinstance(receipt_assets, dict) and set(receipt_assets) == set(assets),
              "assembly receipt asset inventory mismatch")
     record_producers = record.get("producers")
-    _require(isinstance(record_producers, list) and len(record_producers) == 7
+    _require(isinstance(record_producers, list) and assembly_producers
              and all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in record_producers),
-             "delivery record does not bind exactly seven assembly producers")
-    selected = {producer["id"]: producer for producer in summary["producers"]}
-    _require(len({item.get("id") for item in record_producers}) == 7
-             and all(item == selected.get(item.get("id")) for item in record_producers),
-             "delivery producer bindings differ from successful compile summary")
+             "delivery record has invalid assembly producer bindings")
+    producer_ids = [item["id"] for item in record_producers]
+    _require(len(producer_ids) == len(assembly_producers)
+             and len(set(producer_ids)) == len(producer_ids)
+             and set(producer_ids) == set(assembly_producers),
+             "delivery producer IDs differ from graph-derived assembly owners")
+    _require(all(item == assembly_producers[item["id"]] for item in record_producers),
+             "delivery producer bindings differ from the successful compile context")
     for name in sorted(DELIVERY_ASSET_NAMES):
         path = delivery_dir / name
         digest = sha256(path)
