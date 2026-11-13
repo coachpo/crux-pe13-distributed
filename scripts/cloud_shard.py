@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gc
 import importlib.util
 import json
 import os
@@ -16,6 +17,7 @@ import stat
 import subprocess
 import sys
 import time
+import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import graph
@@ -361,6 +363,9 @@ def integrate(args):
             if not changes:
                 break
             mutations.publish()
+            # No previous iteration's command view is an input to the next one.
+            del records, native, frontend, source_reads, host_reads, rust_reads, closure, current
+            gc.collect()
         (output / 'source-reads.json').write_text(json.dumps(source_reads, indent=2) + '\n')
         (output / 'host-runtime.json').write_text(json.dumps(host_reads, indent=2) + '\n')
         # Keep the new preopt actors inspectable in the job log without fetching
@@ -372,7 +377,13 @@ def integrate(args):
                                if Path(path).name.startswith(('dex2oat', 'dexpreopt', 'profman'))}}
         (output / 'rust-native.json').write_text(json.dumps(rust_reads, indent=2) + '\n')
         (output / 'runtime-adaptations.json').write_text(json.dumps(mutations.publish(), indent=2) + '\n')
+        # Source-built Go frontends and the final slicer need their own working
+        # sets. Do not retain the completed global audit while running them.
+        del records, native, frontend, source_reads, host_reads, rust_reads, closure, current, mutations
+        gc.collect()
+        print(json.dumps({'phase': 'cold-frontend-probe', 'status': 'starting'}), flush=True)
         receipt['cold_frontend_probe'] = cold_probe(source_root, out_root, output / 'cold-frontend-probe')
+        print(json.dumps({'phase': 'cold-frontend-probe', 'status': 'success'}), flush=True)
         current = graph.Graph(database)
         final_closure = current.closure(TARGETS)
         (output / 'closure.json').write_text(json.dumps(final_closure, indent=2) + '\n')
@@ -381,10 +392,12 @@ def integrate(args):
         prune = importlib.util.module_from_spec(prune_spec)
         prune_spec.loader.exec_module(prune)
         pruned = output / 'index-pruned.sqlite'
+        print(json.dumps({'phase': 'prune', 'status': 'starting'}), flush=True)
         prune.prune(database, output / 'closure.json', pruned, output / 'prune-record.json', TARGETS)
         prune_record = json.loads((output / 'prune-record.json').read_text())
         current = graph.Graph(pruned)
         shards = output / 'shards'
+        print(json.dumps({'phase': 'slice', 'status': 'starting'}), flush=True)
         plan = current.shard(TARGETS, shards, args.max_actions, args.max_parallel, out_root=out_root)
         file_stats = dict(current.meta['file_stats'])
         current.db.close()
@@ -452,7 +465,18 @@ def main():
     parser.add_argument('--runtime-profile', default=str(Path(__file__).resolve().parents[1] /
                                                        'config/cloud-runtime-profile.json'))
     args = parser.parse_args()
-    receipt = integrate(args)
+    from cloud_freeze import monitor_resources
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    stop = threading.Event()
+    monitor = threading.Thread(target=monitor_resources, args=(output, stop),
+                               kwargs={'console': True}, daemon=True)
+    monitor.start()
+    try:
+        receipt = integrate(args)
+    finally:
+        stop.set()
+        monitor.join()
     print(json.dumps(receipt, sort_keys=True), flush=True)
 
 

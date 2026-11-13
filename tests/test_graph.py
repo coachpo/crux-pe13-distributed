@@ -15,6 +15,46 @@ spec.loader.exec_module(graph)
 
 
 class GraphTests(unittest.TestCase):
+    def test_reuse_contract_keeps_phony_relations_and_rule_bindings(self):
+        reuse_spec = importlib.util.spec_from_file_location('graph_reuse_contract', MODULE.with_name('cloud_reuse.py'))
+        reuse = importlib.util.module_from_spec(reuse_spec)
+        reuse_spec.loader.exec_module(reuse)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ninja = root / 'build.ninja'
+            prefix = ('rule copy\n  command = cp $in $out\n  deps = gcc\n'
+                      '  depfile = $out.d\n  restat = 1\n'
+                      'build one: copy input\nbuild two: copy input\n')
+            def exported(order, number):
+                ninja.write_text(prefix + 'build alias: phony ' + order + '\nbuild final: copy alias\n')
+                database = root / ('index-%s.sqlite' % number)
+                graph.index_graph(ninja, root, database)
+                current = graph.Graph(database)
+                closure = current.closure(['final'])
+                records, _ = current.edge_records(closure['edge_ids'])
+                native = current.native_metadata(records)
+                full = current.export_edges(closure, ['final'], root / ('slice-%s' % number))
+                current.db.close()
+                by_output = {edge['outputs'][0]: edge for edge in full['edges']}
+                for edge_id, metadata in native.items():
+                    for key in ('command', 'depfile', 'rspfile', 'rspfile_content'):
+                        self.assertEqual(metadata.get(key), by_output[records[edge_id]['outputs'][0]].get(key))
+                return full
+            first = exported('one || two', 1)
+            second = exported('two || one', 2)
+            self.assertEqual(first['commands'], second['commands'])
+            self.assertEqual(first['outputs'], second['outputs'])
+            self.assertEqual(first['edges'][0]['deps'], 'gcc')
+            self.assertEqual(first['edges'][0]['restat'], '1')
+            self.assertEqual(first['phony_edges'][0]['inputs'],
+                             [{'path': 'one', 'relation': 'explicit'}, {'path': 'two', 'relation': 'order'}])
+            metadata = {'allowed_generated_inputs': [], 'slice_path': str(root / '.crux-task/graph'),
+                        'files': [], 'source_root': str(root), 'out_root': str(root / 'out'),
+                        'external_inputs': [], 'external_input_dirs': [],
+                        'required_interpreters': [], 'system_tools': []}
+            self.assertNotEqual(reuse.input_descriptor(first, metadata, 'a' * 64)['input_identity'],
+                                reuse.input_descriptor(second, metadata, 'a' * 64)['input_identity'])
+
     def test_path_escapes_and_dependency_kinds(self):
         rule,outs,deps = graph.parse_build(
             'build dir/a$ b$:.o | side: cc src/a$ b.c | header || order |@ valid',{})

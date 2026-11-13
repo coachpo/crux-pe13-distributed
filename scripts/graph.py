@@ -913,7 +913,9 @@ class Graph:
                  'phony_outputs':[],'leaf_inputs':[],'external_inputs':[]}
         by_output={path:edge for edge,record in actions.items() for path in record['outputs']}
         with tempfile.TemporaryDirectory(prefix='ninja-native-metadata-') as temporary:
-            metadata=self.export_edges(closure,[],temporary)
+            # Dependency readers already have edge_records(). Keep their global
+            # command view small; full reuse semantics belong to final slices.
+            metadata=self.export_edges(closure,[],temporary,content_contract=False)
         return {by_output[record['outputs'][0]]:record for record in metadata['edges']}
 
     def generated_include_contracts(self, records, producers, out_root=None, metadata=None):
@@ -1274,7 +1276,7 @@ class Graph:
         return orders
 
     def export_edges(self, closure, targets, destination, runtime_dir='.crux-task/graph', defer_validations=False,
-                     runtime_order_inputs=None):
+                     runtime_order_inputs=None, content_contract=True):
         destination = Path(destination); destination.mkdir(parents=True,exist_ok=True)
         runtime_order_inputs=runtime_order_inputs or {}
         selected = set(closure['edge_ids'])
@@ -1397,10 +1399,12 @@ class Graph:
                                     return value
                                 return default
                         lookup = RuleEnv()
-                        record = {'outputs':outs,'rule':rule,
-                                  'inputs': [{'path': path, 'relation': relation} for path, relation in deps]}
-                        for key in ('command','depfile','rspfile','rspfile_content',
-                                    'deps','dyndep','restat','generator','pool'):
+                        record = {'outputs':outs,'rule':rule}
+                        keys = ('command','depfile','rspfile','rspfile_content')
+                        if content_contract:
+                            record['inputs'] = [{'path': path, 'relation': relation} for path, relation in deps]
+                            keys += ('deps','dyndep','restat','generator','pool')
+                        for key in keys:
                             if key in ('depfile','rspfile'):
                                 saved={name:values[name] for name in ('in','in_newline','out')}
                                 values.update({'in':' '.join(explicit),'in_newline':'\n'.join(explicit),
@@ -1419,7 +1423,7 @@ class Graph:
                             rspfiles.append(record['rspfile'])
                         if rule != 'phony':
                             edge_records.append(record)
-                        else:
+                        elif content_contract:
                             phony_records.append(record)
                     output.write(raw); output.write('\n')
         try:

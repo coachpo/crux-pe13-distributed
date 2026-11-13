@@ -154,8 +154,9 @@ def observe_graph_dexpreopt(out_root: Path) -> dict:
             "disabled_modules": config.get("DisablePreoptModules")}
 
 
-def monitor_resources(directory: Path, stop: threading.Event) -> None:
+def monitor_resources(directory: Path, stop: threading.Event, console=False) -> None:
     with (directory / "resources.jsonl").open("x") as stream:
+        count = 0
         while True:
             disk = os.statvfs(directory)
             sample = {"unix_time": time.time(), "disk_available_bytes": disk.f_bavail * disk.f_frsize}
@@ -166,10 +167,17 @@ def monitor_resources(directory: Path, stop: threading.Event) -> None:
                     if name in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
                         memory[name] = int(value.split()[0]) * 1024
                 sample.update(memory)
+                for line in Path('/proc/self/status').read_text().splitlines():
+                    name, value = line.split(':', 1)
+                    if name in ('VmRSS', 'VmHWM'):
+                        sample[name] = int(value.split()[0]) * 1024
             except OSError:
                 pass
             stream.write(json.dumps(sample) + "\n")
             stream.flush()
+            if console and count % 15 == 0:
+                print(json.dumps({'phase': 'resources', **sample}), flush=True)
+            count += 1
             if stop.wait(2):
                 return
 
