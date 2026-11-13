@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pin changed sources for a new CI build and start its cloud build chain.
 
-nightly.yml runs this once a night; manual dispatch uses --force. It does nothing
+nightly.yml runs this once a night; manual dispatch uses --force. A separate
+--force-cold switch disables matching incremental cache reuse. It does nothing
 while a chain run is queued or running, or (unless forced) when no tracked fork
 maintenance branch or snapshot Release moved and main changed no
 build path since the last full freeze. Otherwise it takes the next CI build number
@@ -207,7 +208,7 @@ def commit_and_push(root, build, notes):
     subprocess.run(["git", "push", "--quiet", "origin", "HEAD:main"], cwd=root, check=True)
 
 
-def run(repository, snapshot_token, today, dispatch=True, root=ROOT, force=False):
+def run(repository, snapshot_token, today, dispatch=True, root=ROOT, force=False, force_cold=False):
     active = chain_in_flight(repository)
     if active:
         return {"result": "skipped", "reason": active}
@@ -236,9 +237,11 @@ def run(repository, snapshot_token, today, dispatch=True, root=ROOT, force=False
     if dispatch:
         commit_and_push(root, build, notes)
         subprocess.run(["gh", "workflow", "run", "freeze-standard.yml", "--repo", repository, "--ref", "main",
-                        "-f", "mode=full", "-f", f"build_number={build}", "-f", f"reuse_sources_from={reuse}"],
+                        "-f", "mode=full", "-f", f"build_number={build}", "-f", f"reuse_sources_from={reuse}",
+                        "-f", f"force_cold={'true' if force_cold else 'false'}"],
                        check=True)
     return {"result": "started" if dispatch else "pinned", "build": build, "reuse_sources_from": reuse,
+            "force_cold": force_cold,
             "changes": notes}
 
 
@@ -247,13 +250,15 @@ def main(argv=None):
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--force", action="store_true",
                         help="build even without source changes; an active chain still prevents duplicates")
+    parser.add_argument("--force-cold", action="store_true",
+                        help="disable matching incremental cache reuse for this build")
     parser.add_argument("--no-dispatch", action="store_true",
                         help="pin the sources in this checkout without committing, pushing or dispatching")
     args = parser.parse_args(argv)
     today = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%Y%m%d")
     try:
         result = run(os.environ["GITHUB_REPOSITORY"], os.environ.get(cloud_release_snapshot.TOKEN_ENV),
-                     today, dispatch=not args.no_dispatch, force=args.force)
+                     today, dispatch=not args.no_dispatch, force=args.force, force_cold=args.force_cold)
     except (KeyError, NightlyError, cloud_source.SourceError, cloud_release_snapshot.SnapshotError,
             OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"nightly: {error}\n")

@@ -174,7 +174,7 @@ class ChangeDetectionTests(unittest.TestCase):
 
 
 class NightlyRunTests(unittest.TestCase):
-    def run_night(self, *, moved=None, paths_changed=False, active=None, force=False):
+    def run_night(self, *, moved=None, paths_changed=False, active=None, force=False, force_cold=False):
         manifest = json.loads((ROOT / "config/cloud-source-manifest.json").read_text())
         pins = {project["path"]: project["revision"] for project in manifest["projects"]}
         moved = moved or {}
@@ -189,7 +189,7 @@ class NightlyRunTests(unittest.TestCase):
                 mock.patch.object(nightly, "pin_sources") as pin, \
                 mock.patch.object(nightly, "commit_and_push") as push, \
                 mock.patch.object(nightly.subprocess, "run") as run:
-            result = nightly.run(REPOSITORY, "token", "20261110", force=force)
+            result = nightly.run(REPOSITORY, "token", "20261110", force=force, force_cold=force_cold)
         return result, changed, pin, push, run
 
     def test_quiet_night_neither_commits_nor_dispatches(self):
@@ -221,6 +221,15 @@ class NightlyRunTests(unittest.TestCase):
         self.assertEqual(pin.call_args.args[1:], ({}, "2026111051"))
         push.assert_called_once()
         self.assertIn("build_number=2026111051", run.call_args.args[0])
+        self.assertIn("force_cold=false", run.call_args.args[0])
+
+    def test_manual_force_cold_is_independent_of_source_pin_force(self):
+        result, _, pin, push, run = self.run_night(force=True, force_cold=True)
+        self.assertEqual(result["result"], "started")
+        self.assertEqual(result["force_cold"], True)
+        pin.assert_called_once()
+        push.assert_called_once()
+        self.assertIn("force_cold=true", run.call_args.args[0])
 
     def test_manual_force_does_not_duplicate_an_active_chain(self):
         result, _, pin, push, run = self.run_night(force=True, active="compile running")

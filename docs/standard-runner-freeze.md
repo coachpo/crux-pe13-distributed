@@ -30,15 +30,26 @@ The stage controls below are for diagnosis/recovery, not a second normal build
 procedure. Do not dispatch a stage again when its automatic successor is already
 queued/running. Preserve matching build, source and execution-code identities.
 
+W9 is under integration; hosted cache-hit/miss, retry and signed Release
+acceptance are pending. To request a new chain without native output reuse:
+
+```sh
+gh workflow run nightly.yml --repo coachpo/crux-pe13-distributed --ref main \
+  -f force_cold=true
+```
+
+This still allocates a new build identity and retains matching source-layer
+reuse; it neither deletes caches nor modifies an accepted local output.
+
 `freeze-standard.yml` and `prepare-standard.yml` move PE13 source acquisition,
-Soong/Kati graph generation, graph indexing, sharding and cold-input capsule
-packing to the public repository's standard `ubuntu-22.04` GitHub-hosted Linux
+Soong/Kati graph generation, graph indexing, sharding and cold-input auditing
+to the public repository's standard `ubuntu-22.04` GitHub-hosted Linux
 runners. No larger or self-hosted runner is used.
 
 This workflow prepares build inputs. `m --skip-ninja bootimage recoveryimage
 systemimage vendorimage` generates the four-image build graph; it does not compile
 the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
-and packs input capsules; it does not assemble or deploy ROM/Recovery images,
+and records input descriptors; it does not assemble or deploy ROM/Recovery images,
 publish the ZIP, or install anything on a device. Historical
 [preparation](standard-runner-preparation-acceptance-2026-11-04.md) and
 [compile/assembly](standard-runner-rom-build-acceptance-2026-11-05.md) acceptances
@@ -49,8 +60,9 @@ Both workflows can be dispatched entirely from the repository's GitHub Actions
 page. The CLI commands below are optional remote controls, not local build steps.
 For a new build use nightly rather than inventing a build number against an old
 marker patch. A successful full freeze automatically dispatches full preparation;
-preparation automatically slices, packs and continues the chain. Accept it only
-after every planned pack job and the aggregate registry succeed.
+preparation automatically slices, audits and continues the chain. Accept it only
+after every planned input audit and the aggregate registry succeed. Current cold
+capsules are compressed later, only for tasks with a native cache miss.
 
 ## Identities and reuse
 
@@ -58,8 +70,9 @@ after every planned pack job and the aggregate registry succeed.
   for a new build. A retry intended to reproduce the same graph must pass the
   same build number **and** the same explicit Unix `build_datetime`; if omitted,
   freeze uses that run's start time. A changed build identity needs a fresh
-  `freeze-standard` graph and new index, shard plan and capsules. Do not carry
-  those derived outputs across build identities.
+  `freeze-standard` graph and new index, shard plan and input audits. Do not carry
+  those derived graph artifacts across build identities; native content reuse
+  follows the separate W9 contract below.
 - `config/cloud-source-manifest.json` pins project revisions, patches and
   source layout. A source revision, patch or layout change requires updating
   that manifest. Per-layer source reuse is allowed only when that layer's pinned
@@ -71,9 +84,64 @@ after every planned pack job and the aggregate registry succeed.
   `source-only` run is a reusable layer checkpoint, never graph acceptance.
 - Reuse graph/index/shard artifacts only for the same build identity, source
   manifest and upstream run chain. `prepare-standard` validates run receipts,
-  graph/source/index bindings, plan digests and capsule receipts before using
+  graph/source/index bindings, plan digests and input-audit receipts before using
   them. A new source manifest or build identity requires regenerating the
   affected downstream stages.
+
+## W9 native-shard content reuse
+
+The current graph, source selection, index, slice inventory and registry are
+always admitted for the new execution. Global consuming-stage `pipeline_code`
+checks remain: a pipeline code change requires a new full freeze rather than
+continuing against another revision's prepared artifacts. Source-layer reuse is
+the existing, separate byte-contract mechanism.
+
+Each preparation audit computes a descriptor of the resolved Ninja graph and
+source closure, including file content/modes/links, external inputs, tools and
+required interpreters. Native resolution additionally binds the actual host image,
+package inventory, consumed system files/tools, fixed native environment and
+verified predecessor output content. It waits for the preceding wave's real
+outputs before deriving a key; matching task names or Git commits alone are not
+cache evidence. No build scalar or consumed source value is normalized away.
+
+The execution digest covers implementation/policy, excluding the two generated
+source-lock JSON documents. Their effective source contents remain hashed in
+each audited descriptor. A marker-only lock update therefore does not itself
+invalidate unrelated task keys; tasks that consume changed marker/build data
+still miss. The kernel owner gets a per-execution nonreuse value because current
+`mkcompile_h` reads date/user/hostname outside its declared inputs. Kernel source,
+Image/symbol pairing and those native values are not changed to manufacture hits.
+
+Resolution reads only eligible successful native origins and verifies the
+versioned content key, artifact bytes/digest and full native archive inventory.
+A hit creates a current-execution adoption receipt with current dependency/run
+bindings plus the unchanged original native receipt/origin. It is not a claim
+of current recompilation. Older outputs without the W9 contract, absent/expired
+entries and nonmatching keys are misses, not retroactively approved caches.
+
+Only misses mount the current source snapshot, restore the exact current
+shard/index/derived graph, pack a cold capsule and recheck its full audit
+descriptor before ordinary native compilation. Hits skip both capsule packing
+and native compilation. Nine dependency waves remain; W10 slicing and W11 ccache
+are not implemented, and `CCACHE_DISABLE=1` remains required.
+
+`force_cold=true` disables native cache adoption for the new execution. It is
+available at nightly and diagnostic freeze/compile entry points and propagates
+through full preparation. It does not turn off source integrity checks or erase
+anything. Explicit expired preparation/source inputs still fail closed; the
+reuse miss path is not permission to select another graph, source run or build.
+
+The approved automatic fallback is one same-pin forced-cold compile after a
+typed compile/assembly/preflight **content-validation** failure that records
+actual reused tasks. It preserves admitted build/source/code inputs, marks the
+original compile execution and cannot retry an already cold execution again.
+Transport/API errors, key/signing failures and Release publication errors do not
+qualify. This is not a blanket nightly retry policy. Hosted acceptance must
+exercise the integrated retry boundary before it is marked verified.
+
+Assembly, image/FIT gates, private snapshot checks, signing and installation
+contracts remain in force for built and adopted results. B's source, outputs,
+incremental cache, signing path and device-accepted rollback inputs are unchanged.
 
 ## 1. Generate a fresh graph
 
@@ -155,7 +223,7 @@ layers and downstream artifacts in the public build repository are public.
 The snapshot layers (currently `source-15` and `source-26`) are rebuilt from
 their locked assets; `reuse_sources_from` only offers unchanged, verified
 non-snapshot layers. Since the global manifest changes with the new
-providers, generate a fresh graph, index, shard plan, and capsules. The
+providers, generate a fresh graph, index, shard plan, and input audits. The
 complete-run `source_run` override remains exact-manifest only.
 
 When replacing one of these snapshots, review its `snapshot.json`, private
@@ -197,8 +265,9 @@ entries are explicit manifest inputs.
 
 Manual dispatch of `nightly.yml` forces this full chain even without a source
 change, allocating its build number and marker automatically. An active chain
-still prevents a duplicate. Scheduled checks retain change-only behavior; a
-failed chain is reported and is not automatically retried without a new change.
+still prevents a duplicate. Scheduled checks retain change-only behavior. Failures
+are reported; the only automatic cold retry is the typed, once-only W9 exception
+described above, not a general retry of every failed chain.
 
 Consuming stages require the upstream execution commit to match their own,
 including partial preparation and offline-signature release operations. Retry
@@ -206,20 +275,21 @@ failed jobs on the same revision; after a pipeline code fix start a new full
 freeze instead of mixing old stage artifacts with new code. Reusable source
 layers still follow their existing content/contract verification.
 
-## 2. Index, shard and pack
+## 2. Index, shard and audit cold inputs
 
 All stages run on `ubuntu-22.04`. `prepare-standard.yml` accepts `index`,
 `shard`, `pack` or `full`:
 
 - `full` creates a fresh canonical index, slices and audits the graph, then
-  starts one parallel cold-input pack job for every shard.
+  starts one parallel cold-input closure audit for every shard.
 - `index` creates only the canonical index. Use its run ID as `INDEX_RUN` for
   a later `shard` stage.
 - `shard` uses `INDEX_RUN` to create the runtime dependencies, cold probes,
   shard plan and pruned index. Use its run ID as `SHARD_RUN` for a later `pack`
   stage.
-- `pack` packages every shard from `SHARD_RUN`. Supply the matching `INDEX_RUN`
-  as an additional consistency check.
+- `pack` is the preparation-stage name for auditing every shard from `SHARD_RUN`
+  and producing the deferred registry, not compressing archives. Supply the
+  matching `INDEX_RUN` as an additional consistency check.
 
 The four terminal producers are `bootimage`, `recoveryimage`, `systemimage`
 and `vendorimage`.
@@ -271,7 +341,7 @@ be very large.
 Source restoration lists a run's artifacts once and downloads by artifact ID;
 ZIP bodies stream to disk in bounded chunks. Preparation artifact reads wait
 until the server's reset time on a primary API rate limit, then retry without
-skipping receipt or content checks. This matters for the parallel pack matrix:
+skipping receipt or content checks. This matters for the parallel input audits:
 GitHub documents a normal `GITHUB_TOKEN` budget of 1,000 REST requests per hour
 per repository ([rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)).
 An API-budget wait is not a request for a larger runner.
@@ -298,11 +368,12 @@ Do not mark preparation accepted until the complete chain has passed:
 4. The shard run succeeds with its runtime dependencies and cold probes,
    audited ownership/dependency bindings, complete shard inventory and plan
    digest.
-5. The parallel pack stage has exactly one successful receipt for every shard
+5. The parallel input-audit stage has exactly one successful receipt for every shard
    in the plan. All receipts must bind to the same build, graph, source
    manifest, index and plan; they must report a matching pruned-index identity
-   and verified archive size and SHA-256. The aggregate `pack-registry` must
-   report success and the expected shard count.
+   and versioned semantic input descriptor. The aggregate `pack-registry` must
+   report deferred packing, success and the expected shard count. Actual capsule
+   archive size/SHA and content verification occur later for each miss.
 
 Record the workflow commit, build number and datetime, manifest digest, source,
 graph, index, shard and pack run IDs, and the relevant receipts/logs. An unverified
@@ -317,10 +388,11 @@ new uploads only; existing artifact expiration times are not shortened:
 
 | Role | Retention |
 | --- | --- |
-| `cloud-source-<nn>`, graph, index, shard plan, cold capsules, pack receipts/registry | 3 days |
+| `cloud-source-<nn>`, graph, index, shard plan, input-audit receipts/registry | 3 days |
+| `shard-decision-<task>`, missed-task `cloud-runtime-capsule-<task>` | 3 days |
 | `cloud-fresh-rom-<compile_run>` and `zip-manifest` | 3 days |
 | `failure-source-<nn>` | 7 days |
-| Compiled `shard-<task>`, `fresh-receipt-<task>`, `cloud-build-context`, `cloud-fresh-build-summary` | 30 days |
+| Native/adopted `shard-<task>`, `fresh-receipt-<task>`, `cloud-build-context`, `cloud-fresh-build-summary` | 30 days |
 | Artifact-upload maintenance fixtures | 1 day |
 
 The repository default artifact/log policy remains 90 days; Releases are not
@@ -373,7 +445,7 @@ format/key path remains crux-install/1 with `crux_zip.py`. Legacy transport prof
 records are not current production manifests and retain their original pins
 for historical rebuild contracts; existing forks are not deleted.
 
-## 3. Admit preparation for a cold compile
+## 3. Admit preparation for native compilation/reuse
 
 A successful full freeze dispatches its full preparation, and a successful
 `full` or `pack` preparation dispatches `build-standard.yml` with its own run as
@@ -405,7 +477,8 @@ checksum, README and pinned install TWRP/checksum. No offline signature or draft
 approval is required by the normal chain. Releasing does not install anything.
 
 Release verification reads the successful compile's context and summary, binds
-every task to that execution/source/plan, then derives the exact assembly owners
+every task to that execution/source/plan and validates built/adopted native
+origins, then derives the exact assembly owners
 from the required image, identity and paired-kernel exports. The delivery must
 name exactly those complete producer bindings; their count is not fixed.
 
@@ -426,6 +499,9 @@ at once. Each upstream run must be successful and use the current execution
 commit. `preflight` verifies without Release writes; `release` stages and publishes
 in one run. `draft`/`publish` and a public offline signature remain supported for
 controlled recovery. Do not pass local ROM output or bypass source/receipt gates.
+For a reviewed forced-cold compile from still-valid preparation, add
+`-f force_cold=true` to the compile dispatch. Do not manually set `cold_retry_of`;
+that provenance field belongs to the once-only automatic content-failure path.
 
 Inspect the published Release's source provenance and required assets. Hosted
 acceptance is not device acceptance, UI/function testing or a rollback change.

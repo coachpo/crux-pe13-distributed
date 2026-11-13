@@ -5,5 +5,5 @@
     "alias": "/k",
     "validated_probe_run": "41801581346"
   },
-  "rationale": "The admitted QCA kernel shell recipe exceeded Linux MAX_ARG_STRLEN because of repeated absolute source paths. The identical bind-mounted source and command-line srctree alias passed a complete standard-runner kernel build without editing source, Ninja, output paths or compiler options other than source-path spelling. Production still starts every task cold and accepts only current-execution dependencies. The alias follows the kernel revision that the source manifest pins."
+  "rationale": "The admitted QCA kernel shell recipe exceeded Linux MAX_ARG_STRLEN because of repeated absolute source paths. The identical bind-mounted source and command-line srctree alias passed a complete standard-runner kernel build without editing source, Ninja, output paths or compiler options other than source-path spelling. Native misses start cold and consume current-execution admitted dependencies; verified reuse retains original native provenance separately. The alias follows the kernel revision that the source manifest pins."
 }

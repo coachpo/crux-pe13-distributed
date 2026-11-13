@@ -24,7 +24,8 @@ import urllib.request
 from urllib.parse import urlencode
 
 import crux_zip
-from release_source import REPOSITORY, SourceError, assembly_build, parse_tag, sha256, verify_source
+from release_source import (REPOSITORY, ReuseContentError, SourceError, assembly_build, parse_tag,
+                            sha256, verify_source)
 
 
 RELEASE_TARGET = "main"
@@ -120,13 +121,19 @@ def provenance(source):
 
 
 def release_body(source):
+    reuse = getattr(source, "reuse_provenance", None)
+    require(isinstance(reuse, dict) and reuse,
+            "verified compile summary has no per-task reuse provenance for the release record")
+    reuse_json = json.dumps(reuse, indent=2, sort_keys=True)
     return (
         "Crux PE13 flashable ZIP (aosp_crux-userdebug / test-keys), built by GitHub Actions.\n\n"
         f"[Verified assembly](https://github.com/{REPOSITORY}/actions/runs/{source.assembly_run}) · "
-        f"[Cold compile](https://github.com/{REPOSITORY}/actions/runs/{source.compile_run}).\n\n"
+        f"[Compile and verified shard origins](https://github.com/{REPOSITORY}/actions/runs/{source.compile_run}).\n\n"
         "Install it with the RAM-only install TWRP attached here, following README.txt. "
         "It is a clean install: PE user data and metadata are erased. Host validation only; "
-        "device acceptance is recorded separately.\n\n" + provenance(source))
+        "device acceptance is recorded separately.\n\n"
+        "Validated per-task reuse provenance (mode, semantic key, and origin run/artifact):\n\n"
+        "```json\n" + reuse_json + "\n```\n\n" + provenance(source))
 
 
 def next_tag(api, build, assembly_run):
@@ -240,6 +247,23 @@ def deliver(api, source, staged, assets, operation):
     return {"state": "draft", "release_id": release_id, "changed": created or bool(missing)}
 
 
+def write_preflight_retry_evidence(error, path):
+    """Record only post-admission payload validation errors with proven reuse."""
+    if not isinstance(error, ReuseContentError):
+        raise ReleaseError("only a verified reused-content failure can be recorded for retry")
+    reused = getattr(error, "reused_tasks", None)
+    if not isinstance(reused, list) or not reused:
+        raise ReleaseError("verified preflight failure has no reused-task evidence")
+    evidence = {"schema_version": 1, "status": "failed", "failure_class": "content-validation",
+                "stage": "preflight", "execution_id": str(error.execution_id),
+                "worker_commit": error.worker_commit, "build_number": error.build_number,
+                "reused_tasks": reused, "error": str(error)}
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    return evidence
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--assembly-run", required=True)
@@ -248,6 +272,8 @@ def main():
     parser.add_argument("--operation", choices=["preflight", "draft", "publish", "release"], default="preflight")
     parser.add_argument("--signature", required=True,
                         help="P-256 r||s over the payload's crux-install.txt, 128 hex digits")
+    parser.add_argument("--retry-evidence", type=Path,
+                        help="Optional output for typed prepublication content-validation evidence")
     args = parser.parse_args()
     if not re.fullmatch(r"[1-9][0-9]*", args.assembly_run):
         parser.error("--assembly-run must be a positive Actions run ID")
@@ -261,6 +287,8 @@ def main():
             and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
             and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"):
         parser.error("draft, publish and release must be dispatched through release.yml on main")
+    if args.retry_evidence and args.operation not in {"preflight", "draft", "release"}:
+        parser.error("--retry-evidence is valid only before publication")
     try:
         api = Releases()
         tag = args.tag or next_tag(api, assembly_build(args.assembly_run), args.assembly_run)
@@ -277,6 +305,13 @@ def main():
             for operation in ("draft", "publish") if args.operation == "release" else (args.operation,):
                 print(json.dumps({"tag": source.tag, "operation": operation,
                                   **deliver(api, source, staged, assets, operation)}, indent=2), flush=True)
+    except ReuseContentError as error:
+        if args.retry_evidence:
+            try:
+                write_preflight_retry_evidence(error, args.retry_evidence)
+            except (OSError, ReleaseError, TypeError, ValueError) as evidence_error:
+                parser.exit(1, f"release-zip: {evidence_error}\n")
+        parser.exit(1, f"release-zip: {error}\n")
     except (ReleaseError, SourceError, OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"release-zip: {error}\n")
     return 0

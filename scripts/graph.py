@@ -1308,7 +1308,7 @@ class Graph:
                 retained[row['file']].append(row)
         for rows in retained.values():
             rows.sort(key=lambda row:row['ordinal'])
-        handles = {}; commands = []; depfiles = []; rspfiles = []; edge_records = []; deferred=[]
+        handles = {}; commands = []; depfiles = []; rspfiles = []; edge_records = []; phony_records = []; deferred=[]
         synthetic_aliases={}
         for batch in chunks(selected):
             marks=','.join('?' for _ in batch)
@@ -1397,8 +1397,10 @@ class Graph:
                                     return value
                                 return default
                         lookup = RuleEnv()
-                        record = {'outputs':outs,'rule':rule}
-                        for key in ('command','depfile','rspfile','rspfile_content'):
+                        record = {'outputs':outs,'rule':rule,
+                                  'inputs': [{'path': path, 'relation': relation} for path, relation in deps]}
+                        for key in ('command','depfile','rspfile','rspfile_content',
+                                    'deps','dyndep','restat','generator','pool'):
                             if key in ('depfile','rspfile'):
                                 saved={name:values[name] for name in ('in','in_newline','out')}
                                 values.update({'in':' '.join(explicit),'in_newline':'\n'.join(explicit),
@@ -1417,6 +1419,8 @@ class Graph:
                             rspfiles.append(record['rspfile'])
                         if rule != 'phony':
                             edge_records.append(record)
+                        else:
+                            phony_records.append(record)
                     output.write(raw); output.write('\n')
         try:
             visit(self.meta['entry_file'],{}, {})
@@ -1437,7 +1441,7 @@ class Graph:
                 'ninja':'build.ninja','runtime_dir':runtime_dir,'targets':list(targets),
                 'graph_inputs':[r['path'] for r in files.values()],
                 'commands':commands,'depfiles':sorted(set(depfiles)),
-                'rspfiles':sorted(set(rspfiles)),'edges':edge_records,
+                'rspfiles':sorted(set(rspfiles)),'edges':edge_records,'phony_edges':phony_records,
                 'declared_side_output_dirs':[directory for directory,owner in self.side_output_dirs.items() if owner in selected],
                 'output_dirs':[directory for directory,owner in all_dirs.items() if owner in selected],
                 'external_input_dirs':[directory for directory,owner in all_dirs.items() if owner in external_owners],

@@ -6,6 +6,12 @@ on:
     # 01:37 in Helsinki in winter and 02:37 in summer; GitHub cron is UTC.
     - cron: '37 23 * * *'
   workflow_dispatch:
+    inputs:
+      force_cold:
+        description: Disable matching incremental cache reuse for this manual chain
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,9 +44,11 @@ jobs:
         id: check
         env:
           CRUX_SOURCE_SNAPSHOTS_TOKEN: ${{ secrets.CRUX_SOURCE_SNAPSHOTS_TOKEN }}
+          FORCE_COLD: ${{ inputs.force_cold }}
         run: |
           args=()
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then args+=(--force); fi
+          if [[ "$FORCE_COLD" == true ]]; then args+=(--force-cold); fi
           python3 scripts/nightly.py "${args[@]}" --github-output "$GITHUB_OUTPUT"
 
   report:

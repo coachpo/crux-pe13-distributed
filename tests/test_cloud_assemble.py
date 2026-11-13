@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 SPEC = importlib.util.spec_from_file_location('cloud_assemble', SCRIPTS / 'cloud_assemble.py')
 cloud_assemble = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(cloud_assemble)
+import cloud_reuse
 
 
 class CloudAssembleTests(unittest.TestCase):
@@ -194,6 +195,66 @@ class CloudAssembleTests(unittest.TestCase):
         receipt['run_id'] = '9000'
         with self.assertRaises(cloud_assemble.AssembleError):
             cloud_assemble._validate_receipt(self.context, self.ids[-1], receipt)
+
+    def test_receipt_reuse_envelope_is_validated_after_current_binding(self):
+        task_id = self.ids[0]
+        context = self.context
+        context['reuse_policy'] = {'schema_version': 1, 'version': 1, 'force_cold': False,
+                                   'execution_digest': 'e' * 64}
+        context['tasks'][task_id]['input_identity'] = 'a' * 64
+        context['tasks'][task_id]['reuse_descriptor'] = {
+            'input_identity': 'a' * 64, 'execution_digest': 'e' * 64}
+        receipt = self._receipt(task_id, [])
+        native = {'schema_version': 1, 'id': task_id, 'run_id': '9001',
+                  'worker_commit': self.worker_commit,
+                  'manifest_sha256': context['tasks'][task_id]['manifest_sha256'],
+                  'status': 'success', 'outputs': [],
+                  'build_environment': {'CCACHE_DISABLE': '1'}}
+        basis = cloud_reuse.content_basis(context, task_id, {'CCACHE_DISABLE': '1'}, {})
+        receipt['reuse'] = cloud_reuse.envelope(context, task_id, basis, native)
+        cloud_assemble._validate_receipt(context, task_id, receipt)
+
+        receipt['reuse']['basis']['input_identity'] = '0' * 64
+        with self.assertRaisesRegex(cloud_assemble.AssembleError, 'Reuse provenance'):
+            cloud_assemble._validate_receipt(context, task_id, receipt)
+
+    def test_typed_validation_evidence_is_written_only_after_receipts_are_admitted(self):
+        context = {'execution_id': '9001', 'worker_commit': self.worker_commit,
+                   'build_number': '2026110303', 'reuse_policy': {'schema_version': 1},
+                   'tasks': {'task': {}}}
+        context_path = self.root / 'context.json'
+        context_path.write_text(json.dumps(context))
+        staging, output = self.root / 'staging', self.root / 'output'
+        source_contract = self.root / 'source-contract.json'
+        source_contract.write_text('{}')
+
+        def admit(context, staging, downloader, manifest_path):
+            path = staging / 'fresh-receipts/task'
+            path.mkdir(parents=True)
+            (path / 'receipt.json').write_text(json.dumps({'reuse': {'mode': 'reused'}}))
+            return [], self.root / 'producers'
+
+        assembler = mock.Mock(side_effect=ValueError('image identity mismatch'))
+        with mock.patch.object(cloud_assemble, 'derive_identity', return_value={}), \
+                mock.patch.object(cloud_assemble, 'derive_source_selection', return_value={}), \
+                mock.patch.object(cloud_assemble, 'SOURCE_CONTRACT', source_contract), \
+                mock.patch.object(cloud_assemble, 'admit_producers', side_effect=admit):
+            with self.assertRaisesRegex(ValueError, 'image identity mismatch'):
+                cloud_assemble.assemble(context_path, output, staging, assembler=assembler)
+        evidence = json.loads((output / 'validation-failure.json').read_text())
+        self.assertEqual(evidence, {'schema_version': 1, 'status': 'failed',
+            'failure_class': 'content-validation', 'stage': 'assemble', 'execution_id': '9001',
+            'worker_commit': self.worker_commit, 'build_number': '2026110303',
+            'reused_tasks': ['task'], 'error': 'image identity mismatch'})
+
+        transport_staging, transport_output = self.root / 'transport-staging', self.root / 'transport-output'
+        with mock.patch.object(cloud_assemble, 'derive_identity', return_value={}), \
+                mock.patch.object(cloud_assemble, 'derive_source_selection', return_value={}), \
+                mock.patch.object(cloud_assemble, 'SOURCE_CONTRACT', source_contract), \
+                mock.patch.object(cloud_assemble, 'admit_producers', side_effect=ValueError('artifact unavailable')):
+            with self.assertRaisesRegex(ValueError, 'artifact unavailable'):
+                cloud_assemble.assemble(context_path, transport_output, transport_staging)
+        self.assertFalse((transport_output / 'validation-failure.json').exists())
 
     def test_missing_kernel_child_export_fails_closed(self):
         receipts = {task_id: self._receipt(task_id, []) for task_id in self.ids}

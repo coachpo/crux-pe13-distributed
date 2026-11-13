@@ -335,6 +335,83 @@ def _declared_paths(values, source_root: Path) -> set[str]:
     return result
 
 
+def audit_shard(shards: Path, shard_id: str, inventory_path: Path,
+                shard_receipt_path: Path, source_manifest_path: Path,
+                graph_index: Path, output: Path) -> tuple[int, dict]:
+    """Audit cold inputs and record their semantic identity without archiving them."""
+    output.mkdir(parents=True, exist_ok=True)
+    receipt_path = output / "pack-receipt.json"
+    if receipt_path.exists():
+        raise PackError("Pack receipt already exists; refusing to overwrite")
+    metadata_path = output / (shard_id + ".json")
+    receipt = {"schema_version": 1, "status": "running", "shard_id": shard_id,
+               "output": str(output.resolve()), "packing": "deferred"}
+    start = time.monotonic()
+    try:
+        identity = validate_inputs(shards, shard_id, inventory_path, shard_receipt_path,
+                                   source_manifest_path, graph_index)
+        source_root = Path(identity["source_root"]).resolve()
+        out_root = Path(identity["out_root"]).resolve()
+        resolved_output = output.resolve()
+        if (resolved_output == source_root or source_root in resolved_output.parents
+                or resolved_output == out_root or out_root in resolved_output.parents):
+            raise PackError("Pack output directory must be outside source_root and OUT_DIR")
+        if metadata_path.exists():
+            raise PackError("Capsule metadata already exists; refusing to overwrite")
+
+        receipt.update({"source_manifest": str(source_manifest_path.resolve()),
+                        "source_manifest_sha256": identity["manifest_sha256"],
+                        "slice_manifest": str(identity["slice_manifest"]),
+                        "slice_manifest_sha256": identity["slice_manifest_sha256"],
+                        "slice_inventory_sha256": sha256(inventory_path),
+                        "shard_receipt_sha256": sha256(shard_receipt_path),
+                        "plan_sha256": identity["plan_sha256"],
+                        "graph_index": {"bytes": identity["graph_index_bytes"],
+                                        "sha256": identity["graph_index_sha256"]}})
+        notice_sources = notice_source_inputs(shards, identity["shard_manifest"], inventory_path,
+                                              source_root, out_root)
+        receipt["notice_source_inputs"] = notice_sources
+        metadata = capsule.audit(
+            identity["slice_manifest"], source_root, out_root,
+            allowed_generated=(), graph_index=graph_index.resolve(),
+            additional_source_inputs=notice_sources)
+        if metadata.get("source_root") != str(source_root) or metadata.get("out_root") != str(out_root):
+            raise PackError("Capsule metadata source/out roots differ from the shard receipt")
+        if metadata.get("manifest_sha256") != identity["slice_manifest_sha256"]:
+            raise PackError("Capsule metadata manifest SHA differs from the inventory")
+        if metadata.get("allowed_generated_inputs") != []:
+            raise PackError("Cold-input capsule contains allowed_generated_inputs")
+        files = metadata.get("files")
+        if not isinstance(files, list) or metadata.get("file_count") != len(files):
+            raise PackError("Capsule metadata has inconsistent file count")
+        declared = _declared_paths(identity["shard_manifest"].get("outputs", []), source_root)
+        declared.update(_declared_paths(identity["shard_manifest"].get("external_inputs", []), source_root))
+        embedded = {os.path.abspath(item["path"]) for item in files
+                    if isinstance(item, dict) and isinstance(item.get("path"), str)}
+        overlap = sorted(declared & embedded)
+        if overlap:
+            raise PackError("Capsule embeds declared outputs/external inputs: " + ", ".join(overlap[:10]))
+
+        import cloud_reuse
+        execution_digest = cloud_reuse.execution_digest()
+        descriptor = cloud_reuse.input_descriptor(identity["shard_manifest"], metadata, execution_digest)
+        input_identity = descriptor.get("input_identity")
+        if not isinstance(input_identity, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", input_identity):
+            raise PackError("Semantic input descriptor has no valid input_identity SHA-256")
+        metadata["reuse_descriptor"] = descriptor
+        metadata["input_identity"] = input_identity
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+        receipt.update({"status": "success", "packing": "deferred",
+                       "reuse_descriptor": descriptor, "input_identity": input_identity,
+                       "file_count": metadata["file_count"], "input_bytes": metadata["input_bytes"],
+                       "elapsed_seconds": round(time.monotonic() - start, 3)})
+        return 0, receipt
+    except Exception as error:
+        receipt.update({"status": "failed", "error": str(error),
+                        "elapsed_seconds": round(time.monotonic() - start, 3)})
+        return 1, receipt
+
+
 def pack_shard(shards: Path, shard_id: str, inventory_path: Path,
                shard_receipt_path: Path, source_manifest_path: Path,
                graph_index: Path, output: Path) -> tuple[int, dict]:
@@ -426,12 +503,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-manifest", required=True)
     parser.add_argument("--graph-index", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--audit-only", action="store_true",
+                        help="audit capsule inputs and record semantic identity without writing an archive")
     args = parser.parse_args(argv)
     output = Path(args.output).resolve()
     try:
-        code, receipt = pack_shard(Path(args.shards), args.shard, Path(args.slice_inventory),
-                                   Path(args.shard_receipt), Path(args.source_manifest),
-                                   Path(args.graph_index), output)
+        operation = audit_shard if args.audit_only else pack_shard
+        code, receipt = operation(Path(args.shards), args.shard, Path(args.slice_inventory),
+                                  Path(args.shard_receipt), Path(args.source_manifest),
+                                  Path(args.graph_index), output)
         (output / "pack-receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     except (PackError, OSError, json.JSONDecodeError, capsule.CapsuleError, ValueError) as error:
         print("cloud_pack: " + str(error), file=sys.stderr)
@@ -439,9 +519,14 @@ def main(argv: list[str] | None = None) -> int:
     if code:
         print("cloud_pack: " + receipt.get("error", "packing failed"), file=sys.stderr)
         return code
-    print(json.dumps({"status": "success", "shard_id": args.shard,
-                      "archive": receipt["archive"], "archive_bytes": receipt["archive_bytes"],
-                      "file_count": receipt["file_count"]}, sort_keys=True))
+    if args.audit_only:
+        summary = {"status": "success", "shard_id": args.shard, "packing": "deferred",
+                   "input_identity": receipt["input_identity"], "file_count": receipt["file_count"]}
+    else:
+        summary = {"status": "success", "shard_id": args.shard,
+                   "archive": receipt["archive"], "archive_bytes": receipt["archive_bytes"],
+                   "file_count": receipt["file_count"]}
+    print(json.dumps(summary, sort_keys=True))
     return 0
 
 

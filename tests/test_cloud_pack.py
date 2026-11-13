@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -78,6 +79,7 @@ class CloudPackTests(unittest.TestCase):
         self.archive_variant = None
         self.capsule_variant = None
         self.calls = []
+        self.audit_calls = []
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -240,6 +242,79 @@ class CloudPackTests(unittest.TestCase):
                 mock.patch.object(cloud_pack.subprocess, "Popen",
                                   side_effect=lambda command, **kwargs: FakeZstd(Path(command[-1]).read_bytes())):
             return cloud_pack.main(args)
+
+    def fake_capsule_audit(self, manifest, source_root, out_root, **kwargs):
+        self.audit_calls.append((manifest, source_root, out_root, kwargs))
+        self.assertEqual(Path(manifest), self.slice_manifest_path.resolve())
+        self.assertEqual(Path(source_root), self.source.resolve())
+        self.assertEqual(Path(out_root), self.out_root.resolve())
+        self.assertEqual(kwargs["allowed_generated"], ())
+        self.assertEqual(Path(kwargs["graph_index"]), self.index_path.resolve())
+        files = self.file_specs()
+        metadata = {"schema_version": 1, "source_root": str(self.source), "out_root": str(self.out_root),
+                    "slice_path": str(self.source / ".crux-task/graph"),
+                    "manifest_sha256": hashlib.sha256(self.slice_manifest_path.read_bytes()).hexdigest(),
+                    "files": files, "file_count": len(files),
+                    "input_bytes": sum(item["size"] for item in files),
+                    "allowed_generated_inputs": [], "external_inputs": []}
+        if self.capsule_variant == "allowed-generated":
+            metadata["allowed_generated_inputs"] = [{"path": str(self.source / "generated.h"),
+                                                      "reason": "unapproved"}]
+        elif self.capsule_variant == "output-overlap":
+            metadata["files"].append({"path": str(self.out_root / "final"), "type": "file",
+                                      "mode": 0o644, "size": 0,
+                                      "sha256": hashlib.sha256(b"").hexdigest(), "reasons": ["fixture"]})
+            metadata["file_count"] += 1
+        return metadata
+
+    def invoke_audit(self, descriptor=None):
+        args = ["--shards", str(self.shards), "--shard", self.shard_id,
+                "--slice-inventory", str(self.inventory_path),
+                "--shard-receipt", str(self.shard_receipt_path),
+                "--source-manifest", str(self.source_manifest_path),
+                "--graph-index", str(self.index_path), "--output", str(self.output), "--audit-only"]
+        descriptor = descriptor or {"schema_version": 1, "input_identity": "c" * 64,
+                                    "inputs": [{"identity": "fixture"}]}
+        reuse = type("CloudReuse", (), {
+            "execution_digest": staticmethod(lambda: "d" * 64),
+            "input_descriptor": staticmethod(lambda manifest, metadata, execution_digest: descriptor),
+        })
+        with mock.patch.object(cloud_pack.capsule, "audit", side_effect=self.fake_capsule_audit, create=True), \
+                mock.patch.dict(sys.modules, {"cloud_reuse": reuse}):
+            return cloud_pack.main(args)
+
+    def test_audit_records_semantic_identity_without_creating_archive(self):
+        self.assertEqual(self.invoke_audit(), 0)
+        receipt = json.loads((self.output / "pack-receipt.json").read_text())
+        metadata = json.loads((self.output / (self.shard_id + ".json")).read_text())
+        self.assertEqual(receipt["status"], "success")
+        self.assertEqual(receipt["packing"], "deferred")
+        self.assertEqual(receipt["input_identity"], "c" * 64)
+        self.assertEqual(receipt["slice_inventory_sha256"], cloud_pack.sha256(self.inventory_path))
+        self.assertEqual(receipt["shard_receipt_sha256"], cloud_pack.sha256(self.shard_receipt_path))
+        self.assertEqual(receipt["reuse_descriptor"], metadata["reuse_descriptor"])
+        self.assertEqual(receipt["notice_source_inputs"], [])
+        self.assertEqual(metadata["input_identity"], "c" * 64)
+        self.assertNotIn("archive", metadata)
+        self.assertFalse((self.output / (self.shard_id + ".tar.zst")).exists())
+        self.assertEqual(len(self.audit_calls), 1)
+        self.assertEqual(self.calls, [])
+
+    def test_audit_requires_valid_semantic_identity(self):
+        self.assertEqual(self.invoke_audit({"schema_version": 1, "input_identity": "invalid"}), 1)
+        receipt = json.loads((self.output / "pack-receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("input_identity", receipt["error"])
+        self.assertFalse((self.output / (self.shard_id + ".json")).exists())
+        self.assertFalse((self.output / (self.shard_id + ".tar.zst")).exists())
+
+    def test_audit_rejects_declared_output_overlap(self):
+        self.capsule_variant = "output-overlap"
+        self.assertEqual(self.invoke_audit(), 1)
+        receipt = json.loads((self.output / "pack-receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("declared outputs/external inputs", receipt["error"])
+        self.assertEqual(self.audit_calls[0][3]["additional_source_inputs"], [])
 
     def test_pack_verifies_fresh_cold_bundle_hardlink_and_sidecar(self):
         self.assertEqual(self.invoke(), 0)

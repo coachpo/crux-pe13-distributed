@@ -2918,6 +2918,19 @@ def shared_inputs(metadata, shared_manifest, digester=digest):
     return omitted
 
 
+def audit(manifest_path, source_root, out_root=DEFAULT_OUT, allowed_generated=(),
+          graph_index=None, additional_source_inputs=()):
+    """Audit the same cold input closure as pack, without producing an archive."""
+    manifest_path = Path(manifest_path).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("schema_version") != 1 or Path(manifest.get("source_root", source_root)) != Path(source_root):
+        raise CapsuleError("Slice schema/source_root mismatch")
+    collector = Collector(manifest, source_root, out_root, allowed_generated,
+                          graph_index=graph_index, additional_source_inputs=additional_source_inputs)
+    task_path = collector.collect(manifest_path.parent)
+    return collector.metadata(manifest_path, task_path)
+
+
 def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None,
          shared_manifest=None, graph_index=None, additional_source_inputs=()):
     manifest_path = Path(manifest_path).resolve()

@@ -412,6 +412,12 @@ def validate_extra_exports(extra_exports, manifest_outputs, sort=True):
     return sorted(extra_exports) if sort else list(extra_exports)
 
 
+def native_process_environment(build_environment):
+    # Execution provenance belongs in receipts, not in native tool inputs.
+    return {key: value for key, value in {**os.environ, **build_environment}.items()
+            if not key.startswith('GITHUB_')}
+
+
 def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=(), ninja=None, jobs=4,
               dependency_bindings=None, dependency_supersessions=None, extra_exports=(), prebuild_targets=()):
     output_dir = Path(output_dir).resolve()
@@ -519,13 +525,13 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
                                   "argv": prebuild_command}), file=log)
                 prebuild_result = subprocess.run(prebuild_command, cwd=source_root, stdout=log,
                                                  stderr=subprocess.STDOUT,
-                                                 env={**os.environ, **build_environment})
+                                                 env=native_process_environment(build_environment))
                 receipt["prebuild_returncode"] = prebuild_result.returncode
                 if prebuild_result.returncode:
                     raise ValueError(f"Ninja prebuild exited with status {prebuild_result.returncode}")
             print(json.dumps({"cwd": str(source_root), "argv": command}), file=log)
             result = subprocess.run(command, cwd=source_root, stdout=log, stderr=subprocess.STDOUT,
-                                    env={**os.environ, **build_environment})
+                                    env=native_process_environment(build_environment))
             receipt["returncode"] = result.returncode
             if result.returncode:
                 raise ValueError(f"Ninja exited with status {result.returncode}")
@@ -544,6 +550,7 @@ def run_shard(manifest_path, bundle_path, shard_id, output_dir, dependency_dirs=
             receipt["status"] = "success"
         except Exception as error:
             receipt["error"] = str(error)
+            receipt["error_type"] = type(error).__name__
             print(f"ERROR: {error}", file=log)
             archive.unlink(missing_ok=True)
             try:

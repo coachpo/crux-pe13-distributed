@@ -92,16 +92,32 @@ class CloudCompileTests(unittest.TestCase):
         slice_dir.mkdir(parents=True)
         (self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT).mkdir(parents=True, exist_ok=True)
         (slice_dir / "manifest.json").write_bytes(self.manifest_bytes)
-        (slice_dir / "bundle.json").write_text(json.dumps({
+        bundle = {
             "schema_version": 1, "source_root": str(self.source), "out_root": str(self.out_root),
             "manifest_sha256": self.manifest_sha, "allowed_generated_inputs": [], "files": [],
-        }))
+            "slice_path": str(slice_dir), "external_inputs": [], "external_input_dirs": [],
+            "required_interpreters": [], "system_tools": [],
+        }
+        if getattr(self, "bundle_files_override", None) is not None:
+            bundle["files"] = self.bundle_files_override
+        (slice_dir / "bundle.json").write_text(json.dumps(bundle))
 
     def fake_download(self, run, repository, destination, token=None, name=None, pattern=None):
         self.downloads.append({"run": str(run), "repository": repository, "name": name,
                                "token": token, "destination": str(destination)})
         target = Path(destination)
         target.mkdir(parents=True, exist_ok=True)
+        if name == "cloud-runtime-capsule-" + self.shard_id:
+            archive_path = target / self.archive_name
+            archive_path.write_bytes(self.archive)
+            descriptor = self.fresh_context["tasks"][self.shard_id]["reuse_descriptor"]
+            (target / "pack-receipt.json").write_text(json.dumps({
+                "status": "success", "execution_id": self.fresh_context["execution_id"],
+                "archive": self.archive_name, "archive_bytes": len(self.archive),
+                "archive_sha256": hashlib.sha256(self.archive).hexdigest(),
+                "reuse_descriptor": descriptor, "input_identity": descriptor["input_identity"],
+            }))
+            return [{"name": name, "id": 702, "destination": str(target)}]
         if name == "cloud-capsule-" + self.shard_id:
             archive_path = target / self.fresh_context["tasks"][self.shard_id]["archive"]
             archive_path.write_bytes(self.archive)
@@ -152,6 +168,7 @@ class CloudCompileTests(unittest.TestCase):
                    "source_root": manifest["source_root"], "out_root": self.fresh_context["out_root"],
                    "outputs": [], "additional_exports": list(extra_exports),
                    "prebuild_targets": list(prebuild_targets),
+                   "build_environment": {"CCACHE_DISABLE": "1"},
                    "archive_sha256": hashlib.sha256(b"fresh outputs").hexdigest()}
         Path(output_dir, "receipt.json").write_text(json.dumps(receipt))
         return receipt
@@ -170,6 +187,44 @@ class CloudCompileTests(unittest.TestCase):
             return cloud_compile.compile_shard(self.context_path, self.shard_id,
                                                self.output, self.staging)
 
+    def deferred_context(self):
+        manifest = json.loads(self.manifest_bytes)
+        bundle = {"source_root": str(self.source), "out_root": str(self.out_root),
+                  "slice_path": str(self.source / ".crux-task/graph"),
+                  "manifest_sha256": self.manifest_sha, "files": [], "file_count": 0,
+                  "input_bytes": 0, "allowed_generated_inputs": [], "external_inputs": [],
+                  "external_input_dirs": [], "required_interpreters": [], "system_tools": []}
+        descriptor = cloud_compile.cloud_reuse.input_descriptor(
+            manifest, bundle, self.execution_digest)
+        task = self.fresh_context["tasks"][self.shard_id]
+        task.update(packing="deferred", reuse_descriptor=descriptor,
+                    input_identity=descriptor["input_identity"])
+        for key in ("archive", "archive_bytes", "archive_sha256"):
+            task.pop(key, None)
+        self.fresh_context["reuse_policy"] = {"version": 1,
+                                               "execution_digest": self.execution_digest,
+                                               "force_cold": False}
+        self.context_path.write_text(json.dumps(self.fresh_context))
+        return descriptor
+
+    def run_deferred_compile(self):
+        with mock.patch.dict(os.environ, self.runner_env, clear=True), \
+                mock.patch.object(cloud_compile.cloud_artifacts, "download_artifacts", side_effect=self.fake_download), \
+                mock.patch.object(cloud_compile.subprocess, "run", side_effect=self.fake_tar), \
+                mock.patch.object(cloud_compile.worker, "run_shard", side_effect=self.fake_worker), \
+                mock.patch.object(cloud_compile.cloud_reuse, "runtime_identity",
+                                  return_value={"CCACHE_DISABLE": "1", "host": "fixture"}), \
+                mock.patch.object(cloud_compile, "_mount_short_source_alias",
+                                  return_value={"source": str(self.source / cloud_compile.SHORT_KERNEL_SOURCE_PROJECT),
+                                                "alias": "/k", "mount": "bind"}), \
+                mock.patch.object(cloud_compile, "_unmount_short_source_alias"):
+            return cloud_compile.compile_shard(self.context_path, self.shard_id,
+                                               self.output, self.staging)
+
+    @property
+    def execution_digest(self):
+        return "d" * 64
+
     def test_fresh_capsule_worker_records_context_and_disables_auth_in_build_child(self):
         code, receipt = self.run_compile()
         self.assertEqual(code, 0)
@@ -183,6 +238,55 @@ class CloudCompileTests(unittest.TestCase):
         self.assertEqual(receipt["admitted_local_runtime_targets"], [])
         self.assertEqual(json.loads((self.output / "receipt.json").read_text())["fresh_build"], self.identity())
         self.assertFalse((self.staging / "capsule").exists())
+
+    def test_deferred_task_may_omit_archive_fields_only_with_matching_descriptor(self):
+        descriptor = self.deferred_context()
+        task = self.fresh_context["tasks"][self.shard_id]
+        self.assertNotIn("archive", task)
+        self.assertNotIn("archive_bytes", task)
+        self.assertNotIn("archive_sha256", task)
+        cloud_compile.validate_context(self.fresh_context, self.shard_id, self.runner_env)
+
+        invalid = json.loads(json.dumps(self.fresh_context))
+        invalid["tasks"][self.shard_id]["reuse_descriptor"]["input_identity"] = "0" * 64
+        with self.assertRaisesRegex(cloud_compile.CompileError, "audited input descriptor"):
+            cloud_compile.validate_context(invalid, self.shard_id, self.runner_env)
+
+        missing = json.loads(json.dumps(self.fresh_context))
+        missing["tasks"][self.shard_id].pop("reuse_descriptor")
+        with self.assertRaisesRegex(cloud_compile.CompileError, "audited input descriptor"):
+            cloud_compile.validate_context(missing, self.shard_id, self.runner_env)
+        self.assertEqual(descriptor["input_identity"], task["input_identity"])
+
+    def test_deferred_compile_rechecks_restored_descriptor_before_native_worker(self):
+        self.deferred_context()
+        self.bundle_files_override = [{"path": str(self.source / "changed-input"),
+                                       "type": "file", "mode": 0o644, "size": 1,
+                                       "sha256": "8" * 64, "reasons": ["fixture"]}]
+        code, receipt = self.run_deferred_compile()
+        self.assertEqual(code, 1)
+        self.assertIn("content descriptor differs", receipt["error"])
+        self.assertEqual(self.downloads[0]["run"], self.fresh_context["execution_id"])
+        self.assertEqual(self.downloads[0]["name"], "cloud-runtime-capsule-" + self.shard_id)
+        self.assertEqual(self.worker_calls, [])
+
+    def test_deferred_cold_worker_emits_built_envelope_without_build_credentials(self):
+        self.deferred_context()
+        self.archive = b"audited runtime capsule"
+        self.archive_name = self.shard_id + ".tar.zst"
+        code, receipt = self.run_deferred_compile()
+        self.assertEqual(code, 0, receipt.get("error"))
+        self.assertEqual(self.downloads[0]["run"], self.fresh_context["execution_id"])
+        self.assertEqual(self.downloads[0]["name"], "cloud-runtime-capsule-" + self.shard_id)
+        self.assertEqual(receipt["status"], "success")
+        self.assertEqual(receipt["reuse"]["mode"], "built")
+        self.assertEqual(receipt["reuse"]["key"], cloud_compile.cloud_reuse.content_key(
+            receipt["reuse"]["basis"]))
+        self.assertEqual(receipt["reuse"]["native_receipt"]["run_id"], self.fresh_context["execution_id"])
+        self.assertEqual(receipt["reuse"]["native_receipt"]["worker_commit"], self.fresh_context["worker_commit"])
+        self.assertEqual(self.worker_calls[0]["bindings"], [])
+        # fake_worker asserts these credentials are absent in the native worker
+        # invocation's environment, before the wrapper restores its credentials.
 
     def test_dependency_must_come_from_current_fresh_execution_and_bind_manifest_commit(self):
         dependency_id = "w000-s000"

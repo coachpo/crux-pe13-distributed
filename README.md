@@ -25,6 +25,10 @@ chain. Build identities and upstream run provenance are recorded with the
 not maintained as a second mutable baseline in this overview.
 The entire path uses public-repository standard `ubuntu-22.04` runners.
 
+W9 native-shard reuse is being integrated; hosted acceptance is pending. The
+content/admission rules below describe that implementation, not proof of a cache
+hit or a newly accepted Release. W10 repartitioning and W11 ccache are not included.
+
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
 but does not start a duplicate while another chain is active. It allocates the
 build number and marker just like the scheduled entry. `scripts/nightly.py`'s
@@ -54,8 +58,8 @@ is outside maintained Crux interfaces; delivery uses `crux_zip.py`, not that too
 
 | Stage | Maintained inputs and handoff |
 | --- | --- |
-| Prepare | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and packs it into a shard plan, a pack registry and one cold capsule per shard. |
-| Compile | `build-standard.yml` admits the pack registry of the preparation run it is given. The graph receipt, the canonical index receipt and the slice plan come from the freeze and preparation runs that registry names and must bind to each other; with the runtime policy they form `cloud-build-context`, which drives nine calls to `compile-standard-wave.yml` for the dexpreopt-enabled graph. Shards import only declared predecessor outputs from this execution; the final summary verifies a fresh receipt for every admitted shard. |
+| Prepare | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and audits the cold input closure without compressing a capsule for every shard. The registry binds the current plan and each audited input descriptor. |
+| Compile | `build-standard.yml` admits the current graph/index/registry and creates `cloud-build-context`. The existing nine waves resolve each task only after its actual predecessor outputs are known. A verified hit is adopted with original native provenance and a current-execution receipt; only a miss materializes a verified current capsule and runs native compilation. The summary validates every current receipt and its original native output binding. |
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and plan-owned same-run producer bindings. It verifies the four images and both identity-free FITs, writes `delivery-record.json` and `SHA256SUMS`, checks that the compressed system payload decodes to the native system image identity, then builds `installer/` and writes the unsigned ZIP payload (`zip-payload/`) with `scripts/crux_zip.py prepare`. `cloud-fresh-rom-<build_run>` is an Actions artifact, not a release; `zip-manifest` holds the payload's `crux-install.txt` for signing. |
 | Release | The `sign` job runs in the `install-signing` environment: it waits for the assembly run to finish, checks its lineage and the manifest identity and signs `crux-install.txt` with the `CRUX_INSTALL_SIGNING_KEY` secret. The `release` job verifies the whole assembly artifact, builds the ZIP, checks the signature against `keys/crux-b-install-2026-11-07.pub.pem` and stages, then publishes, the prerelease `crux-pe13-<build>-v<n>`: this assembly's tag, or the next free version of its build. Manual dispatches keep `preflight` (read only), `draft` and `publish`, and accept an offline signature in place of the CI one. |
 
@@ -66,6 +70,22 @@ upstream runs used its execution commit before consuming inputs or signing.
 If pipeline code changes, start a new full freeze (manual nightly is the unified
 entry); do not continue new code against older prepared stage artifacts.
 Verified source-layer reuse remains governed by its existing byte contracts.
+
+Native reuse is content-addressed, not accepted merely because Git SHAs or task
+names match. Keys bind audited source bytes/resolved graph, execution policy,
+host/runtime identity and exact predecessor output content. Adoption preserves
+the original native producer; it does not relabel old bytes as newly compiled.
+Pre-W9 outputs without this contract are misses. `force_cold=true` on manual
+nightly disables native adoption for the whole new chain without clearing any
+cache or disabling independently verified source-layer reuse. Kernel owners
+remain misses because the current kernel embeds date/user/hostname outside the
+declared Ninja inputs; W9 does not change that native behavior.
+
+Only a typed compile/assembly/preflight content-validation failure after actual
+reuse qualifies for one same-pin cold retry. Transport, signing and publication
+failures do not. Forced-cold executions cannot loop into another automatic retry.
+See the [operation guide](docs/standard-runner-freeze.md#w9-native-shard-content-reuse)
+for the acceptance boundary and input expiry rules.
 
 Use the [hosted operation guide](docs/standard-runner-freeze.md) for the normal
 entry, stage recovery, input reuse and release checks. Dated plans and acceptance
@@ -98,6 +118,9 @@ compile context/summary 30 days, maintenance fixtures 1 day. The repository
 default remains 90 days; existing artifact expiries and existing Releases are
 not changed. These temporary input windows bound retries and re-publication;
 see the [retention and recovery details](docs/standard-runner-freeze.md#acceptance-evidence-and-artifact-retention).
+W9 adds three-day per-task decisions and missed-task runtime capsules; native
+output/origin/adoption records remain in the thirty-day group. Existing objects
+are not retroactively converted into native caches or given new expiry times.
 
 ```sh
 python3 -m unittest discover -s tests

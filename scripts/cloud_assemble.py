@@ -330,6 +330,18 @@ def _validate_receipt(context: dict, task_id: str, receipt: dict) -> None:
         raise AssembleError('Fresh task has no successful output archive: ' + task_id)
     if not isinstance(receipt.get('outputs'), list):
         raise AssembleError('Fresh task has no output inventory: ' + task_id)
+    if context.get('reuse_policy') is not None:
+        input_identity = task.get('input_identity')
+        descriptor = task.get('reuse_descriptor')
+        if (not isinstance(input_identity, str) or not re.fullmatch(r'[a-f0-9]{64}', input_identity)
+                or not isinstance(descriptor, dict) or descriptor.get('input_identity') != input_identity
+                or descriptor.get('execution_digest') != context['reuse_policy'].get('execution_digest')):
+            raise AssembleError('Task lacks the admitted reuse input identity: ' + task_id)
+        import cloud_reuse
+        try:
+            cloud_reuse.validate_receipt(context, receipt, task_id)
+        except ValueError as error:
+            raise AssembleError('Reuse provenance validation failed for %s: %s' % (task_id, error)) from error
 
 
 def admit_producers(context: dict, staging: Path, downloader=_download,
@@ -350,6 +362,16 @@ def admit_producers(context: dict, staging: Path, downloader=_download,
         receipt = json.loads(receipt_path.read_text())
         _validate_receipt(context, task_id, receipt)
         receipts[task_id] = receipt
+
+    if context.get('reuse_policy') is not None:
+        import cloud_reuse
+        try:
+            cloud_reuse.validate_summary(context, {
+                'reuse': {task_id: receipt['reuse'] for task_id, receipt in receipts.items()},
+                'output_identity': {task_id: receipt['outputs'] for task_id, receipt in receipts.items()},
+            })
+        except ValueError as error:
+            raise AssembleError('Reuse dependency provenance validation failed: ' + str(error)) from error
 
     output_root = staging / 'producers'
     output_root.mkdir()
@@ -411,10 +433,26 @@ def assemble(context_path: Path, output: Path, staging: Path, downloader=_downlo
     identity_path.write_text(json.dumps(identity, indent=2, sort_keys=True) + '\n')
     source_selection_path.write_text(json.dumps(source_selection, indent=2, sort_keys=True) + '\n')
     bindings, dependency_root = admit_producers(context, staging, downloader, manifest_path)
-    receipt = assembler(bindings, dependency_root, output, identity_path,
-                        context['build_number'], source_selection, source_contract=source_contract)
-    if receipt.get('status') != 'success':
-        raise AssembleError('Fresh assembly gates failed: ' + str(receipt.get('error', 'unknown error')))
+    try:
+        receipt = assembler(bindings, dependency_root, output, identity_path,
+                            context['build_number'], source_selection, source_contract=source_contract)
+        if receipt.get('status') != 'success':
+            raise AssembleError('Fresh assembly gates failed: ' + str(receipt.get('error', 'unknown error')))
+    except (AssembleError, ValueError) as error:
+        reused_tasks = []
+        if context.get('reuse_policy') is not None:
+            for task_id in sorted(context['tasks']):
+                receipt_path = staging / 'fresh-receipts' / task_id / 'receipt.json'
+                task_receipt = json.loads(receipt_path.read_text())
+                if task_receipt.get('reuse', {}).get('mode') == 'reused':
+                    reused_tasks.append(task_id)
+        output.mkdir(parents=True, exist_ok=True)
+        evidence = {'schema_version': 1, 'status': 'failed', 'failure_class': 'content-validation',
+                    'stage': 'assemble', 'execution_id': context['execution_id'],
+                    'worker_commit': context['worker_commit'], 'build_number': context['build_number'],
+                    'reused_tasks': reused_tasks, 'error': str(error)}
+        (output / 'validation-failure.json').write_text(json.dumps(evidence, indent=2, sort_keys=True) + '\n')
+        raise
     return receipt
 
 

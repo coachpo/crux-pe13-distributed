@@ -77,7 +77,15 @@ jobs:
       - name: Verify the assembly payload and the signed ZIP without release writes
         run: |
           python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
-            --signature "$SIGNATURE"
+            --signature "$SIGNATURE" --retry-evidence "$RUNNER_TEMP/preflight-validation-failure.json"
+      - name: Retain typed preflight validation evidence
+        if: always()
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: preflight-validation-failure
+          path: ${{ runner.temp }}/preflight-validation-failure.json
+          retention-days: 3
+          if-no-files-found: ignore
 
   release:
     needs: sign
@@ -97,8 +105,20 @@ jobs:
         run: python3 scripts/pipeline_code.py --run "$ASSEMBLY_RUN"
       - name: Prepare, publish or release the signed ZIP
         run: |
-          python3 scripts/release_zip.py --assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
-            --operation "$OPERATION" --signature "$SIGNATURE"
+          args=(--assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
+                --operation "$OPERATION" --signature "$SIGNATURE")
+          if [[ "$OPERATION" == preflight || "$OPERATION" == draft || "$OPERATION" == release ]]; then
+            args+=(--retry-evidence "$RUNNER_TEMP/preflight-validation-failure.json")
+          fi
+          python3 scripts/release_zip.py "${args[@]}"
+      - name: Retain typed prepublication validation evidence
+        if: always()
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: preflight-validation-failure
+          path: ${{ runner.temp }}/preflight-validation-failure.json
+          retention-days: 3
+          if-no-files-found: ignore
 
   report:
     needs: [sign, preflight, release]
@@ -106,12 +126,35 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
-      actions: read
+      actions: write
       contents: read
       issues: write
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Retry eligible prepublication validation failure without cache reuse
+        if: ${{ inputs.operation != 'publish' && (needs.preflight.result == 'failure' || needs.release.result == 'failure') && !cancelled() }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/retry/evidence"
+          if ! python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+              --name preflight-validation-failure --destination "$RUNNER_TEMP/retry/evidence"; then
+            echo 'No typed preflight validation evidence is available for a safe cold retry.'
+            exit 0
+          fi
+          build_run=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["execution_id"])' \
+            "$RUNNER_TEMP/retry/evidence/preflight-validation-failure.json")
+          mkdir -p "$RUNNER_TEMP/retry/context"
+          if ! python3 scripts/cloud_artifacts.py --run "$build_run" --repository "$GITHUB_REPOSITORY" \
+              --name cloud-build-context --destination "$RUNNER_TEMP/retry/context"; then
+            echo 'No admitted compile context is available for a safe cold retry.'
+            exit 0
+          fi
+          python3 scripts/pipeline_retry.py --stage preflight \
+            --context "$RUNNER_TEMP/retry/context/context.json" \
+            --failure-evidence "$RUNNER_TEMP/retry/evidence/preflight-validation-failure.json" \
+            --origin-run "$build_run"
       - name: Report the failed release
         run: python3 scripts/pipeline_report.py --stage release

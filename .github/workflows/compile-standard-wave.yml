@@ -27,7 +27,7 @@ jobs:
         run: |
           python3 scripts/cloud_build_plan.py matrix --context "$RUNNER_TEMP/context/context.json" \
             --wave "${{ inputs.wave }}" --github-output "$GITHUB_OUTPUT"
-  compile:
+  resolve:
     needs: plan
     runs-on: ubuntu-22.04
     timeout-minutes: 350
@@ -49,22 +49,26 @@ jobs:
           sudo chmod 600 "$RUNNER_TEMP/build.swap"
           sudo mkswap "$RUNNER_TEMP/build.swap"
           sudo swapon "$RUNNER_TEMP/build.swap"
-          uname -a > "$RUNNER_TEMP/result/runner.txt"
-          nproc >> "$RUNNER_TEMP/result/runner.txt"
-          free -b >> "$RUNNER_TEMP/result/runner.txt"
-          df -B1 >> "$RUNNER_TEMP/result/runner.txt"
+          { uname -a; nproc; free -b; df -B1; } > "$RUNNER_TEMP/result/runner.txt"
       - name: Restore admitted execution
         run: |
           python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
             --name cloud-build-context --destination "$RUNNER_TEMP/context"
-      - name: Restore cold capsule and compile native actions
+      - name: Resolve verified historical native output
+        id: resolve
         run: |
           set -euo pipefail
-          /usr/bin/time -v python3 scripts/cloud_compile.py --context "$RUNNER_TEMP/context/context.json" \
-            --id "${{ matrix.id }}" --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/compile" \
-            2>&1 | tee "$RUNNER_TEMP/result/compile.log"
-      - name: Retain new outputs and native receipt
-        if: always()
+          python3 scripts/cloud_resolve.py --context "$RUNNER_TEMP/context/context.json" \
+            --id "${{ matrix.id }}" --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/resolve" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Retain exact cache decision
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: shard-decision-${{ matrix.id }}
+          path: ${{ runner.temp }}/result/decision.json
+          retention-days: 3
+      - name: Retain adopted outputs and origin proof
+        if: steps.resolve.outputs.mode == 'reused'
         uses: ./.github/actions/retain-artifact
         with:
           name: shard-${{ matrix.id }}
@@ -72,8 +76,118 @@ jobs:
           overwrite: true
           retention-days: 30
           compression-level: 0
-      - name: Retain fresh producer receipt
-        if: always()
+      - name: Retain current adoption receipt
+        if: steps.resolve.outputs.mode == 'reused'
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: fresh-receipt-${{ matrix.id }}
+          path: ${{ runner.temp }}/result/receipt.json
+          overwrite: true
+          retention-days: 30
+          compression-level: 0
+
+  pack:
+    needs: [plan, resolve]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore content decision
+        id: decision
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name "shard-decision-${{ matrix.id }}" --destination "$RUNNER_TEMP/decision"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          decision = json.loads((Path(os.environ['RUNNER_TEMP']) / 'decision/decision.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('mode=' + decision['mode'], file=stream)
+          PY
+      - name: Install cold pack tools only on misses
+        if: steps.decision.outputs.mode == 'miss'
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools zstd python3
+      - name: Restore current context
+        if: steps.decision.outputs.mode == 'miss'
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/context"
+      - name: Materialize and verify only the missed cold capsule
+        if: steps.decision.outputs.mode == 'miss'
+        run: |
+          python3 scripts/cloud_deferred.py pack --context "$RUNNER_TEMP/context/context.json" \
+            --id "${{ matrix.id }}" --output "$RUNNER_TEMP/capsule" --staging "$RUNNER_TEMP/pack"
+      - name: Retain current cold capsule
+        if: steps.decision.outputs.mode == 'miss'
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: cloud-runtime-capsule-${{ matrix.id }}
+          path: ${{ runner.temp }}/capsule/
+          retention-days: 3
+          compression-level: 0
+
+  compile:
+    needs: [plan, pack]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore content decision
+        id: decision
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name "shard-decision-${{ matrix.id }}" --destination "$RUNNER_TEMP/decision"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          decision = json.loads((Path(os.environ['RUNNER_TEMP']) / 'decision/decision.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('mode=' + decision['mode'], file=stream)
+          PY
+      - name: Install native dependencies only on misses
+        if: steps.decision.outputs.mode == 'miss'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncurses5 python-is-python3 flex bison libssl-dev libelf-dev zstd \
+            ccache build-essential libxml2-utils zip unzip cpio lz4 xz-utils bc rsync
+          sudo fallocate -l 8G "$RUNNER_TEMP/build.swap"
+          sudo chmod 600 "$RUNNER_TEMP/build.swap"
+          sudo mkswap "$RUNNER_TEMP/build.swap"
+          sudo swapon "$RUNNER_TEMP/build.swap"
+      - name: Restore current execution
+        if: steps.decision.outputs.mode == 'miss'
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/context"
+      - name: Compile the verified cold capsule
+        if: steps.decision.outputs.mode == 'miss'
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          set -o pipefail
+          /usr/bin/time -v python3 scripts/cloud_compile.py --context "$RUNNER_TEMP/context/context.json" \
+            --id "${{ matrix.id }}" --output "$RUNNER_TEMP/result" --staging "$RUNNER_TEMP/compile" \
+            2>&1 | tee "$RUNNER_TEMP/result/compile.log"
+      - name: Retain new outputs and native receipt
+        if: always() && steps.decision.outputs.mode == 'miss'
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: shard-${{ matrix.id }}
+          path: ${{ runner.temp }}/result/
+          overwrite: true
+          retention-days: 30
+          compression-level: 0
+      - name: Retain current native receipt
+        if: always() && steps.decision.outputs.mode == 'miss'
         uses: ./.github/actions/retain-artifact
         with:
           name: fresh-receipt-${{ matrix.id }}

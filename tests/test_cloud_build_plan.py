@@ -5,9 +5,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
+import cloud_reuse
 spec = importlib.util.spec_from_file_location('cloud_build_plan', SCRIPTS / 'cloud_build_plan.py')
 plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
@@ -89,6 +91,27 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(len(tasks), 40)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
 
+    def test_admits_deferred_capsules_without_archive_bindings(self):
+        args = self.inputs()
+        for row in args[0]['capsules']:
+            shard_id = row['shard_id']
+            identity = 'a' * 64
+            row.clear()
+            row.update({'shard_id': shard_id, 'packing': 'deferred', 'input_identity': identity,
+                        'reuse_descriptor': {'input_identity': identity, 'execution_digest': 'c' * 64}})
+        waves, tasks = plan.admit_inputs(*args, 'plan')
+        self.assertEqual(len(tasks), 40)
+        self.assertEqual(tasks['w000-s000']['packing'], 'deferred')
+        self.assertNotIn('archive_sha256', tasks['w000-s000'])
+
+    def test_deferred_capsule_requires_matching_input_identity(self):
+        args = self.inputs()
+        row = args[0]['capsules'][0]
+        row.update({'packing': 'deferred', 'input_identity': 'a' * 64,
+                    'reuse_descriptor': {'input_identity': 'b' * 64}})
+        with self.assertRaisesRegex(ValueError, 'invalid reuse identity'):
+            plan.admit_inputs(*args, 'plan')
+
     def test_task_count_comes_from_the_preparation_registry(self):
         waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1, 1)), 'plan')
         self.assertEqual(len(tasks), 41)
@@ -140,6 +163,64 @@ class BuildPlanTests(unittest.TestCase):
                              ('build_environment', {'CCACHE_DISABLE': '0'})]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 plan.validate_receipt(context, {**receipt, field: value}, 'task')
+
+    def test_reuse_receipt_keeps_current_binding_and_native_origin(self):
+        context, receipt = self.context_and_receipt()
+        context.update(repository='owner/repo', reuse_policy={
+            'schema_version': 1, 'version': 1, 'force_cold': False, 'execution_digest': 'e' * 64})
+        context['tasks']['task'].update(input_identity='a' * 64, reuse_descriptor={
+            'input_identity': 'a' * 64, 'execution_digest': 'e' * 64})
+        receipt['outputs'] = [{'path': '/out/file', 'type': 'file', 'mode': 0o644,
+                               'size': 1, 'sha256': 'f' * 64}]
+        native = {'schema_version': 1, 'id': 'task', 'run_id': '123',
+                  'worker_commit': 'c' * 40, 'manifest_sha256': 'm', 'status': 'success',
+                  'outputs': receipt['outputs'], 'build_environment': {'CCACHE_DISABLE': '1'}}
+        runtime = {'CCACHE_DISABLE': '1'}
+        basis = cloud_reuse.content_basis(context, 'task', runtime, {})
+        receipt['reuse'] = cloud_reuse.envelope(context, 'task', basis, native)
+        plan.validate_receipt(context, receipt, 'task')
+
+        bad_origin = json.loads(json.dumps(receipt))
+        bad_origin['reuse']['origin']['run_id'] = '999'
+        with self.assertRaisesRegex(ValueError, 'Native origin identity differs'):
+            plan.validate_receipt(context, bad_origin, 'task')
+
+        missing = dict(receipt)
+        missing.pop('reuse')
+        with self.assertRaisesRegex(ValueError, 'Missing versioned native reuse contract'):
+            plan.validate_receipt(context, missing, 'task')
+
+    def test_summary_carries_complete_reuse_and_output_identity_maps(self):
+        context, receipt = self.context_and_receipt()
+        context.update(repository='owner/repo', reuse_policy={
+            'schema_version': 1, 'version': 1, 'force_cold': False, 'execution_digest': 'e' * 64})
+        context['tasks']['task'].update(input_identity='a' * 64, reuse_descriptor={
+            'input_identity': 'a' * 64, 'execution_digest': 'e' * 64})
+        receipt['outputs'] = [{'path': '/out/file', 'type': 'file', 'mode': 0o644,
+                               'size': 1, 'sha256': 'f' * 64}]
+        native = {'schema_version': 1, 'id': 'task', 'run_id': '123',
+                  'worker_commit': 'c' * 40, 'manifest_sha256': 'm', 'status': 'success',
+                  'outputs': receipt['outputs'], 'build_environment': {'CCACHE_DISABLE': '1'}}
+        basis = cloud_reuse.content_basis(context, 'task', {'CCACHE_DISABLE': '1'}, {})
+        receipt['reuse'] = cloud_reuse.envelope(context, 'task', basis, native)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            context_path = root / 'context.json'
+            context_path.write_text(json.dumps(context))
+            staging, output = root / 'staging', root / 'output'
+
+            def download(run_id, repository, destination, pattern=None):
+                artifact = destination / 'fresh-receipt-task'
+                artifact.mkdir(parents=True)
+                (artifact / 'receipt.json').write_text(json.dumps(receipt))
+
+            args = type('Args', (), {'context': context_path, 'staging': staging, 'output': output})()
+            with mock.patch.object(plan.cloud_artifacts, 'download_artifacts', side_effect=download):
+                plan.summarize(args)
+            summary = json.loads((output / 'build-summary.json').read_text())
+            self.assertEqual(summary['reuse'], {'task': receipt['reuse']})
+            self.assertEqual(summary['output_identity'], {'task': receipt['outputs']})
 
     def test_buildinfo_static_environment_is_read_not_executed(self):
         command = '/bin/bash -c ' + __import__('shlex').quote(

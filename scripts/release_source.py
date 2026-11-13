@@ -19,7 +19,7 @@ REPOSITORY = "coachpo/crux-pe13-distributed"
 PRODUCT = "aosp_crux-userdebug"
 COMPILE_WORKFLOW = ".github/workflows/build-standard.yml"
 ASSEMBLY_WORKFLOW = ".github/workflows/assemble-standard.yml"
-COMPILE_TITLE_RE = re.compile(r"Fresh PE13 compile ([0-9]{10})")
+COMPILE_TITLE_RE = re.compile(r"Fresh PE13 compile ([0-9]{10})(?: cold retry of ([1-9][0-9]*))?")
 ZIP_MANIFEST_ARTIFACT = "zip-manifest"
 TAG_RE = re.compile(r"crux-pe13-([0-9]{10})-v([1-9][0-9]*)")
 DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
@@ -34,6 +34,22 @@ class SourceError(RuntimeError):
     """Source-run provenance or artifact verification failed."""
 
 
+class SourceTransportError(SourceError):
+    """A GitHub metadata or artifact request failed before content was verified."""
+
+
+class ReuseContentError(SourceError):
+    """A verified reused build failed a later assembly/payload content gate."""
+
+    def __init__(self, message: str, *, execution_id: str, worker_commit: str,
+                 build_number: str, reused_tasks: list[str]):
+        super().__init__(message)
+        self.execution_id = execution_id
+        self.worker_commit = worker_commit
+        self.build_number = build_number
+        self.reused_tasks = list(reused_tasks)
+
+
 @dataclass(frozen=True)
 class VerifiedBuild:
     tag: str
@@ -45,6 +61,7 @@ class VerifiedBuild:
     artifact_id: int
     artifact_digest: str
     manifest_sha256: str
+    reuse_provenance: dict | None = None
 
 
 def _require(ok: bool, message: str) -> None:
@@ -95,7 +112,7 @@ def _json_api(path: str, token: str) -> dict:
         payload, _ = cloud_layers._request(url, token)
         value = json.loads(payload)
     except Exception as error:
-        raise SourceError("GitHub source metadata request failed: " + str(error)) from error
+        raise SourceTransportError("GitHub source metadata request failed: " + str(error)) from error
     _require(isinstance(value, dict), "GitHub source metadata response is malformed")
     return value
 
@@ -119,7 +136,7 @@ def _inventory(run_id: str, token: str) -> dict:
     try:
         return cloud_layers.artifact_inventory(run_id, REPOSITORY, token)
     except Exception as error:
-        raise SourceError("Actions artifact inventory failed: " + str(error)) from error
+        raise SourceTransportError("Actions artifact inventory failed: " + str(error)) from error
 
 
 def _artifact(inventory: dict, name: str) -> dict:
@@ -151,7 +168,7 @@ def _download_zip(artifact: dict, destination: Path, token: str) -> tuple[Path, 
                 digest.update(block)
     except Exception as error:
         path.unlink(missing_ok=True)
-        raise SourceError("Actions artifact download failed: " + str(error)) from error
+        raise SourceTransportError("Actions artifact download failed: " + str(error)) from error
     actual = "sha256:" + digest.hexdigest()
     _require(actual == artifact["digest"], "downloaded Actions ZIP digest differs from GitHub metadata")
     expected_size = artifact.get("size_in_bytes")
@@ -323,6 +340,46 @@ def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
                  "compile build context producer binding differs from its successful summary: " + ident)
         selected[ident] = producer
 
+    reuse_records = summary.get("reuse")
+    output_identity = summary.get("output_identity")
+    if context.get("reuse_policy") is None:
+        _require(reuse_records is None and output_identity is None,
+                 "compile summary has reuse provenance without an admitted reuse policy")
+    else:
+        _require(isinstance(reuse_records, dict) and isinstance(output_identity, dict)
+                 and set(reuse_records) == set(tasks) and set(output_identity) == set(tasks),
+                 "compile summary reuse provenance does not cover every admitted task")
+        _require(all(isinstance(task.get('input_identity'), str)
+                     and _is_sha(task.get('input_identity'))
+                     and isinstance(task.get('reuse_descriptor'), dict)
+                     and task['reuse_descriptor'].get('input_identity') == task.get('input_identity')
+                     and task['reuse_descriptor'].get('execution_digest') ==
+                         context['reuse_policy'].get('execution_digest')
+                     for task in tasks.values()),
+                 "compile context has an invalid reuse input descriptor")
+        import cloud_reuse
+        try:
+            cloud_reuse.validate_summary(context, summary)
+        except ValueError as error:
+            raise SourceError("compile summary reuse provenance is invalid: " + str(error)) from error
+        for ident, producer in selected.items():
+            task = tasks[ident]
+            synthetic_receipt = {
+                "id": ident,
+                "run_id": str(context["execution_id"]),
+                "worker_commit": context["worker_commit"],
+                "manifest_sha256": task["manifest_sha256"],
+                "status": "success",
+                "fresh_build": fresh,
+                "outputs": output_identity[ident],
+                "reuse": reuse_records[ident],
+            }
+            try:
+                cloud_reuse.validate_receipt(context, synthetic_receipt, ident)
+            except ValueError as error:
+                raise SourceError("compile summary reuse provenance is invalid for %s: %s" %
+                                  (ident, error)) from error
+
     try:
         _, owner_ids = cloud_assemble.required_exports(context)
     except (KeyError, TypeError, ValueError) as error:
@@ -348,18 +405,45 @@ def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
     summary = _artifact_json(compile_run, "cloud-fresh-build-summary", "build-summary.json", work, token)
     _validate_summary(summary, compile_run, compile["head_sha"])
     context = _artifact_json(compile_run, "cloud-build-context", "context.json", work, token)
+    compile_title = COMPILE_TITLE_RE.fullmatch(compile.get("display_title") or "")
+    retry_origin = compile_title.group(2) if compile_title is not None else None
+    policy_retry_origin = (context.get("reuse_policy", {}).get("cold_retry_of")
+                           if isinstance(context.get("reuse_policy"), dict) else None)
+    _require(retry_origin == policy_retry_origin,
+             "compile run cold-retry title differs from its admitted reuse policy")
     assembly_producers = _assembly_producer_bindings(context, summary, compile_run, compile, build)
+    reuse_map = summary.get("reuse")
+    reused_tasks = sorted(task_id for task_id, record in (reuse_map if isinstance(reuse_map, dict) else {}).items()
+                          if isinstance(record, dict) and record.get("mode") == "reused")
+    reuse_provenance = None
+    if isinstance(reuse_map, dict):
+        reuse_provenance = {}
+        for task_id, envelope in sorted(reuse_map.items()):
+            origin = envelope["origin"]
+            compact_origin = {"run_id": origin["run_id"], "worker_commit": origin["worker_commit"]}
+            if envelope["mode"] == "reused":
+                compact_origin["artifact_id"] = origin["artifact_id"]
+                compact_origin["artifact_digest"] = origin["artifact_digest"]
+            reuse_provenance[task_id] = {"mode": envelope["mode"], "key": envelope["key"],
+                                         "origin": compact_origin}
 
     artifact = _artifact(inventory, artifact_name)
     zip_path, zip_digest = _download_zip(artifact, work, token)
     names = ({"delivery/" + name for name in DELIVERY_NAMES} | {"zip-payload/" + name for name in PAYLOAD_NAMES}
              | {"assembly-receipt.json"})
-    _read_members(zip_path, names, work)
-    zip_path.unlink()
-    record = _verify_delivery(parsed["build"], work, summary, assembly_producers)
-    manifest_sha = _verify_payload(parsed["build"], work / "zip-payload", record)
+    try:
+        _read_members(zip_path, names, work)
+        zip_path.unlink()
+        record = _verify_delivery(parsed["build"], work, summary, assembly_producers)
+        manifest_sha = _verify_payload(parsed["build"], work / "zip-payload", record)
+    except (SourceError, ValueError, KeyError, TypeError) as error:
+        if reused_tasks and not isinstance(error, SourceTransportError):
+            raise ReuseContentError(str(error), execution_id=compile_run,
+                                    worker_commit=compile["head_sha"], build_number=build,
+                                    reused_tasks=reused_tasks) from error
+        raise
     return VerifiedBuild(tag, parsed["build"], work / "zip-payload", assembly["head_sha"], assembly_run,
-                         compile_run, artifact["id"], zip_digest, manifest_sha)
+                         compile_run, artifact["id"], zip_digest, manifest_sha, reuse_provenance)
 
 
 def _verify_delivery(build: str, work: Path, summary: dict,

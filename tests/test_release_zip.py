@@ -1,6 +1,7 @@
 import contextlib
 from copy import deepcopy
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -11,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import release_zip
-from release_source import sha256
+from release_source import ReuseContentError, SourceError, sha256
 
 
 class FakeReleases:
@@ -78,7 +79,10 @@ class ReleaseZipTests(unittest.TestCase):
         self.source = SimpleNamespace(tag="crux-pe13-2026110303-v1", build="2026110303", assembly_commit="a" * 40,
                                       assembly_run="42059779500", compile_run="42018017251",
                                       artifact_id=13431937735, artifact_digest="sha256:" + "b" * 64,
-                                      manifest_sha256="d" * 64)
+                                      manifest_sha256="d" * 64,
+                                      reuse_provenance={"w000-s001": {"mode": "reused", "key": "e" * 64,
+                                          "origin": {"run_id": "41900000001", "worker_commit": "c" * 40,
+                                                     "artifact_id": 123456, "artifact_digest": "sha256:" + "f" * 64}}})
         self.api = FakeReleases()
 
     def deliver(self, operation):
@@ -188,6 +192,14 @@ class ReleaseZipTests(unittest.TestCase):
         self.assertEqual(release_zip.next_tag(self.api, build, "42059779501"), "crux-pe13-2026110303-v4")
         self.assertEqual(release_zip.next_tag(self.api, "2026110304", assembly), "crux-pe13-2026110304-v1")
 
+    def test_release_body_persists_validated_task_reuse_origin(self):
+        body = release_zip.release_body(self.source)
+        self.assertIn("Compile and verified shard origins", body)
+        self.assertIn('"mode": "reused"', body)
+        self.assertIn('"key": "' + "e" * 64 + '"', body)
+        self.assertIn('"run_id": "41900000001"', body)
+        self.assertIn('"artifact_digest": "sha256:' + "f" * 64 + '"', body)
+
     def test_release_operation_drafts_and_publishes_the_selected_tag(self):
         argv = ["release_zip.py", "--operation", "release", "--assembly-run", self.source.assembly_run,
                 "--signature", "a" * 128]
@@ -209,6 +221,63 @@ class ReleaseZipTests(unittest.TestCase):
         with TemporaryDirectory() as directory, \
                 self.assertRaisesRegex(release_zip.ReleaseError, "has no pinned asset yet"):
             release_zip.fetch_twrp(directory, {"release_tag": "crux-install-twrp-v3", "asset_id": None})
+
+    def test_only_verified_reuse_content_failures_create_preflight_retry_evidence(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preflight-validation-failure.json"
+            error = ReuseContentError("payload bytes differ", execution_id="42018017251",
+                                      worker_commit="a" * 40, build_number="2026110303",
+                                      reused_tasks=["w000-s001"])
+            evidence = release_zip.write_preflight_retry_evidence(error, path)
+            self.assertEqual(json.loads(path.read_text()), evidence)
+            self.assertEqual(evidence, {
+                "schema_version": 1, "status": "failed", "failure_class": "content-validation",
+                "stage": "preflight", "execution_id": "42018017251", "worker_commit": "a" * 40,
+                "build_number": "2026110303", "reused_tasks": ["w000-s001"],
+                "error": "payload bytes differ"})
+            path.unlink()
+            with self.assertRaisesRegex(release_zip.ReleaseError, "only a verified reused-content"):
+                release_zip.write_preflight_retry_evidence(SourceError("metadata request failed"), path)
+            self.assertFalse(path.exists())
+
+    def test_release_operation_records_only_typed_failure_before_release_writes(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preflight-validation-failure.json"
+            error = ReuseContentError("delivery content differs", execution_id=self.source.compile_run,
+                                      worker_commit="a" * 40, build_number=self.source.build,
+                                      reused_tasks=["w000-s001"])
+            argv = ["release_zip.py", "--operation", "release", "--assembly-run", self.source.assembly_run,
+                    "--tag", self.source.tag, "--signature", "a" * 128,
+                    "--retry-evidence", str(path)]
+            environment = {"GITHUB_WORKFLOW_REF":
+                           f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+                           "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
+            with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(release_zip, "Releases", return_value=self.api), \
+                    mock.patch.object(release_zip, "verify_source", side_effect=error), \
+                    mock.patch.object(release_zip, "stage_assets") as stage, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                release_zip.main()
+            self.assertEqual(json.loads(path.read_text())["execution_id"], self.source.compile_run)
+            stage.assert_not_called()
+            self.assertEqual(self.api.writes, [])
+
+    def test_publish_api_failure_does_not_create_retry_evidence(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preflight-validation-failure.json"
+            argv = ["release_zip.py", "--operation", "publish", "--assembly-run", self.source.assembly_run,
+                    "--tag", self.source.tag, "--signature", "a" * 128]
+            environment = {"GITHUB_WORKFLOW_REF":
+                           f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+                           "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
+            with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(release_zip, "Releases", return_value=self.api), \
+                    mock.patch.object(release_zip, "verify_source", return_value=self.source), \
+                    mock.patch.object(release_zip, "stage_assets", return_value=(self.staged, self.assets)), \
+                    mock.patch.object(release_zip, "deliver", side_effect=release_zip.ReleaseError("publish not confirmed")), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                release_zip.main()
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

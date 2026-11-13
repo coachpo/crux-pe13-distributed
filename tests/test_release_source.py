@@ -10,6 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import cloud_assemble
+import cloud_reuse
 import release_source as source
 
 
@@ -136,6 +137,29 @@ def valid_context(summary, owner_count=8):
     }
 
 
+def add_reuse_provenance(summary, context):
+    context['reuse_policy'] = {'schema_version': 1, 'version': 1, 'force_cold': False,
+                               'execution_digest': 'f' * 64}
+    reuse, output_identity = {}, {}
+    for task_id, task in context['tasks'].items():
+        task['input_identity'] = 'b' * 64
+        task['reuse_descriptor'] = {'input_identity': 'b' * 64, 'execution_digest': 'f' * 64}
+        outputs = []
+        native = {'schema_version': 1, 'id': task_id, 'run_id': '41999999999',
+                  'worker_commit': 'c' * 40, 'manifest_sha256': task['manifest_sha256'],
+                  'status': 'success', 'outputs': outputs,
+                  'build_environment': {'CCACHE_DISABLE': '1'}}
+        basis = cloud_reuse.content_basis(context, task_id, {'CCACHE_DISABLE': '1'}, {})
+        origin = {'repository': context['repository'], 'run_id': native['run_id'],
+                  'worker_commit': native['worker_commit'], 'task_id': task_id,
+                  'receipt_sha256': cloud_reuse.digest(native), 'artifact_id': 123,
+                  'artifact_digest': 'sha256:' + 'd' * 64}
+        reuse[task_id] = cloud_reuse.envelope(context, task_id, basis, native, origin)
+        output_identity[task_id] = outputs
+    summary['reuse'] = reuse
+    summary['output_identity'] = output_identity
+
+
 class ReleaseSourceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -144,11 +168,15 @@ class ReleaseSourceTests(unittest.TestCase):
 
     def invoke(self, *, mutate_summary=None, mutate_context=None, mutate_record_producers=None,
                mutate_assembly=None, bad_zip_digest=False, tag=TAG, manifest_build=BUILD,
-               sign=False, owner_count=8, **kwargs):
+               sign=False, owner_count=8, with_reuse=False, cold_retry_of=None, **kwargs):
         summary = valid_summary()
         if mutate_summary:
             mutate_summary(summary)
         context = valid_context(summary, owner_count)
+        if with_reuse:
+            add_reuse_provenance(summary, context)
+        if cold_retry_of is not None:
+            context.setdefault('reuse_policy', {})['cold_retry_of'] = str(cold_retry_of)
         _, expected_owners = cloud_assemble.required_exports(context)
         producers_by_id = {producer["id"]: producer for producer in summary["producers"]}
         record_producers = [producers_by_id[ident] for ident in sorted(expected_owners)]
@@ -173,7 +201,9 @@ class ReleaseSourceTests(unittest.TestCase):
                            "display_title": "Verify fresh PE13 compilation " + COMPILE_RUN, "head_sha": COMMIT},
             COMPILE_RUN: {"id": int(COMPILE_RUN), "conclusion": "success", "status": "completed",
                           "event": "workflow_dispatch", "head_branch": "main", "path": source.COMPILE_WORKFLOW,
-                          "display_title": "Fresh PE13 compile " + BUILD, "head_sha": WORKER},
+                          "display_title": ("Fresh PE13 compile " + BUILD +
+                              (" cold retry of " + str(cold_retry_of) if cold_retry_of is not None else "")),
+                          "head_sha": WORKER},
         }
         if mutate_assembly:
             mutate_assembly(runs[ASSEMBLY_RUN])
@@ -214,6 +244,42 @@ class ReleaseSourceTests(unittest.TestCase):
         self.assertEqual((result.compile_run, result.assembly_commit, result.build), (COMPILE_RUN, COMMIT, BUILD))
         self.assertEqual(set(path.name for path in result.payload.iterdir()), set(source.PAYLOAD_NAMES))
         self.assertEqual(result.manifest_sha256, sha((result.payload / "crux-install.txt").read_bytes()))
+        self.assertIsNone(result.reuse_provenance)
+
+    def test_verified_build_exposes_compact_reuse_origin_map(self):
+        result = self.invoke(with_reuse=True)
+        self.assertEqual(set(result.reuse_provenance), {item['id'] for item in valid_summary()['producers']})
+        reused = result.reuse_provenance['w000-s000']
+        self.assertEqual(reused['mode'], 'reused')
+        self.assertEqual(reused['origin'], {'run_id': '41999999999', 'worker_commit': 'c' * 40,
+                                            'artifact_id': 123, 'artifact_digest': 'sha256:' + 'd' * 64})
+        self.assertNotIn('outputs', reused)
+        self.assertNotIn('native_receipt', reused)
+
+    def test_reused_content_failure_is_typed_only_after_provenance_validation(self):
+        with self.assertRaises(source.ReuseContentError) as caught:
+            self.invoke(with_reuse=True, altered_asset=True)
+        error = caught.exception
+        self.assertEqual(error.execution_id, COMPILE_RUN)
+        self.assertEqual(error.worker_commit, WORKER)
+        self.assertEqual(error.build_number, BUILD)
+        self.assertTrue(error.reused_tasks)
+
+    def test_cold_retry_title_must_match_context_policy(self):
+        self.assertEqual(self.invoke(with_reuse=True, cold_retry_of='41999999999').compile_run, COMPILE_RUN)
+        with self.assertRaisesRegex(source.SourceError, 'cold-retry title differs'):
+            self.invoke(with_reuse=True, cold_retry_of='41999999999',
+                        mutate_context=lambda context: context['reuse_policy'].__setitem__(
+                            'cold_retry_of', '41999999998'))
+
+    def test_github_request_errors_are_transport_not_content_failures(self):
+        with mock.patch.object(source.cloud_layers, '_request', side_effect=OSError('offline')):
+            with self.assertRaises(source.SourceTransportError):
+                source._json_api('actions/runs/1', 'token')
+        with mock.patch.object(source.cloud_layers, '_open_retry', side_effect=OSError('offline')):
+            with self.assertRaises(source.SourceTransportError):
+                source._download_zip({'id': 7, 'digest': 'sha256:' + 'a' * 64},
+                                     self.root, 'token')
 
     def test_assembly_producer_set_is_derived_from_output_owners_not_a_fixed_count(self):
         for owner_count in (4, 6, 8):
@@ -258,6 +324,45 @@ class ReleaseSourceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(source.SourceError, "producer binding differs"):
             self.invoke(mutate_context=altered_task_manifest)
+
+    def test_release_summary_revalidates_reuse_and_dependency_output_bindings(self):
+        summary = valid_summary()
+        context = valid_context(summary)
+        context['reuse_policy'] = {'schema_version': 1, 'version': 1, 'force_cold': False,
+                                   'execution_digest': 'f' * 64}
+        context['tasks']['w001-s000']['depends_on'] = ['w000-s000']
+        outputs = {task_id: [] for task_id in context['tasks']}
+        outputs['w000-s000'] = [{'path': '/tmp/accepted-out/generated', 'type': 'file',
+                                 'mode': 0o644, 'size': 2, 'sha256': 'a' * 64}]
+        reuse, output_identity = {}, {}
+        for task_id, task in context['tasks'].items():
+            task['input_identity'] = 'b' * 64
+            task['reuse_descriptor'] = {'input_identity': 'b' * 64, 'execution_digest': 'f' * 64}
+            dependencies = {dep: {'outputs': outputs[dep]} for dep in task['depends_on']}
+            runtime = {'CCACHE_DISABLE': '1'}
+            basis = cloud_reuse.content_basis(context, task_id, runtime, dependencies)
+            native = {'schema_version': 1, 'id': task_id, 'run_id': COMPILE_RUN,
+                      'worker_commit': WORKER, 'manifest_sha256': task['manifest_sha256'],
+                      'status': 'success', 'outputs': outputs[task_id],
+                      'build_environment': {'CCACHE_DISABLE': '1'}}
+            reuse[task_id] = cloud_reuse.envelope(context, task_id, basis, native)
+            output_identity[task_id] = outputs[task_id]
+        summary['reuse'] = reuse
+        summary['output_identity'] = output_identity
+
+        source._assembly_producer_bindings(context, summary, COMPILE_RUN,
+                                           {'head_sha': WORKER}, BUILD)
+        tampered = json.loads(json.dumps(summary))
+        tampered['output_identity']['w000-s000'][0]['sha256'] = 'c' * 64
+        with self.assertRaisesRegex(source.SourceError, 'reuse provenance'):
+            source._assembly_producer_bindings(context, tampered, COMPILE_RUN,
+                                               {'head_sha': WORKER}, BUILD)
+
+        partial = json.loads(json.dumps(summary))
+        partial['reuse'].pop('w008-s000')
+        with self.assertRaisesRegex(source.SourceError, 'does not cover every'):
+            source._assembly_producer_bindings(context, partial, COMPILE_RUN,
+                                               {'head_sha': WORKER}, BUILD)
 
     def test_rejects_missing_assembly_role_and_owner_outside_compile_context(self):
         def missing_system_image(context):

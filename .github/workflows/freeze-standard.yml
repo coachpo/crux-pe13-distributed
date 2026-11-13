@@ -44,6 +44,11 @@ on:
         default: '50'
         required: true
         type: string
+      force_cold:
+        description: Disable matching incremental cache reuse in the compilation
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -237,6 +242,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       BUILD_NUMBER: ${{ inputs.build_number }}
+      FORCE_COLD: ${{ inputs.force_cold }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -246,7 +252,8 @@ jobs:
         continue-on-error: true
         run: |
           gh workflow run prepare-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f stage=full -f graph_run="$GITHUB_RUN_ID" -f build_number="$BUILD_NUMBER"
+            -f stage=full -f graph_run="$GITHUB_RUN_ID" -f build_number="$BUILD_NUMBER" \
+            -f force_cold="$FORCE_COLD"
       - name: Report the failed dispatch
         if: steps.dispatch.outcome == 'failure'
         run: python3 scripts/pipeline_report.py --stage freeze --detail 'The preparation could not be dispatched.'

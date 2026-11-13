@@ -33,6 +33,11 @@ on:
         required: false
         default: ''
         type: string
+      force_cold:
+        description: Disable matching incremental cache reuse in the compilation
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,10 +65,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/index-evidence"
           sudo apt-get update
           sudo apt-get install -y zstd
-          uname -a > "$RUNNER_TEMP/index-evidence/runner.txt"
-          nproc >> "$RUNNER_TEMP/index-evidence/runner.txt"
-          free -b >> "$RUNNER_TEMP/index-evidence/runner.txt"
-          df -B1 >> "$RUNNER_TEMP/index-evidence/runner.txt"
+          { uname -a; nproc; free -b; df -B1; } > "$RUNNER_TEMP/index-evidence/runner.txt"
       - name: Restore the cloud-generated graph and frontend metadata
         run: |
           python3 scripts/cloud_artifacts.py --run "$GRAPH_RUN" --repository "$GITHUB_REPOSITORY" \
@@ -447,7 +449,7 @@ jobs:
             --slice-inventory "$RUNNER_TEMP/shard-input/slice-inventory.json" \
             --shard-receipt "$RUNNER_TEMP/shard-input/shard-receipt.json" \
             --source-manifest config/cloud-source-manifest.json \
-            --graph-index "$RUNNER_TEMP/index-pruned.sqlite" --output "$capsule" \
+            --graph-index "$RUNNER_TEMP/index-pruned.sqlite" --output "$capsule" --audit-only \
             2>&1 | tee "$capsule/pack.log"
       - name: Bind capsule receipt to source and graph runs
         if: always()
@@ -494,7 +496,6 @@ jobs:
           name: cloud-capsule-${{ matrix.shard }}
           overwrite: true
           path: |
-            ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.tar.zst
             ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.json
             ${{ runner.temp }}/capsules/${{ matrix.shard }}/*.log
             ${{ runner.temp }}/capsule-evidence/*.txt
@@ -595,11 +596,17 @@ jobs:
                   graph_index_identity = index_identity
               elif graph_index_identity != index_identity:
                   raise SystemExit('Pack jobs used different pruned graph indexes')
-              if not isinstance(packed.get('archive_sha256'), str) or not re.fullmatch(r'[a-fA-F0-9]{64}', packed['archive_sha256']):
-                  raise SystemExit('Pack receipt has no archive SHA-256: ' + shard)
-              archives.append({'shard_id': shard, 'archive': packed.get('archive'),
-                               'archive_bytes': packed.get('archive_bytes'),
-                               'archive_sha256': packed['archive_sha256'],
+              descriptor = packed.get('reuse_descriptor')
+              input_identity = packed.get('input_identity')
+              if (packed.get('packing') != 'deferred'
+                      or not isinstance(input_identity, str)
+                      or not re.fullmatch(r'[a-fA-F0-9]{64}', input_identity)
+                      or not isinstance(descriptor, dict)
+                      or descriptor.get('input_identity') != input_identity):
+                  raise SystemExit('Pack receipt has no valid deferred-reuse identity: ' + shard)
+              archives.append({'shard_id': shard, 'packing': 'deferred',
+                               'input_identity': input_identity,
+                               'reuse_descriptor': descriptor,
                                'file_count': packed.get('file_count'),
                                'input_bytes': packed.get('input_bytes')})
           summary = {'schema_version': 1, 'status': 'success', 'build_number': os.environ['BUILD_NUMBER'],
@@ -608,7 +615,7 @@ jobs:
                      'source_manifest_sha256': manifest_sha,
                      'plan_sha256': os.environ['EXPECTED_PLAN_SHA256'], 'shard_count': len(archives),
                      'graph_index': graph_index_identity,
-                     'archive_bytes_total': sum(row['archive_bytes'] for row in archives),
+                     'packing': 'deferred',
                      'input_bytes_total': sum(row['input_bytes'] for row in archives),
                      'capsules': archives}
           path = Path(os.environ['RUNNER_TEMP']) / 'pack-registry.json'
@@ -638,6 +645,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       SHARD_RUN: ${{ needs.pack-plan.outputs.shard_run }}
+      FORCE_COLD: ${{ inputs.force_cold }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -647,7 +655,8 @@ jobs:
         continue-on-error: true
         run: |
           gh workflow run build-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f pack_run="$GITHUB_RUN_ID" -f shard_run="$SHARD_RUN" -f build_number="$BUILD_NUMBER"
+            -f pack_run="$GITHUB_RUN_ID" -f shard_run="$SHARD_RUN" -f build_number="$BUILD_NUMBER" \
+            -f force_cold="$FORCE_COLD"
       - name: Report the failed dispatch
         if: steps.dispatch.outcome == 'failure'
         run: python3 scripts/pipeline_report.py --stage prepare --detail 'The compilation could not be dispatched.'

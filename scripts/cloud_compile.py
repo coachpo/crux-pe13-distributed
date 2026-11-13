@@ -17,6 +17,7 @@ import time
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import cloud_artifacts
+import cloud_reuse
 
 worker_spec = importlib.util.spec_from_file_location("crux_worker", SCRIPT_DIR / "worker.py")
 worker = importlib.util.module_from_spec(worker_spec)
@@ -113,13 +114,18 @@ def validate_context(context: dict, shard_id: str, environment=None) -> tuple[di
         if not isinstance(task.get("manifest_sha256"), str) or not re.fullmatch(
                 r"[a-fA-F0-9]{64}", task["manifest_sha256"]):
             raise CompileError("Fresh-build task has an invalid manifest SHA: " + identity)
-        if (not isinstance(task.get("archive"), str) or Path(task["archive"]).name != task["archive"]
+        if task.get('packing') == 'deferred':
+            descriptor = task.get('reuse_descriptor')
+            if (not isinstance(descriptor, dict) or descriptor.get('input_identity') != task.get('input_identity')
+                    or not re.fullmatch(r'[a-f0-9]{64}', str(task.get('input_identity', '')))):
+                raise CompileError('Deferred task has no audited input descriptor: ' + identity)
+        elif (not isinstance(task.get("archive"), str) or Path(task["archive"]).name != task["archive"]
                 or not task["archive"].endswith(".tar.zst")):
             raise CompileError("Fresh-build task has an invalid archive name: " + identity)
-        if type(task.get("archive_bytes")) is not int or task["archive_bytes"] <= 0:
+        if task.get('packing') != 'deferred' and (type(task.get("archive_bytes")) is not int or task["archive_bytes"] <= 0):
             raise CompileError("Fresh-build task has an invalid archive size: " + identity)
-        if not isinstance(task.get("archive_sha256"), str) or not re.fullmatch(
-                r"[a-fA-F0-9]{64}", task["archive_sha256"]):
+        if task.get('packing') != 'deferred' and (not isinstance(task.get("archive_sha256"), str) or not re.fullmatch(
+                r"[a-fA-F0-9]{64}", task["archive_sha256"])):
             raise CompileError("Fresh-build task has an invalid archive SHA: " + identity)
         extra_exports = task.get("extra_exports", [])
         if not isinstance(extra_exports, list) or any(not isinstance(path, str) for path in extra_exports):
@@ -256,6 +262,7 @@ def _read_fresh_dependency(dependency_id: str, dependency_dir: Path,
     for key, value in expected.items():
         if receipt.get(key) != value:
             raise CompileError(f"Dependency {dependency_id} receipt {key} differs from this fresh build")
+    cloud_reuse.validate_receipt(context, receipt, dependency_id)
     return receipt
 
 
@@ -370,6 +377,10 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
     source_alias_mounted = False
     runtime_source_alias = None
     admitted_runtime_inputs = []
+    dependency_receipts = {}
+    native_started = False
+    basis = None
+    validation_error = False
     admitted_local_runtime_targets = task.get("local_runtime_targets", [])
     started = time.monotonic()
     try:
@@ -385,14 +396,23 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
 
         capsule_dir = staging / "capsule"
         capsule_dir.mkdir()
-        artifact_name = "cloud-capsule-" + shard_id
+        deferred = task.get('packing') == 'deferred'
+        artifact_name = ("cloud-runtime-capsule-" if deferred else "cloud-capsule-") + shard_id
         downloaded = cloud_artifacts.download_artifacts(
-            str(context["pack_run"]), context["repository"], capsule_dir,
+            str(context["execution_id"] if deferred else context["pack_run"]), context["repository"], capsule_dir,
             token=token, name=artifact_name)
         if len(downloaded) != 1 or downloaded[0]["name"] != artifact_name:
             raise CompileError("Pack run did not return the exact admitted capsule artifact")
-        archive = _locate_capsule(Path(downloaded[0]["destination"]), task["archive"])
-        if archive.stat().st_size != task["archive_bytes"] or sha256(archive) != task["archive_sha256"]:
+        capsule_task = task
+        if deferred:
+            packed = worker.read_json(Path(downloaded[0]['destination']) / 'pack-receipt.json')
+            if (packed.get('status') != 'success' or packed.get('input_identity') != task['input_identity']
+                    or packed.get('reuse_descriptor') != task['reuse_descriptor']
+                    or packed.get('execution_id') != context['execution_id']):
+                raise CompileError('Deferred capsule differs from the admitted audit')
+            capsule_task = {**task, **{key: packed[key] for key in ('archive', 'archive_bytes', 'archive_sha256')}}
+        archive = _locate_capsule(Path(downloaded[0]["destination"]), capsule_task["archive"])
+        if archive.stat().st_size != capsule_task["archive_bytes"] or sha256(archive) != capsule_task["archive_sha256"]:
             raise CompileError("Capsule archive bytes/SHA differ from the accepted pack registry")
         subprocess.run(["sudo", "tar", "--zstd", "--no-same-owner", "-xpf", str(archive), "-C", "/"],
                        check=True)
@@ -401,6 +421,11 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         archive.unlink()
         shutil.rmtree(capsule_dir)
         manifest_path, bundle_path = _validate_restored_capsule(source_root, out_root, task)
+        if deferred:
+            descriptor = cloud_reuse.input_descriptor(worker.read_json(manifest_path), worker.read_json(bundle_path),
+                                                       context['reuse_policy']['execution_digest'])
+            if descriptor != task['reuse_descriptor']:
+                raise CompileError('Restored capsule content descriptor differs from current audit')
         _verify_required_notice_sources(task, source_root, out_root)
         if alias_enabled:
             kernel_source, kernel_revision = _validate_short_kernel_source(context, shard_id, source_root)
@@ -436,6 +461,11 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                              "expected_manifest_sha256": context["tasks"][dependency_id]["manifest_sha256"]})
 
         admitted_runtime_inputs = _verify_runtime_inputs(task, dependency_receipts, dependency_directories)
+        if 'reuse_policy' in context:
+            runtime = cloud_reuse.runtime_identity(task['reuse_descriptor'], environment)
+            if owns_kernel_output:
+                runtime['untracked_kernel_identity'] = context['execution_id']
+            basis = cloud_reuse.content_basis(context, shard_id, runtime, dependency_receipts)
 
         # Keep artifact credentials in this wrapper only; worker.run_shard passes
         # its process environment to Ninja and native build tools.
@@ -451,11 +481,24 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
                 flags.append("srctree=/k")
             runtime_source_alias["makeflags"] = os.environ["MAKEFLAGS"] = " ".join(flags)
         try:
+            previous_environment = dict(os.environ)
+            if basis is not None:
+                controlled = cloud_reuse.native_environment(os.environ)
+                os.environ.clear()
+                os.environ.update(controlled)
+                # The worker records these identities, but they are not exposed
+                # to native subprocesses (worker.native_process_environment).
+                os.environ.update({key: environment[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                                   'GITHUB_REPOSITORY', 'GITHUB_SHA') if key in environment})
+            native_started = True
             result = worker.run_shard(manifest_path, bundle_path, shard_id, output_dir,
                                       dependency_dirs, jobs=4, dependency_bindings=bindings,
                                       extra_exports=task.get("extra_exports", []),
                                       prebuild_targets=admitted_local_runtime_targets)
         finally:
+            if basis is not None:
+                os.environ.clear()
+                os.environ.update(previous_environment)
             if alias_enabled:
                 if previous_makeflags:
                     os.environ["MAKEFLAGS"] = previous_makeflags
@@ -481,9 +524,13 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
         if runtime_source_alias is not None:
             receipt["runtime_source_alias"] = runtime_source_alias
         receipt["status"] = result.get("status", "failed")
+        if receipt['status'] == 'success' and basis is not None:
+            receipt['reuse'] = cloud_reuse.envelope(context, shard_id, basis, dict(receipt))
+            cloud_reuse.validate_receipt(context, receipt, shard_id)
         if receipt["status"] != "success" and "error" not in receipt:
             receipt["error"] = "native shard compilation failed"
     except Exception as error:
+        validation_error = isinstance(error, (CompileError, ValueError))
         if receipt_path.is_file():
             try:
                 receipt = worker.read_json(receipt_path)
@@ -502,6 +549,13 @@ def compile_shard(context_path: Path, shard_id: str, output_dir: Path,
             except Exception as error:
                 receipt.update({"status": "failed", "error": "Could not clean short-source mount: " + str(error)})
     receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    reused_tasks = [ident for ident, record in dependency_receipts.items()
+                    if record.get('reuse', {}).get('mode') == 'reused']
+    if (receipt.get('status') != 'success' and native_started and reused_tasks
+            and (validation_error or receipt.get('error_type') == 'ValueError')):
+        receipt.update(failure_class='content-validation', stage='compile',
+                       execution_id=context['execution_id'], worker_commit=context['worker_commit'],
+                       build_number=context['build_number'], reused_tasks=reused_tasks)
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return (0 if receipt.get("status") == "success" else 1), receipt
 

@@ -215,10 +215,31 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
             if not set(task['depends_on']) <= seen:
                 raise ValueError('Task depends on an uncompleted/same wave: ' + task['id'])
             row = capsules[task['id']]
-            tasks[task['id']] = {'id': task['id'], 'wave': number,
+            admitted = {'id': task['id'], 'wave': number,
                 'depends_on': task['depends_on'],
-                'manifest_sha256': inventory['shards'][task['id']]['manifest_sha256'],
-                **{key: row[key] for key in ('archive', 'archive_bytes', 'archive_sha256')}}
+                'manifest_sha256': inventory['shards'][task['id']]['manifest_sha256']}
+            packing = row.get('packing', 'complete')
+            if packing == 'deferred':
+                input_identity = row.get('input_identity')
+                descriptor = row.get('reuse_descriptor')
+                if (not isinstance(input_identity, str)
+                        or not re.fullmatch(r'[a-fA-F0-9]{64}', input_identity)
+                        or not isinstance(descriptor, dict)
+                        or descriptor.get('input_identity') != input_identity):
+                    raise ValueError('Deferred capsule has invalid reuse identity: ' + task['id'])
+                admitted.update({'packing': 'deferred', 'input_identity': input_identity.lower(),
+                                 'reuse_descriptor': descriptor})
+            elif packing == 'complete':
+                if (not isinstance(row.get('archive'), str) or not row['archive']
+                        or type(row.get('archive_bytes')) is not int or row['archive_bytes'] <= 0
+                        or not isinstance(row.get('archive_sha256'), str)
+                        or not re.fullmatch(r'[a-fA-F0-9]{64}', row['archive_sha256'])):
+                    raise ValueError('Packed capsule has invalid archive identity: ' + task['id'])
+                admitted.update({'packing': 'complete', **{key: row[key] for key in
+                    ('archive', 'archive_bytes', 'archive_sha256')}})
+            else:
+                raise ValueError('Unknown capsule packing mode: ' + str(packing))
+            tasks[task['id']] = admitted
         seen.update(task['id'] for task in wave)
     return waves, tasks
 
@@ -246,6 +267,17 @@ def bootstrap(args):
     plan_path = expanded / 'shards/plan.json'
     plan = read(plan_path)
     waves, tasks = admit_inputs(registry, receipt, inventory, plan, sha(plan_path))
+    import cloud_reuse
+    reuse_policy = {'schema_version': 1, 'version': 1, 'force_cold': bool(args.force_cold),
+                    'execution_digest': cloud_reuse.execution_digest()}
+    if args.cold_retry_of:
+        if not str(args.cold_retry_of).isdecimal():
+            raise ValueError('Cold retry source must be a numeric execution ID')
+        reuse_policy['cold_retry_of'] = str(args.cold_retry_of)
+    for task_id, task in tasks.items():
+        descriptor = task.get('reuse_descriptor')
+        if descriptor is not None and descriptor.get('execution_digest') != reuse_policy['execution_digest']:
+            raise ValueError('Deferred capsule implementation differs from this execution: ' + task_id)
     commands, branding, product_recipe, buildinfo = [], {}, None, None
     owners, task_commands, task_edges = {}, {}, {}
     for task in tasks.values():
@@ -318,6 +350,7 @@ def bootstrap(args):
                **{key: registry[key] for key in ('build_number', 'graph_run', 'index_run', 'source_run',
                     'source_manifest_sha256', 'plan_sha256', 'graph_index')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
+               'reuse_policy': reuse_policy,
                'host_jar_runtime_bundles': host_bundles,
                'rust_native_link_inputs': rust_inputs,
                'license_metadata_readers': license_readers,
@@ -360,6 +393,16 @@ def validate_receipt(context, receipt, task_id):
         raise ValueError('Producer extra export policy differs from the admitted context')
     if sorted(receipt.get('prebuild_targets', [])) != sorted(context['tasks'][task_id].get('local_runtime_targets', [])):
         raise ValueError('Producer local runtime ordering differs from the admitted context')
+    if context.get('reuse_policy') is not None:
+        task = context['tasks'][task_id]
+        input_identity = task.get('input_identity')
+        descriptor = task.get('reuse_descriptor')
+        if (not isinstance(input_identity, str) or not re.fullmatch(r'[a-f0-9]{64}', input_identity)
+                or not isinstance(descriptor, dict) or descriptor.get('input_identity') != input_identity
+                or descriptor.get('execution_digest') != context['reuse_policy'].get('execution_digest')):
+            raise ValueError('Task lacks the admitted reuse input identity: ' + task_id)
+        import cloud_reuse
+        cloud_reuse.validate_receipt(context, receipt, task_id)
 
 
 def summarize(args):
@@ -375,11 +418,25 @@ def summarize(args):
         validate_receipt(context, receipt, task_id)
     output = Path(args.output)
     producers = [producer_binding(context, task_id) for task_id in sorted(receipts)]
+    reuse_records = output_identity = None
+    if context.get('reuse_policy') is not None:
+        reuse_records = {task_id: receipts[task_id]['reuse'] for task_id in sorted(receipts)}
+        output_identity = {task_id: receipts[task_id]['outputs'] for task_id in sorted(receipts)}
+        if set(reuse_records) != set(context['tasks']) or set(output_identity) != set(context['tasks']):
+            raise ValueError('Reuse provenance does not cover every admitted task')
     write(output / 'producers.json', producers)
-    write(output / 'build-summary.json', {'schema_version': 1, 'status': 'success',
-          'execution_id': context['execution_id'], 'worker_commit': context['worker_commit'],
-          'task_count': len(receipts), 'fresh_build': fresh_binding(context), 'producers': producers})
-    print(json.dumps({'status': 'success', 'compiled_tasks': len(receipts)}))
+    summary = {'schema_version': 1, 'status': 'success',
+               'execution_id': context['execution_id'], 'worker_commit': context['worker_commit'],
+               'task_count': len(receipts), 'fresh_build': fresh_binding(context), 'producers': producers}
+    if reuse_records is not None:
+        summary['reuse'] = reuse_records
+        summary['output_identity'] = output_identity
+        import cloud_reuse
+        cloud_reuse.validate_summary(context, summary)
+    write(output / 'build-summary.json', summary)
+    reused_count = sum(receipt.get('reuse', {}).get('mode') == 'reused' for receipt in receipts.values())
+    print(json.dumps({'status': 'success', 'admitted_tasks': len(receipts),
+                      'native_built_tasks': len(receipts) - reused_count, 'reused_tasks': reused_count}))
 
 
 def main():
@@ -388,6 +445,10 @@ def main():
     plan = sub.add_parser('bootstrap')
     for key in ('pack-run', 'shard-run', 'build-number', 'output', 'staging'):
         plan.add_argument('--' + key, required=True)
+    plan.add_argument('--force-cold', action='store_true',
+                      help='Do not consume compatible compiled shard outputs for this execution')
+    plan.add_argument('--cold-retry-of', default='',
+                      help='Original execution ID when this run is a cold retry of a reuse validation failure')
     matrix = sub.add_parser('matrix')
     matrix.add_argument('--context', required=True)
     matrix.add_argument('--wave', type=int, required=True)
