@@ -114,7 +114,7 @@ jobs:
         with:
           name: zip-manifest
           path: ${{ runner.temp }}/result/zip-payload/crux-install.txt
-          retention-days: 30
+          retention-days: 3
           if-no-files-found: error
       - name: Retain unpublished ROM images and validation evidence
         if: always()
@@ -122,7 +122,7 @@ jobs:
         with:
           name: cloud-fresh-rom-${{ inputs.build_run }}
           path: ${{ runner.temp }}/result/
-          retention-days: 30
+          retention-days: 3
           compression-level: 0
 
   next:

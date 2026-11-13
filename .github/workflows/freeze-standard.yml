@@ -150,7 +150,7 @@ jobs:
           name: cloud-${{ matrix.layer }}
           path: ${{ runner.temp }}/layer
           compression-level: 0
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: error
       - name: Retain source failure evidence
         if: failure()
@@ -222,7 +222,7 @@ jobs:
           name: cloud-graph-${{ inputs.build_number }}
           path: ${{ runner.temp }}/evidence
           compression-level: 0
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: error
 
   next:

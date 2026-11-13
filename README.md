@@ -92,6 +92,13 @@ install it in TWRP.
 
 ## Checks
 
+New source/graph/preparation and assembly/signing-manifest artifacts are retained
+for 3 days. Source failure evidence remains 7 days, native shards/receipts and
+compile context/summary 30 days, maintenance fixtures 1 day. The repository
+default remains 90 days; existing artifact expiries and existing Releases are
+not changed. These temporary input windows bound retries and re-publication;
+see the [retention and recovery details](docs/standard-runner-freeze.md#acceptance-evidence-and-artifact-retention).
+
 ```sh
 python3 -m unittest discover -s tests
 make -C installer test

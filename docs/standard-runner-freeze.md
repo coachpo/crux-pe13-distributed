@@ -312,11 +312,29 @@ Original build/run bindings remain in the dated preparation and ROM acceptance
 records. Select current inputs from the successful runs of the chain being
 operated, not from a historical table.
 
-Artifacts are temporary Actions records: `cloud-source-<nn>` and
-`failure-source-<nn>` are retained for 7 days; `cloud-graph-<build>`,
-`cloud-index-<build>`, `cloud-shards-<build>`, `cloud-capsule-<shard>`,
-`cloud-pack-receipt-<shard>` and `cloud-pack-registry-<build>` are retained for
-14 days. Keep compact receipts/logs needed for validation, not permanent local
+Artifacts are temporary Actions records. W6 applies the following retention to
+new uploads only; existing artifact expiration times are not shortened:
+
+| Role | Retention |
+| --- | --- |
+| `cloud-source-<nn>`, graph, index, shard plan, cold capsules, pack receipts/registry | 3 days |
+| `cloud-fresh-rom-<compile_run>` and `zip-manifest` | 3 days |
+| `failure-source-<nn>` | 7 days |
+| Compiled `shard-<task>`, `fresh-receipt-<task>`, `cloud-build-context`, `cloud-fresh-build-summary` | 30 days |
+| Artifact-upload maintenance fixtures | 1 day |
+
+The repository default artifact/log policy remains 90 days; Releases are not
+cleaned. Retention starts at each upload, not chain completion. Every required
+artifact must still exist when consumed, so the earliest required expiry limits
+stage retries and signing/publication. Normal CI signing needs `zip-manifest`;
+release verification also reads the assembly artifact and compile context/summary.
+Keeping the small compile records does not extend the three-day assembly window.
+Expired explicit inputs fail closed. Existing source-layer reuse may fetch fresh
+pinned sources when unavailable, but this is not W9 compiled-output reuse or a
+general automatic cold-build fallback. Re-derive missing stages, or rebuild from
+the same pins with matching execution code/inputs, without bypassing validation.
+
+Keep compact receipts/logs needed for validation, not permanent local
 archives of Actions ZIPs, source layers or compiled inputs. The retained output
 is the signed Release; reconstruct intermediate inputs from their pins when
 needed. Existing specifically retained artifact exceptions belong to the
