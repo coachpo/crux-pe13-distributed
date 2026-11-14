@@ -112,20 +112,49 @@ def artifact_inventory(run_id, repository, token, opener=_API_OPENER,
                        sleep=time.sleep, now=time.time):
     if not str(run_id).isdecimal() or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
         raise ValueError('Invalid GitHub source run or repository')
-    records = []
-    page, total = 1, None
-    while total is None or len(records) < total:
-        query = urllib.parse.urlencode({'per_page': 100, 'page': page})
-        url = f'{API}/repos/{repository}/actions/runs/{run_id}/artifacts?{query}'
-        payload, _ = _request(url, token, opener, sleep, now)
-        response = json.loads(payload)
-        if not isinstance(response.get('artifacts'), list) or not isinstance(response.get('total_count'), int):
-            raise ValueError('GitHub artifact inventory response is malformed')
-        records.extend(response['artifacts'])
-        total = response['total_count']
-        page += 1
-        if not response['artifacts'] and len(records) < total:
-            raise ValueError('GitHub artifact inventory ended before total_count')
+    # Offset pages are not an atomic snapshot while peer jobs upload. A new
+    # artifact can shift the same ID onto two pages; that is not two artifacts.
+    # Relist instead of accepting an incomplete/overlapping view or picking a
+    # newest name. Distinct IDs sharing a name still fail closed immediately.
+    for attempt in range(_TRANSIENT_RETRIES + 1):
+        records, identities, names = [], {}, {}
+        page, total, changed = 1, None, False
+        while total is None or len(records) < total:
+            query = urllib.parse.urlencode({'per_page': 100, 'page': page})
+            url = f'{API}/repos/{repository}/actions/runs/{run_id}/artifacts?{query}'
+            payload, _ = _request(url, token, opener, sleep, now)
+            response = json.loads(payload)
+            if (not isinstance(response.get('artifacts'), list)
+                    or type(response.get('total_count')) is not int or response['total_count'] < 0):
+                raise ValueError('GitHub artifact inventory response is malformed')
+            if total is not None and total != response['total_count']:
+                changed = True
+            total = response['total_count']
+            for artifact in response['artifacts']:
+                if not isinstance(artifact, dict):
+                    raise ValueError('GitHub artifact inventory entry is malformed')
+                identity, name = artifact.get('id'), artifact.get('name')
+                if isinstance(identity, int):
+                    if identity in identities:
+                        if identities[identity] != artifact:
+                            raise ValueError('Conflicting artifact metadata for ID: ' + str(identity))
+                        changed = True
+                    identities[identity] = artifact
+                    if isinstance(name, str) and not artifact.get('expired'):
+                        if name in names and names[name] != identity:
+                            raise ValueError('Duplicate artifact name in selected run: ' + name)
+                        names[name] = identity
+                records.append(artifact)
+            page += 1
+            if not response['artifacts'] and len(records) < total:
+                if changed:
+                    break
+                raise ValueError('GitHub artifact inventory ended before total_count')
+        if not changed:
+            break
+        if attempt == _TRANSIENT_RETRIES:
+            raise ValueError('GitHub artifact inventory did not stabilize after pagination retries')
+        sleep(min(2 ** attempt, _TRANSIENT_BACKOFF_MAX))
     result = {}
     for artifact in records:
         name, artifact_id = artifact.get('name'), artifact.get('id')

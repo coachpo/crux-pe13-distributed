@@ -226,6 +226,59 @@ class CloudLayersTests(unittest.TestCase):
         self.assertEqual(len(requests), 2)
         self.assertIn('page=2', requests[-1])
 
+    def test_inventory_relists_when_concurrent_upload_shifts_a_page_boundary(self):
+        records = [{'id': i, 'name': 'artifact-' + str(i), 'expired': False}
+                   for i in range(1, 102)]
+        newer = {'id': 102, 'name': 'new-upload', 'expired': False}
+        current = [newer, *records]
+        replies = [
+            {'total_count': 101, 'artifacts': records[:100]},
+            {'total_count': 102, 'artifacts': current[100:]},
+            {'total_count': 102, 'artifacts': current[:100]},
+            {'total_count': 102, 'artifacts': current[100:]},
+        ]
+        requests, waits = [], []
+        def opener(request):
+            requests.append(request.full_url)
+            return self.response(json.dumps(replies.pop(0)).encode())
+        found = layers.artifact_inventory('123', 'owner/repo', 'token', opener=opener, sleep=waits.append)
+        self.assertEqual(len(found), 102)
+        self.assertEqual(found['artifact-100']['id'], 100)
+        self.assertIn('new-upload', found)
+        self.assertEqual(waits, [1])
+        self.assertEqual([url.split('page=')[-1] for url in requests], ['1', '2', '1', '2'])
+
+    def test_inventory_rejects_different_artifact_ids_with_one_name(self):
+        payload = {'total_count': 2, 'artifacts': [
+            {'id': 1, 'name': 'selected', 'expired': False},
+            {'id': 2, 'name': 'selected', 'expired': False}]}
+        with self.assertRaisesRegex(ValueError, 'Duplicate artifact name'):
+            layers.artifact_inventory('123', 'owner/repo', 'token',
+                                     opener=lambda _: self.response(json.dumps(payload).encode()),
+                                     sleep=lambda _: self.fail('a real ambiguity must not be retried away'))
+
+    def test_inventory_rejects_conflicting_observations_of_one_artifact_id(self):
+        payload = {'total_count': 2, 'artifacts': [
+            {'id': 1, 'name': 'selected', 'digest': 'sha256:first', 'expired': False},
+            {'id': 1, 'name': 'selected', 'digest': 'sha256:changed', 'expired': False}]}
+        with self.assertRaisesRegex(ValueError, 'Conflicting artifact metadata'):
+            layers.artifact_inventory('123', 'owner/repo', 'token',
+                                     opener=lambda _: self.response(json.dumps(payload).encode()))
+
+    def test_inventory_does_not_return_an_unstable_or_truncated_snapshot(self):
+        same = {'id': 1, 'name': 'selected', 'expired': False}
+        waits = []
+        with self.assertRaisesRegex(ValueError, 'did not stabilize'):
+            layers.artifact_inventory('123', 'owner/repo', 'token', sleep=waits.append,
+                                     opener=lambda _: self.response(json.dumps(
+                                         {'total_count': 2, 'artifacts': [same, same]}).encode()))
+        self.assertEqual(waits, [1, 2, 4, 8, 16])
+        replies = [{'total_count': 2, 'artifacts': [same]}, {'total_count': 2, 'artifacts': []}]
+        with self.assertRaisesRegex(ValueError, 'ended before total_count'):
+            layers.artifact_inventory('123', 'owner/repo', 'token',
+                                     opener=lambda _: self.response(json.dumps(replies.pop(0)).encode()),
+                                     sleep=lambda _: self.fail('truncation is not a valid inventory'))
+
     def test_non_rate_limit_api_error_is_not_retried(self):
         for status, message in ((403, 'Resource not accessible by integration'), (404, 'Not Found')):
             calls = []
