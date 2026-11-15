@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 
 import cloud_layers
+import cloud_schedule
 
 
 API = cloud_layers.API
@@ -241,8 +242,14 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
     producers = summary.get("producers")
     _require(isinstance(producers, list) and producers and summary.get("task_count") == len(producers),
              "compile summary does not bind every compiled task to a producer")
+    try:
+        policy = cloud_schedule.load_policy()
+        declared = cloud_schedule.validate_waves(summary.get('waves'), policy=policy)
+    except ValueError as error:
+        raise SourceError('compile summary has an invalid actual-wave inventory: ' + str(error)) from error
+    _require(summary.get('schedule_policy') == policy,
+             'compile summary schedule policy differs from the current configured policy')
     ids = set()
-    waves = set()
     for producer in producers:
         _require(isinstance(producer, dict), "invalid compile producer binding")
         ident = producer.get("id")
@@ -250,13 +257,15 @@ def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
         _require(match is not None, "invalid compile producer task ID")
         _require(ident not in ids, "duplicate compile producer task ID")
         ids.add(ident)
-        waves.add(int(match.group(1)))
+        wave_index = int(match.group(1))
+        _require(wave_index < len(summary['waves']) and ident in summary['waves'][wave_index],
+                 'compile producer differs from its declared actual wave')
         _require(producer.get("run_id") == compile_run
                  and producer.get("artifact") == "shard-" + ident
                  and producer.get("expected_worker_commit") == worker
                  and _is_sha(producer.get("expected_manifest_sha256")),
                  "compile producer provenance mismatch: " + ident)
-    _require(waves == set(range(9)), "compile summary does not cover all nine waves")
+    _require(ids == set(declared), 'compile summary does not cover every declared actual-wave task')
 
 
 def _lineage(assembly_run: str, token: str):
@@ -312,7 +321,6 @@ def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
              and context.get("build_number") == build
              and context.get("worker_commit") == compile.get("head_sha"),
              "compile build context identity differs from the successful compile run")
-
     try:
         fresh = cloud_build_plan.fresh_binding(context)
     except (KeyError, TypeError) as error:
@@ -326,6 +334,13 @@ def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
     producer_ids = {producer.get("id") for producer in producers if isinstance(producer, dict)}
     _require(len(producer_ids) == len(producers) and set(tasks) == producer_ids,
              "compile build context tasks differ from its successful producer summary")
+    try:
+        cloud_schedule.validate_context(context)
+    except ValueError as error:
+        raise SourceError('compile context schedule is invalid: ' + str(error)) from error
+    _require(context['waves'] == summary.get('waves')
+             and context['schedule_policy'] == summary.get('schedule_policy'),
+             'compile context waves/policy differ from its successful summary')
     selected = {}
     for producer in producers:
         ident = producer["id"]

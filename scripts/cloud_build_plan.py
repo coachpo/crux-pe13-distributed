@@ -12,6 +12,7 @@ import re
 import subprocess
 
 import cloud_artifacts
+import cloud_schedule
 from cloud_license_inputs import LicenseMetadataReads
 from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
@@ -200,22 +201,20 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
         raise ValueError('Pruned graph identities differ')
     if registry['plan_sha256'] != plan_sha or inventory['plan_sha256'] != plan_sha:
         raise ValueError('Plan byte identity differs')
-    waves = [[task['id'] for task in wave] for wave in plan['waves']]
+    _, waves = cloud_schedule.validate_plan(plan)
     ids = [task for wave in waves for task in wave]
     capsules = {row['shard_id']: row for row in registry['capsules']}
-    # The task count is the preparation registry's, which pack-summary checked against the slice plan.
-    # Match build-standard.yml's serial calls, including the dexpreopt-enabled final wave.
-    if (len(waves) != 9 or any(not wave for wave in waves) or len(set(ids)) != len(ids)
+    if (len(capsules) != len(registry['capsules'])
             or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
             or set(ids) != set(inventory['shards'])):
-        raise ValueError('Expected the complete nine-wave inventory of the preparation registry')
+        raise ValueError('Expected the complete actual-wave inventory of the preparation registry')
     tasks, seen = {}, set()
     for number, wave in enumerate(plan['waves']):
         for task in wave:
             if not set(task['depends_on']) <= seen:
                 raise ValueError('Task depends on an uncompleted/same wave: ' + task['id'])
             row = capsules[task['id']]
-            admitted = {'id': task['id'], 'wave': number,
+            admitted = {'id': task['id'], 'wave': number, 'category': task['category'],
                 'depends_on': task['depends_on'],
                 'manifest_sha256': inventory['shards'][task['id']]['manifest_sha256']}
             packing = row.get('packing', 'complete')
@@ -350,6 +349,7 @@ def bootstrap(args):
                **{key: registry[key] for key in ('build_number', 'graph_run', 'index_run', 'source_run',
                     'source_manifest_sha256', 'plan_sha256', 'graph_index')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
+               'schedule_policy': plan['partition_policy'],
                'reuse_policy': reuse_policy,
                'host_jar_runtime_bundles': host_bundles,
                'rust_native_link_inputs': rust_inputs,
@@ -407,6 +407,7 @@ def validate_receipt(context, receipt, task_id):
 
 def summarize(args):
     context = read(args.context)
+    cloud_schedule.validate_slot_results(context, json.loads(args.slot_results))
     root = Path(args.staging) / 'receipts'
     cloud_artifacts.download_artifacts(context['execution_id'], context['repository'], root,
                                       pattern='fresh-receipt-*')
@@ -427,7 +428,8 @@ def summarize(args):
     write(output / 'producers.json', producers)
     summary = {'schema_version': 1, 'status': 'success',
                'execution_id': context['execution_id'], 'worker_commit': context['worker_commit'],
-               'task_count': len(receipts), 'fresh_build': fresh_binding(context), 'producers': producers}
+               'task_count': len(receipts), 'fresh_build': fresh_binding(context), 'producers': producers,
+               'waves': context['waves'], 'schedule_policy': context['schedule_policy']}
     if reuse_records is not None:
         summary['reuse'] = reuse_records
         summary['output_identity'] = output_identity
@@ -456,6 +458,8 @@ def main():
     summary = sub.add_parser('summary')
     for key in ('context', 'output', 'staging'):
         summary.add_argument('--' + key, required=True)
+    summary.add_argument('--slot-results', required=True,
+                         help='JSON results of bootstrap and every declared reusable workflow slot')
     args = parser.parse_args()
     if args.mode == 'bootstrap':
         bootstrap(args)
@@ -463,8 +467,10 @@ def main():
         summarize(args)
     else:
         context = read(args.context)
+        active, selected = cloud_schedule.matrix(context, args.wave)
         with open(args.github_output, 'a') as output:
-            print('matrix=' + json.dumps({'id': context['waves'][args.wave]}, separators=(',', ':')), file=output)
+            print('active=' + ('true' if active else 'false'), file=output)
+            print('matrix=' + json.dumps(selected, separators=(',', ':')), file=output)
 
 
 if __name__ == '__main__':

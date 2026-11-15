@@ -1542,7 +1542,8 @@ class Graph:
                 contracts[edge] = sorted(required)
         return contracts
 
-    def shard(self, targets, destination, max_actions=4000, max_parallel=20, export=True, out_root=None):
+    def shard(self, targets, destination, max_actions=4000, max_parallel=20, export=True, out_root=None,
+              partition_profile=None):
         """Pack DAG frontiers into waves; dependencies inside a job stay local.
 
         Phony aliases are expanded when scheduling and preserved inside each
@@ -1596,6 +1597,45 @@ class Graph:
                 identity=min(combined); members[identity]=combined
                 for edge in combined:
                     unit_for[edge]=identity
+        categories = {unit: 'ordinary' for unit in members}
+        action_categories = {edge: 'ordinary' for edge in actions}
+        unit_keys = {unit: (unit,) for unit in members}
+        if partition_profile is not None:
+            from shard_policy import classify_action, stable_unit_key
+            order = partition_profile['category_order']
+            if (len(order) != len(set(order)) or set(order) != {'identity','kernel','image','native','java','other'}
+                    or set(partition_profile['isolate_categories']) != {'identity','kernel','image'}
+                    or max_actions != partition_profile['max_actions']
+                    or max_parallel != partition_profile['max_parallel']):
+                raise ValueError('Invalid or conflicting shard partition policy')
+            for unit, edges in members.items():
+                classified = {edge: classify_action({**records[edge], 'outputs': [posixpath.normpath(path if path.startswith('/') else
+                                            posixpath.join(self.meta['source_root'], path))
+                                            for path in records[edge]['outputs']]}, metadata[edge], self.meta['source_root'],
+                                         str(out_root), partition_profile) for edge in edges}
+                action_categories.update(classified)
+                kinds = set(classified.values())
+                kind = 'kernel' if 'kernel' in kinds else next(iter(kinds)) if len(kinds) == 1 else 'other'
+                if len(kinds) > 1 and kinds & {'identity', 'image'} and kind != 'kernel':
+                    raise ValueError('Mixed protected atomic group needs an explicit partition policy')
+                # Compiler -> installed host tool -> compiler chains are real
+                # dependencies. Making every language/tool boundary a wave
+                # barrier deepens the graph without isolating volatile inputs.
+                categories[unit] = kind if kind in partition_profile['isolate_categories'] else 'other'
+                primary = [posixpath.normpath(path if path.startswith('/') else
+                           posixpath.join(self.meta['source_root'], path))
+                           for edge in edges for path in records[edge]['outputs'][:1]]
+                # Role/tool family is a stable ready-queue preference, not an
+                # ordinary-language barrier: local dependency chains may mix.
+                unit_keys[unit] = (order.index(kind), stable_unit_key(primary))
+        # Stream one action at a time: the complete resolved view is already
+        # large, and another full JSON copy regresses standard-runner memory.
+        contract = hashlib.sha256()
+        for edge in sorted(actions, key=lambda value: tuple(records[value]['outputs'])):
+            contract.update(json.dumps({'outputs': records[edge]['outputs'], 'deps': records[edge]['deps'],
+                                        'native': metadata[edge]}, sort_keys=True,
+                                       separators=(',', ':')).encode())
+            contract.update(b'\n')
         prerequisites = collections.defaultdict(set); successors = collections.defaultdict(set)
         for edge in sorted(actions):
             before = set()
@@ -1612,7 +1652,7 @@ class Graph:
             for dependency in prerequisites[unit]:
                 successors[dependency].add(unit)
         remaining = {edge:len(before) for edge,before in prerequisites.items()}
-        ready = [edge for edge,count in remaining.items() if count == 0]
+        ready = [(unit_keys[edge], edge) for edge,count in remaining.items() if count == 0]
         heapq.heapify(ready)
         done = set(); scheduled = set(); waves = []; assignments = {}
         required_exports = collections.defaultdict(set)
@@ -1645,15 +1685,19 @@ class Graph:
                     break
                 chosen = set(); local_ready = []; chosen_count=0
                 while chosen_count < max_actions and (local_ready or ready):
-                    edge = heapq.heappop(local_ready if local_ready else ready)
+                    if not local_ready and chosen and categories[ready[0][1]] != category:
+                        break
+                    _, edge = heapq.heappop(local_ready if local_ready else ready)
                     if edge in scheduled:
                         continue
+                    if not chosen:
+                        category = categories[edge]
                     chosen.add(edge); scheduled.add(edge)
                     chosen_count+=len(members[edge])
                     for child in successors[edge]:
-                        if child not in scheduled and all(
+                        if child not in scheduled and categories[child] == category and all(
                                 dep in done or dep in chosen for dep in prerequisites[child]):
-                            heapq.heappush(local_ready,child)
+                            heapq.heappush(local_ready,(unit_keys[child], child))
                 if chosen:
                     jobs.append(chosen)
             wave_number = len(waves)
@@ -1694,6 +1738,12 @@ class Graph:
                 job = {'id':identity,'wave':wave_number,'action_count':len(chosen),
                        'targets':job_targets,'depends_on':upstream,
                        'external_inputs':selected['external_inputs']}
+                if partition_profile is not None:
+                    kinds = {categories[unit_for[edge]] for edge in chosen}
+                    if len(kinds) != 1:
+                        raise ValueError('Partition task crosses a declared category boundary')
+                    job['category'] = next(iter(kinds))
+                    job['action_categories'] = dict(collections.Counter(action_categories[edge] for edge in chosen))
                 if runtime_inputs:
                     job['rust_runtime_inputs'] = runtime_inputs
                 planned_metadata=[record for edge,record in metadata.items() if edge in chosen]
@@ -1738,7 +1788,7 @@ class Graph:
                     for child in successors[edge]:
                         remaining[child] -= 1
                         if remaining[child] == 0 and child not in scheduled:
-                            heapq.heappush(ready,child)
+                            heapq.heappush(ready,(unit_keys[child], child))
         def terminal_files(path):
             edge = producers.get(path)
             if edge is None:
@@ -1775,6 +1825,10 @@ class Graph:
                 'export_producers':{path:assignments[producers[path]]
                     for paths in required_exports.values() for path in sorted(paths)},
                 'waves':waves}
+        plan['action_contract_sha256'] = contract.hexdigest()
+        if partition_profile is not None:
+            plan['partition_policy'] = partition_profile
+            plan['category_actions'] = dict(collections.Counter(action_categories.values()))
         Path(destination).mkdir(parents=True,exist_ok=True)
         (Path(destination)/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
         return plan
@@ -1823,6 +1877,8 @@ def main():
     shard.add_argument('--output-dir',required=True)
     shard.add_argument('--max-actions',type=int,default=4000)
     shard.add_argument('--max-parallel',type=int,default=20)
+    shard.add_argument('--partition-profile',help='Versioned output-role partition policy')
+    shard.add_argument('--out-root',help='Recorded OUT_DIR required by a partition profile')
     shard.add_argument('--plan-only',action='store_true')
     args = parser.parse_args()
     if args.command == 'index':
@@ -1835,8 +1891,12 @@ def main():
         result=adapt_graph(args.database,json.loads(Path(args.profile).read_text()),args.replace_profile)
         print(json.dumps(result,indent=2)); return
     if args.command == 'shard':
+        if args.partition_profile and not args.out_root:
+            parser.error('--partition-profile requires the recorded --out-root')
+        profile = json.loads(Path(args.partition_profile).read_text()) if args.partition_profile else None
         result = Graph(args.database).shard(args.target,args.output_dir,
-                    args.max_actions,args.max_parallel,not args.plan_only)
+                    args.max_actions,args.max_parallel,not args.plan_only,
+                    out_root=args.out_root,partition_profile=profile)
         print(json.dumps({k:v for k,v in result.items() if isinstance(v,(str,int,float,bool))},indent=2)); return
     external = []
     if args.external:

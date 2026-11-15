@@ -484,10 +484,16 @@ canonical index receipt of its index run. The graph receipt must be the
 successful graph of this build and source manifest, and the index receipt must
 name that graph run, build and manifest and the SHA-256 of that exact graph
 receipt. Every other check stays: registry and shard receipt bindings, plan
-digest, nine dependency waves, shard manifest digests, unique output owners,
-frontend identity, product namespace and kernel exports. The shard count follows
-the graph (40 for the official-Make, dexpreopt-enabled A2 graph). Earlier
-eight-wave graphs use their matching pipeline revision when rebuilt. If source
+digest, the exact actual dependency waves and versioned partition policy,
+shard manifest digests, unique output owners, frontend identity, product namespace
+and kernel exports. The shard count follows the graph. W10's
+`config/cloud-sharding-profile.json` isolates identity, kernel and image owners
+while preserving complete native actions, atomic groups and producer exports.
+Every actual task occurs exactly once, depends only on completed earlier waves,
+and fits the declared same-execution workflow slots. Extra slots are inactive,
+not empty admitted waves; the summary requires every declared slot to succeed
+and every actual task to supply its current receipt. Earlier eight/nine-wave
+graphs use their matching pipeline revision when rebuilt. If source
 or graph shape changes beyond a fixed policy (runtime/kernel policy, slice and
 producer requirements, image/FIT expectations), the chain stops at that check
 and reports it. Retry failed jobs on the same revision; after a code/policy change

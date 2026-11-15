@@ -40,7 +40,9 @@ def valid_summary():
             "worker_commit": WORKER,
             "fresh_build": {"execution_id": COMPILE_RUN, "pack_run": "1", "shard_run": "2",
                             "plan_sha256": "d" * 64, "source_manifest_sha256": "e" * 64},
-            "producers": producers}
+            "producers": producers,
+            "waves": [[p['id'] for p in producers if int(p['id'][1:4]) == wave] for wave in range(9)],
+            "schedule_policy": source.cloud_schedule.load_policy()}
 
 
 def make_artifact(producers, missing=None, bad_sum=False, bad_source=False, altered_asset=False,
@@ -102,10 +104,10 @@ def valid_context(summary, owner_count=8):
     producers = summary["producers"]
     task_ids = [producer["id"] for producer in producers]
     task_by_id = {producer["id"]: {
-        "id": producer["id"], "wave": int(producer["id"][1:4]), "depends_on": [],
+        "id": producer["id"], "wave": int(producer["id"][1:4]), "category": "other", "depends_on": [],
         "manifest_sha256": producer["expected_manifest_sha256"],
     } for producer in producers}
-    waves = [[task_id for task_id in task_ids if int(task_id[1:4]) == wave] for wave in range(9)]
+    waves = [list(wave) for wave in summary['waves']]
     out_root = "/tmp/accepted-out"
     product = out_root + "/target/product/crux"
     required_paths = [
@@ -132,6 +134,7 @@ def valid_context(summary, owner_count=8):
         "source_root": "/tmp/accepted-source",
         "out_root": out_root,
         "waves": waves,
+        "schedule_policy": summary['schedule_policy'],
         "tasks": task_by_id,
         "assembly_exports": {path: owners[index % len(owners)] for index, path in enumerate(required_paths)},
     }
@@ -422,10 +425,11 @@ class ReleaseSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(source.SourceError, "identity-free clean-install package"):
             self.invoke(serial="8bd37df4")
 
-    def test_summary_requires_every_task_and_all_nine_waves(self):
+    def test_summary_requires_every_task_and_every_declared_actual_wave(self):
         def grow(summary):
             summary["producers"].append(dict(summary["producers"][-1], id="w005-s005", artifact="shard-w005-s005"))
             summary["task_count"] = len(summary["producers"])
+            summary['waves'][5].append('w005-s005')
         self.assertEqual(self.invoke(mutate_summary=grow).compile_run, COMPILE_RUN)
         with self.assertRaisesRegex(source.SourceError, "bind every compiled task"):
             self.invoke(mutate_summary=lambda summary: summary["producers"].pop())
@@ -433,8 +437,25 @@ class ReleaseSourceTests(unittest.TestCase):
         def drop_last_wave(summary):
             summary["producers"] = [p for p in summary["producers"] if not p["id"].startswith("w008-")]
             summary["task_count"] = len(summary["producers"])
-        with self.assertRaisesRegex(source.SourceError, "all nine waves"):
+        with self.assertRaisesRegex(source.SourceError, "every declared actual-wave task"):
             self.invoke(mutate_summary=drop_last_wave)
+
+    def test_summary_requires_an_explicit_wave_inventory_and_policy(self):
+        for key in ('waves', 'schedule_policy'):
+            summary = valid_summary()
+            summary.pop(key)
+            with self.subTest(key=key), self.assertRaises(source.SourceError):
+                source._validate_summary(summary, COMPILE_RUN, WORKER)
+
+    def test_summary_accepts_a_shorter_complete_plan_but_not_a_future_wave_binding(self):
+        summary = valid_summary()
+        summary['waves'] = summary['waves'][:2]
+        summary['producers'] = [p for p in summary['producers'] if int(p['id'][1:4]) < 2]
+        summary['task_count'] = len(summary['producers'])
+        source._validate_summary(summary, COMPILE_RUN, WORKER)
+        summary['waves'][0], summary['waves'][1] = summary['waves'][1], summary['waves'][0]
+        with self.assertRaisesRegex(source.SourceError, 'declared actual wave'):
+            source._validate_summary(summary, COMPILE_RUN, WORKER)
 
 
 if __name__ == "__main__":

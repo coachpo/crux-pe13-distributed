@@ -71,7 +71,7 @@ class BuildPlanTests(unittest.TestCase):
             rows = []
             for index in range(count):
                 task = f'w{wave:03d}-s{index:03d}'
-                rows.append({'id': task, 'depends_on': prior[:1]})
+                rows.append({'id': task, 'wave': wave, 'category': 'other', 'depends_on': prior[:1]})
                 capsules.append({'shard_id': task, 'archive': task + '.tar.zst',
                                  'archive_bytes': 10, 'archive_sha256': 'a' * 64})
                 inventory[task] = {'manifest_sha256': 'b' * 64}
@@ -83,13 +83,17 @@ class BuildPlanTests(unittest.TestCase):
                     'capsules': capsules}
         receipt = {k: registry[k] for k in ['status', 'build_number', 'graph_run', 'index_run', 'source_run']}
         receipt.update(manifest_sha256='source', pruned_database=registry['graph_index'])
-        return registry, receipt, {'plan_sha256': 'plan', 'shards': inventory}, {'waves': waves}
+        policy = plan.cloud_schedule.load_policy()
+        return registry, receipt, {'plan_sha256': 'plan', 'shards': inventory}, {
+            'waves': waves, 'partition_policy': policy,
+            'max_actions': policy['max_actions'], 'max_parallel': policy['max_parallel']}
 
     def test_admits_exact_inventory_and_prior_wave_dependencies(self):
         waves, tasks = plan.admit_inputs(*self.inputs(), 'plan')
         self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 1, 1])
         self.assertEqual(len(tasks), 40)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
+        self.assertEqual(tasks['w001-s000']['category'], 'other')
 
     def test_admits_deferred_capsules_without_archive_bindings(self):
         args = self.inputs()
@@ -117,16 +121,24 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(len(tasks), 41)
         args = self.inputs()
         args[0]['shard_count'] = 41
-        with self.assertRaisesRegex(ValueError, 'complete nine-wave inventory'):
+        with self.assertRaisesRegex(ValueError, 'complete actual-wave inventory'):
             plan.admit_inputs(*args, 'plan')
 
-    def test_incomplete_final_wave_and_capsules_are_rejected(self):
-        for counts in ((13, 3, 7, 6, 5, 2, 2, 1), (13, 3, 7, 6, 5, 2, 2, 1, 0)):
-            with self.subTest(counts=counts), self.assertRaisesRegex(ValueError, 'complete nine-wave'):
-                plan.admit_inputs(*self.inputs(counts), 'plan')
+    def test_actual_wave_count_is_not_the_historical_nine(self):
+        waves, tasks = plan.admit_inputs(*self.inputs((2, 1)), 'plan')
+        self.assertEqual(list(map(len, waves)), [2, 1])
+        self.assertEqual(len(tasks), 3)
+
+    def test_empty_wave_and_missing_capsules_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'nonempty'):
+            plan.admit_inputs(*self.inputs((2, 0)), 'plan')
         args = self.inputs()
         args[0]['capsules'].pop()
-        with self.assertRaisesRegex(ValueError, 'complete nine-wave'):
+        with self.assertRaisesRegex(ValueError, 'complete actual-wave'):
+            plan.admit_inputs(*args, 'plan')
+        args = self.inputs()
+        args[3]['waves'].pop()
+        with self.assertRaisesRegex(ValueError, 'complete actual-wave'):
             plan.admit_inputs(*args, 'plan')
 
     def test_final_wave_cannot_depend_on_uncompleted_task(self):
@@ -148,7 +160,9 @@ class BuildPlanTests(unittest.TestCase):
     def context_and_receipt(self):
         context = {'execution_id': '123', 'worker_commit': 'c' * 40, 'pack_run': '11', 'shard_run': '12',
                    'plan_sha256': 'plan', 'source_manifest_sha256': 'source',
-                   'tasks': {'task': {'manifest_sha256': 'm', 'depends_on': []}}}
+                   'waves': [['task']], 'schedule_policy': plan.cloud_schedule.load_policy(),
+                   'tasks': {'task': {'id': 'task', 'wave': 0, 'category': 'other',
+                                      'manifest_sha256': 'm', 'depends_on': []}}}
         receipt = {'status': 'success', 'fresh_build': plan.fresh_binding(context), 'id': 'task',
                    'run_id': '123', 'worker_commit': 'c' * 40, 'manifest_sha256': 'm',
                    'declared_dependencies': [], 'build_environment': {'CCACHE_DISABLE': '1'}}
@@ -215,12 +229,42 @@ class BuildPlanTests(unittest.TestCase):
                 artifact.mkdir(parents=True)
                 (artifact / 'receipt.json').write_text(json.dumps(receipt))
 
-            args = type('Args', (), {'context': context_path, 'staging': staging, 'output': output})()
+            slots = {'bootstrap': {'result': 'success'}, **{
+                'wave' + str(index): {'result': 'success'}
+                for index in range(context['schedule_policy']['wave_capacity'])}}
+            args = type('Args', (), {'context': context_path, 'staging': staging, 'output': output,
+                                     'slot_results': json.dumps(slots)})()
             with mock.patch.object(plan.cloud_artifacts, 'download_artifacts', side_effect=download):
                 plan.summarize(args)
             summary = json.loads((output / 'build-summary.json').read_text())
             self.assertEqual(summary['reuse'], {'task': receipt['reuse']})
             self.assertEqual(summary['output_identity'], {'task': receipt['outputs']})
+            self.assertEqual(summary['waves'], [['task']])
+            self.assertEqual(summary['schedule_policy'], context['schedule_policy'])
+
+    def test_summary_rejects_a_missing_real_wave_receipt_even_when_all_slots_succeeded(self):
+        context, receipt = self.context_and_receipt()
+        context.update(repository='owner/repo', waves=[['task'], ['later']])
+        context['tasks']['later'] = {'id': 'later', 'wave': 1, 'category': 'other', 'manifest_sha256': 'n',
+                                     'depends_on': ['task']}
+        slots = {'bootstrap': {'result': 'success'}, **{
+            'wave' + str(index): {'result': 'success'}
+            for index in range(context['schedule_policy']['wave_capacity'])}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / 'context.json'
+            path.write_text(json.dumps(context))
+
+            def download(run_id, repository, destination, pattern=None):
+                artifact = destination / 'fresh-receipt-task'
+                artifact.mkdir(parents=True)
+                (artifact / 'receipt.json').write_text(json.dumps(receipt))
+
+            args = type('Args', (), {'context': path, 'staging': root / 'staging',
+                                     'output': root / 'output', 'slot_results': json.dumps(slots)})()
+            with mock.patch.object(plan.cloud_artifacts, 'download_artifacts', side_effect=download):
+                with self.assertRaisesRegex(ValueError, 'do not cover all admitted tasks'):
+                    plan.summarize(args)
 
     def test_buildinfo_static_environment_is_read_not_executed(self):
         command = '/bin/bash -c ' + __import__('shlex').quote(

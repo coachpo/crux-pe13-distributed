@@ -43,6 +43,7 @@ class CloudAssembleTests(unittest.TestCase):
             'source_run': '41677764699', 'source_manifest_sha256': self.manifest_sha,
             'plan_sha256': 'c' * 64, 'graph_index': {'bytes': 300, 'sha256': 'd' * 64},
             'source_root': '/src', 'out_root': str(self.out), 'waves': self.waves,
+            'schedule_policy': cloud_assemble.cloud_schedule.load_policy(),
             'tasks': {}, 'assembly_exports': {},
             'frontend': {
                 'graph_receipt': {'status': 'success', 'build_number': '2026110303',
@@ -75,7 +76,7 @@ class CloudAssembleTests(unittest.TestCase):
                 index = self.ids.index(task_id)
                 dependencies = []
                 self.context['tasks'][task_id] = {
-                    'id': task_id, 'wave': wave_index, 'depends_on': dependencies,
+                    'id': task_id, 'wave': wave_index, 'category': 'other', 'depends_on': dependencies,
                     'manifest_sha256': f'{index + 1:064x}',
                     'archive': task_id + '.tar.zst', 'archive_bytes': 100,
                     'archive_sha256': f'{index + 1:064x}',
@@ -186,8 +187,7 @@ class CloudAssembleTests(unittest.TestCase):
 
     def test_final_wave_cannot_be_omitted_from_context(self):
         self.context['waves'] = self.waves[:8]
-        self.context['tasks'].pop(self.ids[-1])
-        with self.assertRaisesRegex(cloud_assemble.AssembleError, 'nine-wave'):
+        with self.assertRaisesRegex(cloud_assemble.AssembleError, 'actual-wave'):
             cloud_assemble.validate_context(self.context, self.manifest_path)
 
     def test_final_wave_receipt_must_match_this_execution(self):

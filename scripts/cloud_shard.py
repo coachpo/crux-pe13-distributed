@@ -398,7 +398,11 @@ def integrate(args):
         current = graph.Graph(pruned)
         shards = output / 'shards'
         print(json.dumps({'phase': 'slice', 'status': 'starting'}), flush=True)
-        plan = current.shard(TARGETS, shards, args.max_actions, args.max_parallel, out_root=out_root)
+        from cloud_schedule import load_policy, validate_plan
+        partition = load_policy(Path(args.partition_profile))
+        plan = current.shard(TARGETS, shards, args.max_actions, args.max_parallel, out_root=out_root,
+                             partition_profile=partition)
+        validate_plan(plan)
         file_stats = dict(current.meta['file_stats'])
         current.db.close()
         # The same source-derived platform PATH is part of every cold task's
@@ -462,6 +466,8 @@ def main():
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--max-actions', type=int, default=4000)
     parser.add_argument('--max-parallel', type=int, default=20)
+    parser.add_argument('--partition-profile', default=str(Path(__file__).resolve().parents[1] /
+                                                          'config/cloud-sharding-profile.json'))
     parser.add_argument('--runtime-profile', default=str(Path(__file__).resolve().parents[1] /
                                                        'config/cloud-runtime-profile.json'))
     args = parser.parse_args()

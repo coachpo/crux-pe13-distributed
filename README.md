@@ -62,7 +62,7 @@ is outside maintained Crux interfaces; delivery uses `crux_zip.py`, not that too
 | Stage | Maintained inputs and handoff |
 | --- | --- |
 | Prepare | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and audits the cold input closure without compressing a capsule for every shard. The registry binds the current plan and each audited input descriptor. |
-| Compile | `build-standard.yml` admits the current graph/index/registry and creates `cloud-build-context`. The existing nine waves resolve each task only after its actual predecessor outputs are known. A verified hit is adopted with original native provenance and a current-execution receipt; only a miss materializes a verified current capsule and runs native compilation. The summary validates every current receipt and its original native output binding. |
+| Compile | `build-standard.yml` admits the current graph/index/registry and creates `cloud-build-context`. Actual dependency waves, admitted against `config/cloud-sharding-profile.json`, resolve each task only after its real predecessor outputs are known. A verified hit is adopted with original native provenance and a current-execution receipt; only a miss materializes a verified current capsule and runs native compilation. The summary validates every declared workflow slot, current receipt and original native output binding. |
 | Assemble and verify | `assemble-standard.yml` consumes the context, `cloud-fresh-build-summary` and plan-owned same-run producer bindings. It verifies the four images and both identity-free FITs, writes `delivery-record.json` and `SHA256SUMS`, checks that the compressed system payload decodes to the native system image identity, then builds `installer/` and writes the unsigned ZIP payload (`zip-payload/`) with `scripts/crux_zip.py prepare`. `cloud-fresh-rom-<build_run>` is an Actions artifact, not a release; `zip-manifest` holds the payload's `crux-install.txt` for signing. |
 | Release | The `sign` job runs in the `install-signing` environment: it waits for the assembly run to finish, checks its lineage and the manifest identity and signs `crux-install.txt` with the `CRUX_INSTALL_SIGNING_KEY` secret. The `release` job verifies the whole assembly artifact, builds the ZIP, checks the signature against `keys/crux-b-install-2026-11-07.pub.pem` and stages, then publishes, the prerelease `crux-pe13-<build>-v<n>`: this assembly's tag, or the next free version of its build. Manual dispatches keep `preflight` (read only), `draft` and `publish`, and accept an offline signature in place of the CI one. |
 
@@ -83,6 +83,18 @@ nightly disables native adoption for the whole new chain without clearing any
 cache or disabling independently verified source-layer reuse. Kernel owners
 remain misses because the current kernel embeds date/user/hostname outside the
 declared Ninja inputs; W9 does not change that native behavior.
+
+The W10 partition profile isolates build-identity outputs, the atomic kernel
+owner and final image actions from ordinary compilation. Ordinary Java, native
+and helper actions may share a task to preserve real tool-bootstrap chains;
+their language counts remain visible in the plan. Units are ordered by stable
+primary output paths rather than SQLite edge IDs. The profile's wave capacity
+declares serial reusable-workflow slots in the **same** compile execution;
+unused slots perform no native work. Regenerate their declarations with
+`python3 scripts/cloud_schedule.py --write-workflow` after an intentional policy
+change. Missing, duplicate, empty, over-capacity or dependency-inverted actual
+waves fail admission; no cross-run controller or dependency-export filtering
+is used.
 
 Only a typed compile/assembly/preflight content-validation failure after actual
 reuse qualifies for one same-pin cold retry. Transport, signing, publication and
