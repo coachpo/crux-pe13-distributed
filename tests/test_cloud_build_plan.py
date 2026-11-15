@@ -64,7 +64,7 @@ class GraphAdmissionTests(unittest.TestCase):
 
 
 class BuildPlanTests(unittest.TestCase):
-    def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 1, 1)):
+    def inputs(self, counts=(13, 3, 7, 6, 5, 2, 2, 2)):
         waves, capsules, inventory = [], [], {}
         prior = []
         for wave, count in enumerate(counts):
@@ -90,7 +90,7 @@ class BuildPlanTests(unittest.TestCase):
 
     def test_admits_exact_inventory_and_prior_wave_dependencies(self):
         waves, tasks = plan.admit_inputs(*self.inputs(), 'plan')
-        self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 1, 1])
+        self.assertEqual(list(map(len, waves)), [13, 3, 7, 6, 5, 2, 2, 2])
         self.assertEqual(len(tasks), 40)
         self.assertEqual(tasks['w001-s000']['depends_on'], ['w000-s000'])
         self.assertEqual(tasks['w001-s000']['category'], 'other')
@@ -117,7 +117,7 @@ class BuildPlanTests(unittest.TestCase):
             plan.admit_inputs(*args, 'plan')
 
     def test_task_count_comes_from_the_preparation_registry(self):
-        waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 1, 1)), 'plan')
+        waves, tasks = plan.admit_inputs(*self.inputs((13, 3, 7, 6, 5, 3, 2, 2)), 'plan')
         self.assertEqual(len(tasks), 41)
         args = self.inputs()
         args[0]['shard_count'] = 41
@@ -143,7 +143,8 @@ class BuildPlanTests(unittest.TestCase):
 
     def test_final_wave_cannot_depend_on_uncompleted_task(self):
         args = self.inputs()
-        args[3]['waves'][8][0]['depends_on'] = ['w008-s000']
+        last = args[3]['waves'][-1][0]
+        last['depends_on'] = [last['id']]
         with self.assertRaisesRegex(ValueError, 'same wave'):
             plan.admit_inputs(*args, 'plan')
 

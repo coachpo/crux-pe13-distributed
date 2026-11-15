@@ -28,21 +28,22 @@ def sha(data):
 
 def valid_summary():
     producers = []
-    for wave in range(9):
-        count = 5 if wave < 4 else 4
-        for shard in range(count):
+    policy = source.cloud_schedule.load_policy()
+    for wave in range(policy['wave_capacity']):
+        for shard in range(5):
             ident = f"w{wave:03}-s{shard:03}"
             producers.append({"id": ident, "run_id": COMPILE_RUN,
                               "artifact": "shard-" + ident,
                               "expected_worker_commit": WORKER,
                               "expected_manifest_sha256": "c" * 64})
-    return {"schema_version": 1, "status": "success", "task_count": 40, "execution_id": COMPILE_RUN,
+    return {"schema_version": 1, "status": "success", "task_count": len(producers), "execution_id": COMPILE_RUN,
             "worker_commit": WORKER,
             "fresh_build": {"execution_id": COMPILE_RUN, "pack_run": "1", "shard_run": "2",
                             "plan_sha256": "d" * 64, "source_manifest_sha256": "e" * 64},
             "producers": producers,
-            "waves": [[p['id'] for p in producers if int(p['id'][1:4]) == wave] for wave in range(9)],
-            "schedule_policy": source.cloud_schedule.load_policy()}
+            "waves": [[p['id'] for p in producers if int(p['id'][1:4]) == wave]
+                      for wave in range(policy['wave_capacity'])],
+            "schedule_policy": policy}
 
 
 def make_artifact(producers, missing=None, bad_sum=False, bad_source=False, altered_asset=False,
@@ -362,7 +363,7 @@ class ReleaseSourceTests(unittest.TestCase):
                                                {'head_sha': WORKER}, BUILD)
 
         partial = json.loads(json.dumps(summary))
-        partial['reuse'].pop('w008-s000')
+        partial['reuse'].pop(summary['waves'][-1][0])
         with self.assertRaisesRegex(source.SourceError, 'does not cover every'):
             source._assembly_producer_bindings(context, partial, COMPILE_RUN,
                                                {'head_sha': WORKER}, BUILD)
@@ -435,7 +436,8 @@ class ReleaseSourceTests(unittest.TestCase):
             self.invoke(mutate_summary=lambda summary: summary["producers"].pop())
 
         def drop_last_wave(summary):
-            summary["producers"] = [p for p in summary["producers"] if not p["id"].startswith("w008-")]
+            last = set(summary['waves'][-1])
+            summary["producers"] = [p for p in summary["producers"] if p["id"] not in last]
             summary["task_count"] = len(summary["producers"])
         with self.assertRaisesRegex(source.SourceError, "every declared actual-wave task"):
             self.invoke(mutate_summary=drop_last_wave)

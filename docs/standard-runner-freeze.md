@@ -489,6 +489,9 @@ shard manifest digests, unique output owners, frontend identity, product namespa
 and kernel exports. The shard count follows the graph. W10's
 `config/cloud-sharding-profile.json` isolates identity, kernel and image owners
 while preserving complete native actions, atomic groups and producer exports.
+Image packaging includes the exact recovery resource archive, vendor installed
+file listing (text/JSON co-outputs) and recovery-from-boot patch actions, so their
+real image dependencies stay local rather than creating ordinary-work wave fences.
 Every actual task occurs exactly once, depends only on completed earlier waves,
 and fits the declared same-execution workflow slots. Extra slots are inactive,
 not empty admitted waves; the summary requires every declared slot to succeed

@@ -85,7 +85,10 @@ remain misses because the current kernel embeds date/user/hostname outside the
 declared Ninja inputs; W9 does not change that native behavior.
 
 The W10 partition profile isolates build-identity outputs, the atomic kernel
-owner and final image actions from ordinary compilation. Ordinary Java, native
+owner and final image packaging from ordinary compilation. Exact recovery-resource,
+installed-files and recovery-patch outputs keep those packaging helpers with
+their image dependency chain; the installed-files text/JSON co-outputs remain one
+native action. Ordinary Java, native
 and helper actions may share a task to preserve real tool-bootstrap chains;
 their language counts remain visible in the plan. Units are ordered by stable
 primary output paths rather than SQLite edge IDs. The profile's wave capacity

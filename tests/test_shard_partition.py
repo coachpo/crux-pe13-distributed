@@ -132,6 +132,44 @@ class PartitionTests(unittest.TestCase):
                          [[[native], [java]]])
         self.assertEqual([job['category'] for job in plan['waves'][0]], ['other', 'other'])
 
+    def test_image_packaging_chain_keeps_helpers_and_listing_cooutputs_local(self):
+        product = self.out / 'target/product/crux'
+        boot = str(product / 'boot.img')
+        recovery = str(product / 'recovery.img')
+        resources = str(product / 'vendor/etc/recovery-resource.dat')
+        listing = str(product / 'installed-files-vendor.txt')
+        listing_json = str(product / 'installed-files-vendor.json')
+        patch = str(product / 'obj/PACKAGING/recovery_patch_intermediates/recovery_from_boot.p')
+        vendor = str(product / 'vendor.img')
+        ninja = self.root / 'packaging.ninja'
+        ninja.write_text('rule native\n  command = /usr/bin/clang -c $in -o $out\n'
+                         'rule pack\n  command = package $in -o $out\n'
+                         f'build {self.library}: native source.c\n'
+                         f'build {boot}: pack {self.library}\n'
+                         f'build {recovery}: pack {boot}\n'
+                         f'build {resources}: pack {recovery}\n'
+                         f'build {listing} {listing_json}: pack {resources}\n'
+                         f'build {patch}: pack {boot} {recovery}\n'
+                         f'build {vendor}: pack {listing} {listing_json} {patch}\n')
+        database = self.root / 'packaging.sqlite'
+        graph.index_graph(ninja, self.source, database)
+        current = graph.Graph(database)
+        self.addCleanup(current.db.close)
+        destination = self.root / 'packaging-plan'
+        plan = current.shard([boot, recovery, vendor], destination, 8, 20,
+                             out_root=self.out, partition_profile=self.policy)
+        self.assertEqual([len(wave) for wave in plan['waves']], [1, 1])
+        ordinary, images = plan['waves'][0][0], plan['waves'][1][0]
+        self.assertEqual(ordinary['targets'], [self.library])
+        self.assertEqual(images['category'], 'image')
+        self.assertEqual(images['action_count'], 6)
+        self.assertEqual(set(images['targets']), {boot, recovery, resources, listing, patch, vendor})
+        self.assertEqual(images['depends_on'], [ordinary['id']])
+        manifest = json.loads((destination / images['manifest']).read_text())
+        listing_edge = next(edge for edge in manifest['edges'] if listing in edge['outputs'])
+        self.assertEqual(set(listing_edge['outputs']), {listing, listing_json})
+        self.assertEqual(set(plan['terminal_outputs']), {boot, recovery, vendor})
+
 
 if __name__ == '__main__':
     unittest.main()

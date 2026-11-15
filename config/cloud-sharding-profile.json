@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "version": "w10-1",
-  "wave_capacity": 10,
+  "wave_capacity": 8,
   "max_actions": 4000,
   "max_parallel": 20,
   "isolate_categories": ["identity", "kernel", "image"],
@@ -24,7 +24,10 @@
     "${OUT}/target/product/crux/vendor.img",
     "${OUT}/target/product/crux/ramdisk.img",
     "${OUT}/target/product/crux/ramdisk-recovery.img",
-    "${OUT}/target/product/crux/dtbo.img"
+    "${OUT}/target/product/crux/dtbo.img",
+    "${OUT}/target/product/crux/vendor/etc/recovery-resource.dat",
+    "${OUT}/target/product/crux/installed-files-vendor.txt",
+    "${OUT}/target/product/crux/obj/PACKAGING/recovery_patch_intermediates/recovery_from_boot.p"
   ],
   "java_tools": ["java", "javac", "soong_javac_wrapper", "d8", "r8", "turbine", "metalava"],
   "native_tools": ["clang", "clang++", "gcc", "g++", "cc", "c++", "rustc"]

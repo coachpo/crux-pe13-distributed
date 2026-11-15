@@ -30,7 +30,7 @@ class CloudAssembleTests(unittest.TestCase):
         self.kernel = self.product / 'obj/KERNEL_OBJ'
         self.qcom = self.kernel / 'arch/arm64/boot/dts/qcom'
         self.ids = [f'task-{index:02d}' for index in range(40)]
-        sizes = (13, 3, 7, 6, 5, 2, 2, 1, 1)
+        sizes = (13, 3, 7, 6, 5, 2, 2, 2)
         self.waves, cursor = [], 0
         for size in sizes:
             self.waves.append(self.ids[cursor:cursor + size])
@@ -186,7 +186,7 @@ class CloudAssembleTests(unittest.TestCase):
         self.assertTrue(dependency_root.is_dir())
 
     def test_final_wave_cannot_be_omitted_from_context(self):
-        self.context['waves'] = self.waves[:8]
+        self.context['waves'] = self.waves[:-1]
         with self.assertRaisesRegex(cloud_assemble.AssembleError, 'actual-wave'):
             cloud_assemble.validate_context(self.context, self.manifest_path)
 
