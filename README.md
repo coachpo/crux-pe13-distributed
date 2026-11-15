@@ -25,9 +25,12 @@ chain. Build identities and upstream run provenance are recorded with the
 not maintained as a second mutable baseline in this overview.
 The entire path uses public-repository standard `ubuntu-22.04` runners.
 
-W9 native-shard reuse is being integrated; hosted acceptance is pending. The
-content/admission rules below describe that implementation, not proof of a cache
-hit or a newly accepted Release. W10 repartitioning and W11 ccache are not included.
+W9 native-shard reuse is implemented. Hosted cold and normal-reuse builds have
+passed signing/publication and downloaded-Release verification; the normal run
+actually adopted 11 of 40 tasks without packing or native compilation for those
+hits. A same-input forced-cold control built all 40 tasks, published and passed
+downloaded-Release verification. These are host/build/Release results,
+not device acceptance. W10 repartitioning and W11 ccache are not included.
 
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
 but does not start a duplicate while another chain is active. It allocates the
@@ -82,8 +85,8 @@ remain misses because the current kernel embeds date/user/hostname outside the
 declared Ninja inputs; W9 does not change that native behavior.
 
 Only a typed compile/assembly/preflight content-validation failure after actual
-reuse qualifies for one same-pin cold retry. Transport, signing and publication
-failures do not. Forced-cold executions cannot loop into another automatic retry.
+reuse qualifies for one same-pin cold retry. Transport, signing, publication and
+cancellation do not. Forced-cold executions cannot loop into another automatic retry.
 See the [operation guide](docs/standard-runner-freeze.md#w9-native-shard-content-reuse)
 for the acceptance boundary and input expiry rules.
 

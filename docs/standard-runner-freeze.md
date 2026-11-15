@@ -30,8 +30,11 @@ The stage controls below are for diagnosis/recovery, not a second normal build
 procedure. Do not dispatch a stage again when its automatic successor is already
 queued/running. Preserve matching build, source and execution-code identities.
 
-W9 is under integration; hosted cache-hit/miss, retry and signed Release
-acceptance are pending. To request a new chain without native output reuse:
+W9 native reuse is implemented. The hosted cold baseline and normal-reuse case
+passed full signing/publication and downloaded-Release verification. The same-input
+forced-cold control also published and passed downloaded-Release verification.
+This does not establish device acceptance or exercise an automatic failure retry.
+To request a new chain without native output reuse:
 
 ```sh
 gh workflow run nightly.yml --repo coachpo/crux-pe13-distributed --ref main \
@@ -136,12 +139,32 @@ typed compile/assembly/preflight **content-validation** failure that records
 actual reused tasks. It preserves admitted build/source/code inputs, marks the
 original compile execution and cannot retry an already cold execution again.
 Transport/API errors, key/signing failures and Release publication errors do not
-qualify. This is not a blanket nightly retry policy. Hosted acceptance must
-exercise the integrated retry boundary before it is marked verified.
+qualify; cancellation must not dispatch a replacement chain. This is not a blanket
+nightly retry policy. A manual forced-cold control is not evidence that an actual
+typed-failure retry occurred.
 
 Assembly, image/FIT gates, private snapshot checks, signing and installation
 contracts remain in force for built and adopted results. B's source, outputs,
 incremental cache, signing path and device-accepted rollback inputs are unchanged.
+
+### Observed hosted cases
+
+| Case | Compile result | Assembly / signing-publication | Downloaded-Release verification |
+| --- | --- | --- | --- |
+| Cold baseline, `2026111450-v1` | `43572079252`: 40 built, 0 reused | `43609334099` / `43610894818` | Passed |
+| Normal reuse, `2026111451-v1` | `43625161519`: 29 built, 11 reused | `43665642349` / `43667203023` | Passed |
+| Same-input forced-cold control, `2026111451-v2` | `43668750532`: 40 built, 0 reused | `43704189232` / `43705477252` | Passed |
+
+The normal and forced-cold cases use the same admitted source/graph/build epoch;
+their compile contexts differ only in execution identity and the force-cold flag.
+The normal case's 11 adopted tasks actually skipped source mounting, cold-capsule
+packing and native compilation. Code is `df115ee`; baseline source-locking commit
+is `b27c6a0` and the normal/control source-locking commit is `68d5b3e`. These cases do
+not promise a fixed hit count for future source, host or dependency content.
+Current baseline/asset identities and retained evidence belong to the workspace
+[index](../../docs/README.md) and [W9 record](../../docs/pe13-w9-shard-reuse-execution-2026-11-13.md),
+not a new device or rollback identity. No B cache, recovery input or fork was
+modified, and these validations do not authorize old artifact/Release cleanup.
 
 ## 1. Generate a fresh graph
 
@@ -338,8 +361,13 @@ gh run download RUN_ID --repo coachpo/crux-pe13-distributed \
 Use `--name` to download only the artifact needed; source-layer artifacts can
 be very large.
 
-Source restoration lists a run's artifacts once and downloads by artifact ID;
-ZIP bodies stream to disk in bounded chunks. Preparation artifact reads wait
+Source restoration enumerates a run's artifacts and downloads by artifact ID.
+Offset pagination can overlap while peer jobs upload: changing totals or repeated
+identical observations of one ID cause the whole enumeration to be re-listed.
+The retry budget is bounded; conflicting metadata for one ID or distinct IDs
+sharing an unexpired name still fail immediately. The loader never selects the
+newest same-name artifact to hide ambiguity. ZIP bodies stream to disk in bounded
+chunks. Preparation artifact reads wait
 until the server's reset time on a primary API rate limit, then retry without
 skipping receipt or content checks. This matters for the parallel input audits:
 GitHub documents a normal `GITHUB_TOKEN` budget of 1,000 REST requests per hour
@@ -502,6 +530,10 @@ controlled recovery. Do not pass local ROM output or bypass source/receipt gates
 For a reviewed forced-cold compile from still-valid preparation, add
 `-f force_cold=true` to the compile dispatch. Do not manually set `cold_retry_of`;
 that provenance field belongs to the once-only automatic content-failure path.
+This control re-admits the same pack/shard runs, build identity and graph epoch;
+it does not allocate another source pin, marker or freeze timestamp. All required
+artifacts must still exist and their execution commit must still match. If those
+conditions no longer hold, start a new full chain instead of substituting inputs.
 
 Inspect the published Release's source provenance and required assets. Hosted
 acceptance is not device acceptance, UI/function testing or a rollback change.
