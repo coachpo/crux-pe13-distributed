@@ -170,6 +170,31 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(set(listing_edge['outputs']), {listing, listing_json})
         self.assertEqual(set(plan['terminal_outputs']), {boot, recovery, vendor})
 
+    def test_system_filesystem_builder_and_listing_are_image_work_not_ordinary(self):
+        product = self.out / 'target/product/crux'
+        intermediate = str(product / 'obj/PACKAGING/systemimage_intermediates/system.img')
+        listing = str(product / 'installed-files.txt')
+        listing_json = str(product / 'installed-files.json')
+        final = str(product / 'system.img')
+        ninja = self.root / 'system-image.ninja'
+        ninja.write_text('rule native\n  command = clang -c $in -o $out\n'
+                         'rule pack\n  command = package $in -o $out\n'
+                         f'build {self.library}: native source.c\n'
+                         f'build {listing} {listing_json}: pack {self.library}\n'
+                         f'build {intermediate}: pack {self.library} {listing}\n'
+                         f'build {final}: pack {intermediate}\n')
+        database = self.root / 'system-image.sqlite'
+        graph.index_graph(ninja, self.source, database)
+        current = graph.Graph(database)
+        self.addCleanup(current.db.close)
+        plan = current.shard([final], self.root / 'system-image-plan', 8, 20, export=False,
+                             out_root=self.out, partition_profile=self.policy)
+        self.assertEqual([len(wave) for wave in plan['waves']], [1, 1])
+        ordinary, image = plan['waves'][0][0], plan['waves'][1][0]
+        self.assertEqual(ordinary['targets'], [self.library])
+        self.assertEqual(image['category'], 'image')
+        self.assertEqual(set(image['targets']), {listing, intermediate, final})
+
 
 if __name__ == '__main__':
     unittest.main()

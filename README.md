@@ -99,6 +99,14 @@ change. Missing, duplicate, empty, over-capacity or dependency-inverted actual
 waves fail admission; no cross-run controller or dependency-export filtering
 is used.
 
+Recovery tree assembly, CPIO, compressed ramdisk, Recovery image and resource
+archive form one convex native packing unit: its generated resource tree never
+needs a transitive export. The kernel trio stays a separate atomic unit. Exact
+filesystem construction (including the system-image intermediate) and installed
+file-list actions are image work, not ordinary compilation. The existing full
+direct-producer co-output/directory transport and dependency-content hashing are
+unchanged.
+
 Only a typed compile/assembly/preflight content-validation failure after actual
 reuse qualifies for one same-pin cold retry. Transport, signing, publication and
 cancellation do not. Forced-cold executions cannot loop into another automatic retry.

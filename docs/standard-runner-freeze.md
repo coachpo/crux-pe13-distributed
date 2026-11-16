@@ -492,6 +492,11 @@ while preserving complete native actions, atomic groups and producer exports.
 Image packaging includes the exact recovery resource archive, vendor installed
 file listing (text/JSON co-outputs) and recovery-from-boot patch actions, so their
 real image dependencies stay local rather than creating ordinary-work wave fences.
+The Recovery tree stamp, CPIO, compressed ramdisk, Recovery image and resource
+archive are one existing-format atomic group, preserving the generated tree's
+local lifetime. This adds no implicit dependency edge or transitive-directory
+export. Real filesystem constructors and installed-file lists, including the
+system-image intermediate rather than only its final copy, use the image role.
 Every actual task occurs exactly once, depends only on completed earlier waves,
 and fits the declared same-execution workflow slots. Extra slots are inactive,
 not empty admitted waves; the summary requires every declared slot to succeed

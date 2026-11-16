@@ -27,7 +27,13 @@
     "${OUT}/target/product/crux/dtbo.img",
     "${OUT}/target/product/crux/vendor/etc/recovery-resource.dat",
     "${OUT}/target/product/crux/installed-files-vendor.txt",
-    "${OUT}/target/product/crux/obj/PACKAGING/recovery_patch_intermediates/recovery_from_boot.p"
+    "${OUT}/target/product/crux/obj/PACKAGING/recovery_patch_intermediates/recovery_from_boot.p",
+    "${OUT}/target/product/crux/obj/PACKAGING/recovery_intermediates/ramdisk_files-timestamp",
+    "${OUT}/target/product/crux/ramdisk-recovery.cpio",
+    "${OUT}/target/product/crux/obj/PACKAGING/systemimage_intermediates/system.img",
+    "${OUT}/target/product/crux/installed-files.txt",
+    "${OUT}/target/product/crux/installed-files-root.txt",
+    "${OUT}/target/product/crux/installed-files-ramdisk.txt"
   ],
   "java_tools": ["java", "javac", "soong_javac_wrapper", "d8", "r8", "turbine", "metalava"],
   "native_tools": ["clang", "clang++", "gcc", "g++", "cc", "c++", "rustc"]

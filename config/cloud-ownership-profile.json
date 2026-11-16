@@ -55,6 +55,13 @@
       "${OUT}/target/product/crux/obj/KERNEL_OBJ",
       "${OUT}/target/product/crux/obj/KERNEL_OBJ/.config",
       "${OUT}/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb"
+    ],
+    [
+      "${OUT}/target/product/crux/obj/PACKAGING/recovery_intermediates/ramdisk_files-timestamp",
+      "${OUT}/target/product/crux/ramdisk-recovery.cpio",
+      "${OUT}/target/product/crux/ramdisk-recovery.img",
+      "${OUT}/target/product/crux/recovery.img",
+      "${OUT}/target/product/crux/vendor/etc/recovery-resource.dat"
     ]
   ],
   "group_export_dirs": [
