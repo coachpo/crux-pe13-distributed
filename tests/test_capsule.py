@@ -1325,6 +1325,45 @@ class CapsuleTests(unittest.TestCase):
         self.assertIn(str(uses).lstrip("/"), names)
         self.assertEqual(tuple(collector.aidl_search_paths), (source_root,))
 
+    def test_aidl_search_roots_keep_first_seen_order_and_symlink_provenance(self):
+        first_root, second_root, alias = [self.source / name
+                                          for name in ('z-root', 'a-root', 'alias-root')]
+        uses = first_root / 'android/example/Uses.aidl'
+        sibling = first_root / 'android/example/Sibling.aidl'
+        first_type = first_root / 'android/dep/Type.aidl'
+        second_type = second_root / 'android/dep/Type.aidl'
+        self.write(uses, 'package android.example;\ninterface Uses { android.dep.Type value(); }\n')
+        self.write(sibling, 'package android.example;\nparcelable Sibling;\n')
+        for path in (first_type, second_type):
+            self.write(path, 'package android.dep;\nparcelable Type;\n')
+        alias.symlink_to(first_root, target_is_directory=True)
+        collector = capsule.Collector(self.manifest, self.source, self.out)
+        roots = [first_root, second_root, first_root]
+        collector.aidl_input(uses, roots, actual_frontend=False)
+        self.assertFalse(collector.aidl_frontend_inputs)
+        self.assertEqual(tuple(collector.aidl_search_paths), ())
+        # A cache hit must still mark the real frontend and register its roots.
+        collector.aidl_input(uses, roots, actual_frontend=True)
+        self.assertEqual(collector.aidl_frontend_inputs, {uses.resolve()})
+        self.assertEqual(tuple(collector.aidl_search_paths), (first_root, second_root))
+        alias_roots = [alias, second_root, first_root, alias]
+        collector.aidl_input(alias / 'android/example/Uses.aidl', alias_roots, actual_frontend=True)
+        self.assertEqual(tuple(collector.aidl_search_paths), (first_root, second_root, alias))
+        self.assertEqual(collector.aidl_qualified_type('android.dep.Type', [first_root, second_root]), first_type)
+        self.assertEqual(collector.aidl_qualified_type('android.dep.Type', [second_root, first_root]), second_type)
+        self.assertIn(sibling, collector.entries)
+        self.assertNotIn(second_type, collector.entries)
+        self.assertIn(alias, collector.entries)
+        self.assertTrue(any(reason.endswith(':symlink') for reason in collector.entries[alias]))
+        observed = lambda: ({path: set(reasons) for path, reasons in collector.entries.items()},
+                            set(collector.aidl_frontend_inputs), tuple(collector.aidl_search_paths),
+                            set(collector.external_roots), set(collector.system_tools))
+        before = observed()
+        collector.aidl_input(alias / 'android/example/Uses.aidl', alias_roots, actual_frontend=True)
+        self.assertEqual(observed(), before)
+        collector.aidl_input(self.source / 'missing.aidl', [self.source / 'unseen-root'], actual_frontend=True)
+        self.assertEqual(observed(), before)
+
     def test_tablegen_include_closure_follows_declared_search_paths(self):
         self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",
                    'include "llvm/Option/Record.td"\n')

@@ -970,7 +970,9 @@ class Collector:
         self.aidl_declared_package_cache = {}
         self.aidl_type_source_cache = {}
         self.aidl_frontend_inputs = set()
-        self.aidl_search_paths = []
+        # Preserve first-seen fallback order without repeated linear Path
+        # comparisons when recursive AIDL scans register the same roots.
+        self.aidl_search_paths = {}
         self.rust_scan_cache = set()
         self.r8_source_texts = {}
         self.compiler_search_paths = []
@@ -1711,8 +1713,7 @@ class Collector:
         if actual_frontend:
             self.aidl_frontend_inputs.add(path.resolve())
             for directory in include_paths:
-                if directory not in self.aidl_search_paths:
-                    self.aidl_search_paths.append(directory)
+                self.aidl_search_paths.setdefault(directory, None)
         key = (path.resolve(), tuple(include_paths))
         if key in self.aidl_scan_cache:
             return
