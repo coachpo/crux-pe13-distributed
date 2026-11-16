@@ -1607,8 +1607,9 @@ class Collector:
             if dependency is None:
                 continue
             self.add(dependency, "compiler-include:" + str(path), required=False)
-            if dependency.suffix in COMPILER_SCAN_SUFFIXES:
-                self.compiler_input(dependency, include_paths, defines)
+            # Once included, a file is preprocessor input regardless of its
+            # suffix (for example Eigen/Core or a generated-name fragment).
+            self.compiler_input(dependency, include_paths, defines)
 
     def tablegen_input(self, value, include_paths):
         """Follow the TableGen include search llvm-tblgen performs.

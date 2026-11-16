@@ -1173,6 +1173,35 @@ class CapsuleTests(unittest.TestCase):
         self.assertIn(str(self.source / "lib/body.c").lstrip("/"), names)
         self.assertNotIn(str(self.source / "other/body.c").lstrip("/"), names)
 
+    def test_compiler_nested_includes_do_not_depend_on_filename_extensions(self):
+        unit = self.source / 'compile/unit.cpp'
+        extensionless = self.source / 'private/Entry'
+        fragment = self.source / 'private/bits/config.fragment'
+        leaf = self.source / 'private/Leaf.h'
+        unrelated = self.source / 'private/Unrelated.h'
+        generated = self.out / 'generated.fragment'
+        hidden = self.out / 'private-must-not-read.h'
+        self.write(unit, '#include "../private/Entry"\n')
+        self.write(extensionless, '#include "bits/config.fragment"\n#include <generated.fragment>\n')
+        self.write(fragment, '#include "../Leaf.h"\n')
+        self.write(leaf, '#include "Entry"\n')
+        self.write(unrelated, '#define NOT_CONSUMED 1\n')
+        self.write(generated, '#include "private-must-not-read.h"\n')
+        self.write(hidden, '#define GENERATED_CONTENT 1\n')
+        self.manifest['leaf_inputs'] = [str(unit)]
+        self.manifest['external_inputs'] = [str(generated)]
+        self.manifest['commands'] = ['clang++ -Icompile -I' + str(self.out)
+                                     + ' -c compile/unit.cpp -o ' + str(self.out / 'unit.o')]
+        _, metadata, archive = self.collect()
+        names = archive.getnames()
+        for path in (unit, extensionless, fragment, leaf):
+            self.assertIn(str(path).lstrip('/'), names)
+        self.assertEqual(sum(row['path'] == str(extensionless) for row in metadata['files']), 1)
+        self.assertNotIn(str(unrelated).lstrip('/'), names)
+        self.assertNotIn(str(generated).lstrip('/'), names)
+        self.assertNotIn(str(hidden).lstrip('/'), names)
+        self.assertEqual(metadata['allowed_generated_inputs'], [])
+
     def test_rust_module_closure_follows_mod_path_and_inline_include(self):
         self.write(self.source / "crate/src/lib.rs",
                    "pub mod buf;\nmod fmt;\ninclude!(\"generated.rs\");\n"
