@@ -62,6 +62,13 @@ private profile keeps Rosetta preopt/profile disabled. Historical source forks
 remain available for their retained build pins. Android target-files re-signing
 is outside maintained Crux interfaces; delivery uses `crux_zip.py`, not that tool.
 
+Before cloud acceptance of code changes, run the
+[isolated local cold preflight](local_replay/README.md): targeted graph/contract
+checks, real cold high-risk tasks and complete unsigned packaging, expanding
+the predecessor chain when needed. This maintenance check is not an unattended
+nightly runtime dependency. A remains independent of the Mac and OrbStack;
+LOCAL diagnostic outputs must never become A build or publication inputs.
+
 | Stage | Maintained inputs and handoff |
 | --- | --- |
 | Prepare | `freeze-standard.yml` uses `config/cloud-source-manifest.json` and its pinned projects, patches and toolchains to create a fresh Soong/Kati graph. `prepare-standard.yml` indexes, slices and audits the cold input closure without compressing a capsule for every shard. The registry binds the current plan and each audited input descriptor. |

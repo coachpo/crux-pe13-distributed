@@ -11,6 +11,17 @@ used as an implicit packaging source selection. FIT packaging requires the
 explicit source-declarative boot contract; binary reference DTBs remain only
 independent equivalence fixtures. The A/B main paths are unchanged.
 
+## Before cloud acceptance of code changes
+
+First complete the [isolated local cold preflight](../local_replay/README.md),
+including targeted graph/contract checks, high-risk real cold tasks and the
+complete unsigned packaging chain. Use fresh SOURCE/OUT per task and only its
+verified capsule and complete declared predecessor artifacts; never B's active
+source/OUT/cache or an ambient full-source mount during native execution.
+LOCAL receipts and outputs are diagnostic only, not A publication inputs.
+This engineering-change check does not add a local handoff or approval gate to
+the scheduled nightly chain, which remains independently unattended.
+
 ## Normal entry
 
 The scheduled nightly checks for changes. To request a complete build even with
