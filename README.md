@@ -25,12 +25,15 @@ chain. Build identities and upstream run provenance are recorded with the
 not maintained as a second mutable baseline in this overview.
 The entire path uses public-repository standard `ubuntu-22.04` runners.
 
-W9 native-shard reuse is implemented. Hosted cold and normal-reuse builds have
-passed signing/publication and downloaded-Release verification; the normal run
-actually adopted 11 of 40 tasks without packing or native compilation for those
-hits. A same-input forced-cold control built all 40 tasks, published and passed
-downloaded-Release verification. These are host/build/Release results,
-not device acceptance. W10 repartitioning and W11 ccache are not included.
+W10 output/tool-role partitioning and native-shard reuse are implemented. The
+46-task, eight-wave plan passed signed cold-seed, normal-reuse and same-input
+forced-cold cloud builds, including downloaded-Release verification. The normal
+run adopted24 tasks without packing or native compilation for those hits; the
+control built all46. Exact source/graph/runtime and full predecessor-output
+contracts still govern every adoption and miss. Residual ordinary consumers
+still rebuild, so a hit count does not establish the performance objective.
+These are [host/build/Release results](https://github.com/coachpo/crux-pe13-distributed/releases),
+not device acceptance. W11/ccache is not included.
 
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
 but does not start a duplicate while another chain is active. It allocates the
