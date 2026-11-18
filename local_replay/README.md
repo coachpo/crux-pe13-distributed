@@ -26,6 +26,8 @@ The runtime records its immutable Docker image ID, architecture, kernel,
 package/tool/runtime identity and reference inputs. AMD64 execution on an ARM64
 OrbStack host is an emulated diagnostic, **not native GitHub-runner parity**.
 Do not apply Rosetta/B-only compatibility patches and label the result A-equal.
+The image supplies Jammy's headless Java 11 for R8 launchers that resolve
+`java` from the worker's OS PATH; it does not replace the graph's pinned JDK.
 
 ## Frozen Actions input replay
 
@@ -61,13 +63,53 @@ extra generated-input exemptions are introduced.
 
 ## Candidate preparation before cloud validation
 
-Packing is a separate phase from native execution. In a dedicated preparation
-VM/container, use the current source verification, index/shard and
-`cloud_pack.audit_shard` / `cloud_pack.pack_shard` APIs against the same pinned
-source/toolchain. A full source snapshot may be available **only in that
-preparation phase**; never restore a capsule into B or mount that snapshot in a
-native replay container. The runtime entry does not fetch or regenerate source,
-Ninja graphs or capsules and cannot make an old capsule represent new code.
+See the [1653 changed-slice acceptance](candidate-acceptance-2026-11-18.md) for
+the executed scope and the local ART/dexpreopt limitation.
+
+Packing is a separate phase from native execution. Use `candidate.py prepare`
+with these already downloaded, verified inputs in one directory:
+
+| Path under `--inputs` | Input |
+| --- | --- |
+| `source-manifest.json` | Exact source lock of the freeze build, not the checkout's current lock unless it matches |
+| `graph/` | Successful freeze's extracted `cloud-graph-<build>` artifact, including `graph-out.tar.zst` and `source/` receipts |
+| `index/` | Extracted `cloud-index-<build>` artifact for the same freeze, including `index.sqlite.zst` |
+| `source/cloud-source-*/` | Every extracted layer in the source run named by `graph/source/source-mount.json` |
+
+Use the successful freeze and the canonical index built from it. An older pruned
+index, a failed freeze graph, or a source layer from another lock is not a
+substitute. Download outside the preparation container; the entry does not
+take GitHub credentials. The current parser must match the canonical index's
+parser receipt. A parser change requires a fresh canonical index for the same
+verified graph, not editing the existing receipt.
+
+```sh
+python3 local_replay/replay.py image
+docker --context orbstack build --platform linux/amd64 \
+  --file local_replay/candidate.Dockerfile --tag crux-local-candidate:jammy local_replay
+python3 local_replay/candidate.py prepare \
+  --inputs /absolute/verified-inputs --build-number 2026111653 \
+  --output /absolute/new-candidate
+```
+
+Preparation runs networkless in a new AMD64 OrbStack container, with downloaded
+inputs and a frozen code snapshot mounted read-only. It verifies the layer
+receipts and parts, graph and canonical index; then uses the current sharder and
+the existing audit and pack APIs. It writes `context.json` only after packing
+passes against the independent audits. `preparation.json` lists the selected
+capsules in dependency order: all required assembly producers and their
+transitive predecessors, plus any extra task IDs requested with `--task` and
+their predecessors. The full context and separate audits cover every new slice;
+`capsules/<id>/` holds the inputs to `replay.py prepare`. On a suitable machine,
+`--jobs <n>` runs independent audits and capsule packing in parallel.
+
+The full SOURCE and graph OUT exist **only in the preparation container**.
+Neither B's SOURCE/OUT/cache nor the preparation container's full tree is used
+by native replay. For a changed cut, run packed tasks in dependency order with
+`replay.py prepare` / `run`, passing each declared predecessor as
+`--dependency <id> local <result>/native`. Use the generated context, capsules
+and source manifest from the same preparation; the snapshot under
+`implementation/` has the matching execution bytes if the checkout changed.
 
 Locally prepared inputs use a distinct context, not invented GitHub run IDs:
 
@@ -143,4 +185,4 @@ staging object, **not an unsigned update format or an installable ZIP**; the
 result is marked `signed: false`, `installable: false`, and cannot be used as a
 production admission receipt or uploaded as an A input.
 
-Targeted checks: `python3 -m unittest tests.test_local_replay`.
+Targeted checks: `python3 -m unittest tests.test_local_candidate tests.test_local_replay`.

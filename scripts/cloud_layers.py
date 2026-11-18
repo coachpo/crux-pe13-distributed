@@ -207,6 +207,14 @@ def restore_layer(manifest_sha, layer, revisions, run_id, repository, staging, a
     if artifact.get('name') != 'cloud-' + name or artifact.get('expired'):
         raise ValueError('Selected GitHub artifact identity differs from requested layer: ' + name)
     _extract_artifact(artifact, directory, token, repository, opener, sleep, now)
+    image = staging / (name + '.sqfs')
+    receipt_path = assemble_layer(manifest_sha, layer, revisions, directory, image, consume_parts=True)
+    print(json.dumps({'layer': name, 'bytes': image.stat().st_size, 'restored': True}), flush=True)
+    return image, receipt_path
+
+
+def assemble_layer(manifest_sha, layer, revisions, directory, image, *, consume_parts=False):
+    name = layer['id']
     receipt_path = directory / 'layer.json'
     receipt = json.loads(receipt_path.read_text())
     if receipt['layer_id'] != name or receipt['manifest_sha256'] != manifest_sha:
@@ -218,20 +226,29 @@ def restore_layer(manifest_sha, layer, revisions, run_id, repository, staging, a
             or any(item['status'] not in successes or item['revision'] != revisions[item['path']]
                    for item in projects)):
         raise ValueError('Incomplete source layer: ' + name)
-    image = staging / (name + '.sqfs')
-    parts = directory / receipt['squashfs']['parts_directory']
+    def basename(value):
+        if not isinstance(value, str) or value in {'', '.', '..'} or Path(value).name != value:
+            raise ValueError('Invalid source layer part path: ' + str(value))
+        return value
+
+    parts = directory / basename(receipt['squashfs']['parts_directory'])
+    if parts.is_symlink():
+        raise ValueError('Source layer parts directory must not be a symlink: ' + str(parts))
     with image.open('xb') as output:
+        seen = set()
         for part in receipt['squashfs']['parts']:
-            source = parts / part['name']
-            if source.stat().st_size != part['size'] or digest(source) != part['sha256']:
+            source = parts / basename(part['name'])
+            if (source in seen or source.is_symlink() or not source.is_file()
+                    or source.stat().st_size != part['size'] or digest(source) != part['sha256']):
                 raise ValueError('Source image part failed identity check: ' + str(source))
+            seen.add(source)
             with source.open('rb') as stream:
                 shutil.copyfileobj(stream, output, 8 * 1024 * 1024)
-            source.unlink()
+            if consume_parts:
+                source.unlink()
     if image.stat().st_size != receipt['squashfs']['size']:
         raise ValueError('Reassembled source image has incorrect size: ' + name)
-    print(json.dumps({'layer': name, 'bytes': image.stat().st_size, 'restored': True}), flush=True)
-    return image, receipt_path
+    return receipt_path
 
 
 def main():

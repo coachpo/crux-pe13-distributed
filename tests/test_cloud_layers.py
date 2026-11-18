@@ -94,6 +94,28 @@ class CloudLayersTests(unittest.TestCase):
                                          {'build/soong': 'new'}, '123', 'owner/repo', root,
                                          {'id': 321, 'name': 'cloud-source-00'}, 'token')
 
+    def test_offline_assembly_preserves_verified_parts_and_rejects_changed_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            parts = root / 'layer.sqfs.parts'
+            parts.mkdir()
+            part = parts / 'part-00000'
+            part.write_bytes(b'layer')
+            (root / 'layer.json').write_text(json.dumps({
+                'layer_id': 'source-00', 'manifest_sha256': 'manifest',
+                'projects': [{'path': 'project', 'revision': 'rev', 'status': 'fetched-and-extracted'}],
+                'squashfs': {'parts_directory': parts.name, 'size': 5,
+                             'parts': [{'name': part.name, 'size': 5, 'sha256': layers.digest(part)}]},
+            }))
+            layer = {'id': 'source-00', 'projects': ['project']}
+            image = root / 'image'
+            layers.assemble_layer('manifest', layer, {'project': 'rev'}, root, image)
+            self.assertEqual(image.read_bytes(), b'layer')
+            self.assertEqual(part.read_bytes(), b'layer')
+            part.write_bytes(b'other')
+            with self.assertRaisesRegex(ValueError, 'part failed identity'):
+                layers.assemble_layer('manifest', layer, {'project': 'rev'}, root, root / 'retry')
+
     def test_inventory_enumerates_all_artifacts_in_one_request_for_one_page(self):
         calls = []
         payload = json.dumps({'total_count': 2, 'artifacts': [

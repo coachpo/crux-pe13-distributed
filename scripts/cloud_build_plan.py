@@ -199,13 +199,19 @@ def admit_inputs(registry, receipt, inventory, plan, plan_sha):
         raise ValueError('Source manifests differ')
     if registry['graph_index'] != {key: receipt['pruned_database'][key] for key in ('bytes', 'sha256')}:
         raise ValueError('Pruned graph identities differ')
-    if registry['plan_sha256'] != plan_sha or inventory['plan_sha256'] != plan_sha:
+    if registry['plan_sha256'] != plan_sha:
+        raise ValueError('Plan byte identity differs')
+    return admit_task_capsules(inventory, plan, plan_sha, registry['capsules'], registry['shard_count'])
+
+
+def admit_task_capsules(inventory, plan, plan_sha, rows, shard_count):
+    if inventory['plan_sha256'] != plan_sha:
         raise ValueError('Plan byte identity differs')
     _, waves = cloud_schedule.validate_plan(plan)
     ids = [task for wave in waves for task in wave]
-    capsules = {row['shard_id']: row for row in registry['capsules']}
-    if (len(capsules) != len(registry['capsules'])
-            or registry['shard_count'] != len(ids) or set(ids) != set(capsules)
+    capsules = {row['shard_id']: row for row in rows}
+    if (len(capsules) != len(rows)
+            or shard_count != len(ids) or set(ids) != set(capsules)
             or set(ids) != set(inventory['shards'])):
         raise ValueError('Expected the complete actual-wave inventory of the preparation registry')
     tasks, seen = {}, set()
@@ -273,6 +279,35 @@ def bootstrap(args):
         if not str(args.cold_retry_of).isdecimal():
             raise ValueError('Cold retry source must be a numeric execution ID')
         reuse_policy['cold_retry_of'] = str(args.cold_retry_of)
+    cloud_artifacts.download_artifacts(registry['graph_run'], repository, staging / 'graph',
+                                      name='cloud-graph-' + args.build_number)
+    cloud_artifacts.download_artifacts(registry['index_run'], repository, staging / 'index',
+                                      name='cloud-index-' + args.build_number)
+    graph_directory = staging / 'graph'
+    graph = admit_graph(graph_directory / 'graph/graph-receipt.json', read(staging / 'index/index-receipt.json'),
+                        registry, args.build_number)
+    source_manifest_path = Path(__file__).resolve().parents[1] / 'config/cloud-source-manifest.json'
+    context = {'execution_id': execution, 'worker_commit': commit, 'repository': repository,
+               'pack_run': args.pack_run, 'shard_run': args.shard_run,
+               **{key: registry[key] for key in ('graph_run', 'index_run', 'source_run')},
+               **compose_context(expanded / 'shards', plan, waves, tasks, receipt, source_manifest_path,
+                                 graph, read_frontend_scalars(graph_directory / 'graph-out.tar.zst'),
+                                 reuse_policy, registry['plan_sha256'])}
+    write(output / 'context.json', context)
+    print(json.dumps({'execution_id': execution, 'tasks': len(tasks), 'waves': list(map(len, waves))}))
+
+
+def read_frontend_scalars(archive):
+    from cloud_frontends import SCALAR_OUTPUTS
+    return {key: subprocess.run(['tar', '--zstd', '-xOf', str(archive), 'android-out/' + relative],
+                                check=True, capture_output=True).stdout.decode()
+            for key, relative in SCALAR_OUTPUTS}
+
+
+def compose_context(shards, plan, waves, tasks, receipt, source_manifest_path, graph, scalars,
+                    reuse_policy, plan_sha):
+    """Derive graph and runtime contracts without granting any execution identity."""
+    build_number, manifest_sha = receipt['build_number'], receipt['manifest_sha256']
     for task_id, task in tasks.items():
         descriptor = task.get('reuse_descriptor')
         if descriptor is not None and descriptor.get('execution_digest') != reuse_policy['execution_digest']:
@@ -280,7 +315,7 @@ def bootstrap(args):
     commands, branding, product_recipe, buildinfo = [], {}, None, None
     owners, task_commands, task_edges = {}, {}, {}
     for task in tasks.values():
-        manifest_path = expanded / 'shards' / task['id'] / 'manifest.json'
+        manifest_path = shards / task['id'] / 'manifest.json'
         if sha(manifest_path) != task['manifest_sha256']:
             raise ValueError('Shard manifest integrity differs: ' + task['id'])
         manifest = read(manifest_path)
@@ -307,27 +342,12 @@ def bootstrap(args):
     license_readers = admit_license_metadata_inputs(tasks, owners, task_edges, receipt['source_root'], receipt['out_root'])
     if buildinfo is None or len(branding) != 2:
         raise ValueError('Missing independent graph-derived build identity')
-    cloud_artifacts.download_artifacts(registry['graph_run'], repository, staging / 'graph',
-                                      name='cloud-graph-' + args.build_number)
-    cloud_artifacts.download_artifacts(registry['index_run'], repository, staging / 'index',
-                                      name='cloud-index-' + args.build_number)
-    graph_directory = staging / 'graph'
-    graph = admit_graph(graph_directory / 'graph/graph-receipt.json', read(staging / 'index/index-receipt.json'),
-                        registry, args.build_number)
-    scalars = {}
-    for key, relative in {'build_number': 'soong/build_number.txt', 'build_date': 'build_date.txt',
-                          'build_fingerprint': 'target/product/crux/build_fingerprint.txt',
-                          'build_thumbprint': 'target/product/crux/build_thumbprint.txt'}.items():
-        value = subprocess.run(['tar', '--zstd', '-xOf', str(graph_directory / 'graph-out.tar.zst'),
-                                'android-out/' + relative], check=True, capture_output=True).stdout.decode()
-        scalars[key] = value
-    if scalars['build_number'].strip() != args.build_number or scalars['build_fingerprint'].strip() != graph['build_fingerprint']:
+    if scalars['build_number'].strip() != build_number or scalars['build_fingerprint'].strip() != graph['build_fingerprint']:
         raise ValueError('Admitted frontend scalar identity differs')
     if (product_recipe is None or 'ro.product.build.' in product_recipe
             or any(path.endswith('/product.img') for path in plan['export_producers'])):
         raise ValueError('Product namespace absence requires a reviewed current graph policy')
-    source_manifest_path = Path(__file__).resolve().parents[1] / 'config/cloud-source-manifest.json'
-    if sha(source_manifest_path) != registry['source_manifest_sha256']:
+    if sha(source_manifest_path) != manifest_sha:
         raise ValueError('Source revision declaration differs from the admitted capsules')
     manifest = read(source_manifest_path)
     suffixes = ('/boot.img', '/recovery.img', '/system.img', '/vendor.img', '/ramdisk.img',
@@ -343,11 +363,10 @@ def bootstrap(args):
                    'arch/arm64/boot/dts/qcom/crux-sm8150-overlay.dtbo', 'include/config/kernel.release'):
         exports[kernel + '/' + member] = exports[kernel]
     buildinfo = {key: value.replace(receipt['out_root'], 'OUT') for key, value in buildinfo.items()}
-    context = {'schema_version': 1, 'execution_id': execution, 'worker_commit': commit,
-               'repository': repository, 'pack_run': args.pack_run, 'shard_run': args.shard_run,
+    context = {'schema_version': 1, 'build_number': build_number,
                'source_root': receipt['source_root'], 'out_root': receipt['out_root'],
-               **{key: registry[key] for key in ('build_number', 'graph_run', 'index_run', 'source_run',
-                    'source_manifest_sha256', 'plan_sha256', 'graph_index')},
+               'source_manifest_sha256': manifest_sha, 'plan_sha256': plan_sha,
+               'graph_index': {key: receipt['pruned_database'][key] for key in ('bytes', 'sha256')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
                'schedule_policy': plan['partition_policy'],
                'reuse_policy': reuse_policy,
@@ -362,15 +381,14 @@ def bootstrap(args):
                        'reason': 'The admitted current plan has no product image and its folded product property recipe omits the common ro.product.build namespace.',
                        'evidence': ['current plan export_producers', 'admitted system/product/etc/build.prop producer command',
                                     'build/make/core/sysprop.mk _skip_common_properties']}}},
-               'source_selection': {'schema_version': 1, 'build_number': args.build_number,
-                   'source_manifest_sha256': registry['source_manifest_sha256'],
+               'source_selection': {'schema_version': 1, 'build_number': build_number,
+                   'source_manifest_sha256': manifest_sha,
                    'projects': [{'path': p['path'], 'revision': p['revision']} for p in manifest['projects']]}}
     runtime = read(Path(__file__).resolve().parents[1] / 'config/standard-build-runtime.json')
     if runtime.get('schema_version') != 1:
         raise ValueError('Unsupported admitted build runtime policy')
     context['kernel_source_alias'] = runtime['kernel_source_alias']
-    write(output / 'context.json', context)
-    print(json.dumps({'execution_id': execution, 'tasks': len(tasks), 'waves': list(map(len, waves))}))
+    return context
 
 
 def validate_receipt(context, receipt, task_id):
