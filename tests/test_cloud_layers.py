@@ -1,3 +1,4 @@
+import http.client
 import importlib.util
 import io
 import json
@@ -151,6 +152,54 @@ class CloudLayersTests(unittest.TestCase):
             self.assertTrue((destination / 'layer.json').is_file())
             self.assertIn('/actions/artifacts/7/zip', files[-1])
             self.assertEqual(sum('/runs/123/artifacts?' in url for url in files), 1)
+
+    def test_artifact_restarts_from_same_id_after_bad_zip_and_interrupted_body(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as output:
+            output.writestr('layer.json', '{}')
+        interrupted = self.response(b'')
+        interrupted.read = mock.Mock(side_effect=[b'partial', http.client.IncompleteRead(b'')])
+        opener = mock.Mock(side_effect=[self.response(b'not an archive'), interrupted,
+                                        self.response(archive.getvalue())])
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary)
+            waits = []
+            layers._extract_artifact({'id': 321}, target, 'token', 'owner/repo', opener=opener,
+                                     sleep=waits.append)
+            self.assertEqual((target / 'layer.json').read_text(), '{}')
+            self.assertEqual(sorted(f.name for f in target.iterdir()), ['layer.json'])
+        self.assertEqual(waits, [1, 2])
+        self.assertEqual([call.args[0].full_url for call in opener.call_args_list],
+                         [layers.API + '/repos/owner/repo/actions/artifacts/321/zip'] * 3)
+
+    def test_persistent_bad_artifact_body_fails_without_exposing_partial_files(self):
+        opener = mock.Mock(side_effect=lambda _: self.response(b'not an archive'))
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary)
+            waits = []
+            with self.assertRaisesRegex(RuntimeError, r'artifact 321.*BadZipFile.*after 2 retries'):
+                layers._extract_artifact({'id': 321}, target, 'token', 'owner/repo', opener=opener,
+                                         sleep=waits.append)
+            self.assertEqual(list(target.iterdir()), [])
+        self.assertEqual(opener.call_count, 3)
+        self.assertEqual(waits, [1, 2])
+
+    def test_valid_zip_with_unsafe_member_is_rejected_without_transport_retry(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as output:
+            output.writestr('../outside', 'must not be extracted')
+        opener = mock.Mock(return_value=self.response(archive.getvalue()))
+        waits = mock.Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'destination'
+            target.mkdir()
+            with self.assertRaisesRegex(ValueError, 'Unsafe artifact member path'):
+                layers._extract_artifact({'id': 321}, target, 'token', 'owner/repo', opener=opener,
+                                         sleep=waits)
+            self.assertEqual(list(Path(temporary).iterdir()), [target])
+            self.assertEqual(list(target.iterdir()), [])
+        opener.assert_called_once()
+        waits.assert_not_called()
 
     def test_primary_rate_limit_waits_until_reset_and_retries(self):
         calls, waits = [], []

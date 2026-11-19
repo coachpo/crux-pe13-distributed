@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,7 @@ _API_OPENER = urllib.request.build_opener(_SafeRedirect()).open
 _TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 _TRANSIENT_RETRIES = 5
 _TRANSIENT_BACKOFF_MAX = 30
+_ARTIFACT_BODY_RETRIES = 2
 
 
 def _retry_after_seconds(headers, now):
@@ -175,28 +177,39 @@ def _extract_artifact(artifact, destination, token, repository, opener=_API_OPEN
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'crux-cloud-layers',
     })
-    temporary = None
-    try:
-        with _open_retry(request, opener, sleep, now) as response:
-            with tempfile.NamedTemporaryFile(prefix='cloud-artifact-', suffix='.zip',
-                                             dir=destination, delete=False) as archive_file:
-                temporary = Path(archive_file.name)
-                shutil.copyfileobj(response, archive_file, 8 * 1024 * 1024)
-        with zipfile.ZipFile(temporary) as archive:
-            for member in archive.infolist():
-                name = Path(member.filename)
-                if name.is_absolute() or '..' in name.parts:
-                    raise ValueError('Unsafe artifact member path: ' + member.filename)
-                target = destination / name
-                if member.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.open(member) as source, target.open('wb') as output:
-                        shutil.copyfileobj(source, output, 8 * 1024 * 1024)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    for attempt in range(_ARTIFACT_BODY_RETRIES + 1):
+        with tempfile.NamedTemporaryFile(prefix='cloud-artifact-', suffix='.zip',
+                                         dir=destination) as archive_file:
+            try:
+                with _open_retry(request, opener, sleep, now) as response:
+                    shutil.copyfileobj(response, archive_file, 8 * 1024 * 1024)
+                archive_file.flush()
+                archive = zipfile.ZipFile(archive_file)
+            except (zipfile.BadZipFile, http.client.IncompleteRead, ConnectionError, TimeoutError) as error:
+                failure = type(error).__name__
+                if attempt == _ARTIFACT_BODY_RETRIES:
+                    raise RuntimeError(f'GitHub artifact {artifact["id"]} download body failed ({failure}) '
+                                       f'after {_ARTIFACT_BODY_RETRIES} retries') from error
+            else:
+                # Only retry before writing any members, so validation errors
+                # never get retried over a partially extracted destination.
+                with archive:
+                    for member in archive.infolist():
+                        name = Path(member.filename)
+                        if name.is_absolute() or '..' in name.parts:
+                            raise ValueError('Unsafe artifact member path: ' + member.filename)
+                        target = destination / name
+                        if member.is_dir():
+                            target.mkdir(parents=True, exist_ok=True)
+                        else:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            with archive.open(member) as source, target.open('wb') as output:
+                                shutil.copyfileobj(source, output, 8 * 1024 * 1024)
+                return
+        delay = 2 ** attempt
+        print(f'GitHub artifact {artifact["id"]} download body failed ({failure}); '
+              f'retry {attempt + 1}/{_ARTIFACT_BODY_RETRIES} in {delay}s', flush=True)
+        sleep(delay)
 
 
 def restore_layer(manifest_sha, layer, revisions, run_id, repository, staging, artifact,
