@@ -119,6 +119,64 @@ class CloudShardTests(unittest.TestCase):
         profile = mutation.publish()
         self.assertEqual([item['producer'] for item in profile['command_adaptations']], [self.other])
 
+    def test_system_tree_readers_import_transitive_installed_files_across_shards(self):
+        out = self.root / 'out'
+        product = out / 'target/product/crux'
+        system = product / 'system'
+        service = system / 'bin/keystore2'
+        library = system / 'lib64/libkeystore2_aaid.so'
+        indirect = system / 'lib64/runtime.so'
+        validation_only = system / 'lib64/validation.so'
+        host_only = system / 'lib64/host-tool-only.so'
+        tool = out / 'host/tool'
+        filelist = product / 'installed-files.txt'
+        image = product / 'obj/PACKAGING/systemimage_intermediates/system.img'
+        final = product / 'system.img'
+        ninja = self.root / 'installed.ninja'
+        ninja.write_text(
+            'rule install\n  command = touch $out\n'
+            'rule scan\n  command = echo $in > $out\n'
+            + ''.join(f'build {p}: install\n' for p in (indirect, validation_only, host_only))
+            + f'build {tool}: install {host_only}\n'
+            + f'build {library}: install || {indirect}\n'
+            + f'build {service}: install || {library} {tool} |@ {validation_only}\n'
+            + f'build {filelist}: scan {service}\n'
+            + f'build {image}: scan {service} {filelist}\n'
+            + f'build {final}: install {image}\n'
+            + f'build systemimage: phony {final}\n')
+        db = self.root / 'installed.sqlite'
+        shard.graph.index_graph(ninja, self.source, db)
+        shard.graph.augment_graph(db, {
+            'schema_version': 1,
+            'groups': [[str(p) for p in (indirect, library, service, tool, host_only)]],
+        })
+        current = shard.graph.Graph(db)
+        records, producers = current.edge_records(current.closure(['systemimage'])['edge_ids'])
+        baseline = current.shard(['systemimage'], self.root / 'before', 1)
+        self.assertNotIn(str(library), baseline['export_producers'])
+        before = current.native_metadata({producers[str(p)]: records[producers[str(p)]]
+                                          for p in (image, filelist)})
+        additions = shard.system_staging_dependencies(records, producers, out)
+        current.db.close()
+
+        mutation = shard.Mutations(db)
+        mutation.dependencies(additions, 'test system staging')
+        mutation.publish()
+        current = shard.graph.Graph(db)
+        self.addCleanup(current.db.close)
+        new = current.shard(['systemimage'], self.root / 'after', 1)
+        actions = {path: job for wave in new['waves'] for job in wave for path in job['targets']}
+        for p in (image, filelist):
+            imports = set(actions[str(p)]['external_inputs'])
+            self.assertTrue({str(library), str(indirect)} <= imports)
+            self.assertTrue({str(host_only), str(tool), str(validation_only)}.isdisjoint(imports))
+            owner = producers[str(p)]
+            record, _ = current.edge_records([owner])
+            self.assertEqual(current.native_metadata(record)[owner]['command'], before[owner]['command'])
+        for p in (library, indirect):
+            self.assertEqual(new['export_producers'][str(p)], actions[str(p)]['id'])
+        self.assertEqual(actions[str(final)]['external_inputs'], [str(image)])
+
 
 if __name__ == '__main__':
     unittest.main()

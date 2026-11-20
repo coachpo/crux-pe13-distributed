@@ -183,6 +183,40 @@ class Mutations:
         return profile
 
 
+def system_staging_dependencies(records, producers, out_root):
+    """Transport installed prerequisites of the files the system tree readers scan."""
+    product = Path(out_root) / 'target/product/crux'
+    staging = str(product / 'system') + '/'
+    result = {}
+    for relative in ('installed-files.txt', 'obj/PACKAGING/systemimage_intermediates/system.img'):
+        output = str(product / relative)
+        consumer = producers.get(output)
+        if consumer is None:
+            raise ValueError('System staging reader has no selected producer: ' + output)
+        declared = {path for path, relation in records[consumer]['deps'] if relation != 'validation'}
+
+        # Kati's installed-file rules may put runtime libraries on order-only
+        # edges. Monolithic Ninja leaves them in the system tree, but a shard
+        # containing the installed executable exports only declared imports.
+        pending = list(declared)
+        seen, installed = set(), set()
+        while pending:
+            path = pending.pop()
+            if not path.startswith(staging) or path in seen:
+                continue
+            seen.add(path)
+            owner = producers.get(path)
+            if owner is None or path not in records[owner]['outputs']:
+                continue
+            record = records[owner]
+            if record['rule'] != 'phony':
+                installed.add(path)
+            pending.extend(dep for dep, relation in record['deps'] if relation != 'validation')
+        if extra := installed - declared:
+            result[consumer] = sorted(extra)
+    return result
+
+
 def frontend_dependencies(records, native, descriptor):
     scalars = [row['output'] for row in descriptor['scalars']]
     bpglob = descriptor['bpglob']['output']
@@ -344,7 +378,7 @@ def integrate(args):
         while True:
             current = graph.Graph(database)
             closure = current.closure(TARGETS)
-            records, _ = current.edge_records(closure['edge_ids'])
+            records, producers = current.edge_records(closure['edge_ids'])
             native = current.native_metadata(records)
             frontend, _ = frontend_dependencies(records, native, descriptor)
             source_reads = derive_source_reads(current, records, native, source_root, out_root)
@@ -364,8 +398,14 @@ def integrate(args):
                 break
             mutations.publish()
             # No previous iteration's command view is an input to the next one.
-            del records, native, frontend, source_reads, host_reads, rust_reads, closure, current
+            del records, producers, native, frontend, source_reads, host_reads, rust_reads, closure, current
             gc.collect()
+        # These paths are already selected by the converged graph. Bind them
+        # directly to the readers before cutting it, without changing $in.
+        system_reads = system_staging_dependencies(records, producers, out_root)
+        mutations.dependencies(system_reads, 'installed dependencies in the consumed system staging tree')
+        receipt['system_staging_imports'] = {
+            records[edge]['outputs'][0]: paths for edge, paths in system_reads.items()}
         (output / 'source-reads.json').write_text(json.dumps(source_reads, indent=2) + '\n')
         (output / 'host-runtime.json').write_text(json.dumps(host_reads, indent=2) + '\n')
         # Keep the new preopt actors inspectable in the job log without fetching
@@ -379,7 +419,7 @@ def integrate(args):
         (output / 'runtime-adaptations.json').write_text(json.dumps(mutations.publish(), indent=2) + '\n')
         # Source-built Go frontends and the final slicer need their own working
         # sets. Do not retain the completed global audit while running them.
-        del records, native, frontend, source_reads, host_reads, rust_reads, closure, current, mutations
+        del records, producers, native, frontend, source_reads, host_reads, rust_reads, closure, current, mutations
         gc.collect()
         print(json.dumps({'phase': 'cold-frontend-probe', 'status': 'starting'}), flush=True)
         receipt['cold_frontend_probe'] = cold_probe(source_root, out_root, output / 'cold-frontend-probe')
