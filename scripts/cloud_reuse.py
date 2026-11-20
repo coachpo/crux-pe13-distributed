@@ -36,7 +36,7 @@ def execution_digest(root=ROOT):
                    | set(root.glob('.github/actions/**/*')) | set(root.glob('config/*.json')))
     return digest([{'path': str(path.relative_to(root)), 'sha256': file_digest(path)}
                    for path in paths if path.is_file()
-                   and path.name not in {'cloud-source-manifest.json', 'cloud-source-overrides.json'}])
+                   and path.name != 'cloud-source-manifest.json'])
 
 
 def identity_spec(spec):

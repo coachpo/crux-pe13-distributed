@@ -558,14 +558,6 @@ def analyze_shell_substitutions(command, *, evaluated=False):
     return ShellSubstitutionAnalysis(command, rewritten, True, scanner.nodes, scanner.arithmetic, scanner.limitations)
 
 
-def active_shell_marker_positions(analysis, tokens):
-    """Only children present in this parent, including embedded quoted words."""
-    for position, token in enumerate(tokens):
-        for marker, node in analysis.substitutions.items():
-            if marker in token:
-                yield position, marker, node
-
-
 def shell_child_snapshot(temporaries, tokens, position, command_invocations):
     """Inherit completed prior writes; exclude the invoking command's writes.
 

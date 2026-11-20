@@ -136,8 +136,8 @@ entries and nonmatching keys are misses, not retroactively approved caches.
 Only misses mount the current source snapshot, restore the exact current
 shard/index/derived graph, pack a cold capsule and recheck its full audit
 descriptor before ordinary native compilation. Hits skip both capsule packing
-and native compilation. Nine dependency waves remain; W10 slicing and W11 ccache
-are not implemented, and `CCACHE_DISABLE=1` remains required.
+and native compilation. W11 ccache is not implemented, and `CCACHE_DISABLE=1`
+remains required.
 
 `force_cold=true` disables native cache adoption for the new execution. It is
 available at nightly and diagnostic freeze/compile entry points and propagates
@@ -173,8 +173,8 @@ packing and native compilation. Code is `df115ee`; baseline source-locking commi
 is `b27c6a0` and the normal/control source-locking commit is `68d5b3e`. These cases do
 not promise a fixed hit count for future source, host or dependency content.
 Current baseline/asset identities and retained evidence belong to the workspace
-[index](../../docs/README.md) and [W9 record](../../docs/pe13-w9-shard-reuse-execution-2026-11-13.md),
-not a new device or rollback identity. No B cache, recovery input or fork was
+index and W9 record (outside this repository), not a new device or rollback
+identity. No B cache, recovery input or fork was
 modified, and these validations do not authorize old artifact/Release cleanup.
 
 ## 1. Generate a fresh graph
@@ -234,7 +234,7 @@ next workflow. A source artifact alone or a fixture test is not graph evidence.
 Project archives use their pinned revisions; a failed Google Gitiles archive
 can fall back to fetching and archiving the same revision. The maintained
 providers for `vendor/gms` and `external/faceunlock` are the two private
-GitHub Release snapshots pinned in the manifest and generator overrides.
+GitHub Release snapshots pinned in the manifest.
 The private snapshot route has no upstream or public artifact fallback. It
 checks the repository, release/tag, asset ID, size and SHA-256, then checks
 the archive's Git commit and reconstructed tree before packaging the layer.
@@ -263,8 +263,8 @@ complete-run `source_run` override remains exact-manifest only.
 When replacing one of these snapshots, review its `snapshot.json`, private
 repository and uploaded Release asset, and independently verify the tarball
 bytes, embedded commit and extracted Git tree. Update the commit, tree and
-release/asset lock consistently in `config/cloud-source-manifest.json` and
-`config/cloud-source-overrides.json`, using nightly's validated snapshot update
+release/asset lock in `config/cloud-source-manifest.json`, the only source lock,
+using nightly's validated snapshot update
 route for routine builds. Manual lock changes must pass source-configuration
 tests and all three source checks. Do not regenerate the entire manifest without
 the matching complete layout inputs or substitute a public archive. Rotate the
@@ -272,7 +272,8 @@ credential under the same Actions secret name
 with the same two-repository read scope; neither operation needs Python code
 changes.
 
-Maintained Crux forks are selected in `config/cloud-source-overrides.json`. From build
+Maintained Crux forks are pinned in `config/cloud-source-manifest.json`;
+`TRACKED` in `scripts/nightly.py` names the branch each fork follows. From build
 `2026110804` the device tree is fetched at fork commit `978a10a` (the development
 product only), `bootable/recovery` at `44443e3`, the kernel at `086b838`, and
 `packages/apps/Updates`, which is not built, at upstream commit `50c6109`.
@@ -528,6 +529,12 @@ assembly's install manifest in the main-only `install-signing` environment,
 checks its public-key signature and payload digests, then publishes the ZIP,
 checksum, README and pinned install TWRP/checksum. No offline signature or draft
 approval is required by the normal chain. Releasing does not install anything.
+
+After expanding the system and vendor images, assembly lists them with debugfs
+(`scripts/image_inventory.py`) and fails if any installed file that the
+admitted plan's shard manifests declare under the system or vendor staging tree
+is absent. A missing transport edge cannot be caught by the image readers
+themselves, which scan only the files they import.
 
 Release verification reads the successful compile's context and summary, binds
 every task to that execution/source/plan and validates built/adopted native

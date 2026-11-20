@@ -97,14 +97,12 @@ class InputIdentityTests(unittest.TestCase):
                                '.github/workflows/build.yml': 'workflow',
                                'config/runtime.json': '{}',
                                'config/cloud-source-manifest.json': '{"pin":"old"}',
-                               'config/cloud-source-overrides.json': '{}',
                                'config/source-patches/marker.patch': 'marker 50'}.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
             original = reuse.execution_digest(root)
             (root / 'config/cloud-source-manifest.json').write_text('{"pin":"new"}')
-            (root / 'config/cloud-source-overrides.json').write_text('{"pin":"new"}')
             (root / 'config/source-patches/marker.patch').write_text('marker 51')
             self.assertEqual(reuse.execution_digest(root), original)
             for name in ('scripts/worker.py', '.github/workflows/build.yml', 'config/runtime.json'):

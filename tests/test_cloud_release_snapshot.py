@@ -14,7 +14,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import cloud_release_snapshot as snapshot
 import cloud_source
-import cloud_source_manifest
 from cloud_source_reuse import digest_bytes, layer_contract_sha256
 
 
@@ -142,29 +141,6 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(cloud_source.SourceError, "missing CRUX_SOURCE_SNAPSHOTS_TOKEN"):
             cloud_source.build(manifest_path, "source-15", self.root / "output")
         self.assertFalse((self.root / "output").exists())
-
-    def test_generator_applies_canonical_pins_with_and_without_xml_rows(self):
-        root = Path(__file__).resolve().parents[1]
-        active = json.loads((root / "config/cloud-source-overrides.json").read_text())["projects"]
-        overrides = {path: active[path] for path in snapshot.PROJECT_REPOSITORIES}
-        # Exercise a new lock to ensure the generator does not also pin the
-        # current source revision in Python.
-        overrides["vendor/gms"] = {k: v for k, v in self.project.items() if k != "path"}
-        override_path = self.root / "overrides.json"
-        override_path.write_text(json.dumps({"projects": overrides}))
-        layout_path = self.root / "layout.json"
-        layout_path.write_text('{"links":[]}')
-        xml_path = self.root / "repo.xml"
-        xml_path.write_text('<manifest><remote name="r" fetch="https://example.invalid"/>'
-                            '<default remote="r"/><project name="vendor/gms" revision="' + "e" * 40
-                            + '"/></manifest>')
-        manifest = cloud_source_manifest.convert(xml_path, layout_path, 32, override_path)
-        self.assertEqual({p["path"]: p["revision"] for p in manifest["projects"]},
-                         {path: pin["revision"] for path, pin in overrides.items()})
-        overrides.pop("external/faceunlock")
-        override_path.write_text(json.dumps({"projects": overrides}))
-        with self.assertRaisesRegex(ValueError, "Missing reviewed private Release snapshot override"):
-            cloud_source_manifest.convert(xml_path, layout_path, 32, override_path)
 
 
 if __name__ == "__main__":

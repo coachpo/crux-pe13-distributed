@@ -45,14 +45,6 @@ def _root(value, name):
     return path
 
 
-def _beneath(path, root):
-    try:
-        Path(path).relative_to(Path(root))
-        return True
-    except ValueError:
-        return False
-
-
 def _ninja_escape(value):
     return str(value).replace("$", "$$").replace(" ", "$ ").replace(":", "$:")
 

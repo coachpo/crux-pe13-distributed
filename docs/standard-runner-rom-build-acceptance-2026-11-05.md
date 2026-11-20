@@ -136,7 +136,7 @@ Check availability before dispatch.
 For expired preparation inputs or a new build identity, run a full freeze on
 `main` (or let `nightly.yml` start one): the chain prepares, admits, compiles,
 assembles and releases it, as
-[standard preparation and admission](standard-runner-freeze.md#3-admit-preparation-for-a-cold-compile)
+[standard preparation and admission](standard-runner-freeze.md#3-admit-preparation-for-native-compilationreuse)
 describes. Do not use an incomplete historical registry or a legacy reuse-state.
 
 SOURCE artifacts are retained seven days, prep artifacts fourteen days, and

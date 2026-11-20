@@ -175,11 +175,9 @@ def device_marker(project, build, patches):
 
 
 def pin_sources(root, changes, build, marker=device_marker):
-    """Apply source changes and the new device marker to the manifest and its overrides."""
+    """Apply source changes and the new device marker to the source manifest."""
     manifest_path = root / "config/cloud-source-manifest.json"
-    overrides_path = root / "config/cloud-source-overrides.json"
     manifest = json.loads(manifest_path.read_text())
-    overrides = json.loads(overrides_path.read_text())
     projects = {project["path"]: project for project in manifest["projects"]}
     device = projects[DEVICE]
     superseded = {patch["path"] for patch in device.get("patches", [])
@@ -188,14 +186,9 @@ def pin_sources(root, changes, build, marker=device_marker):
         projects[path].update(fields)
     entry, tree = marker({**device}, build, root / "config/source-patches")
     projects[DEVICE].update({"patches": [entry], "expected_tree": tree})
-    # The freeze reads the manifest; each override field mirrors its manifest value.
-    for path, fields in overrides["projects"].items():
-        for key in fields:
-            fields[key] = projects[path][key]
     for relative in superseded - {entry["path"]}:
         (root / relative).unlink()
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    overrides_path.write_text(json.dumps(overrides, indent=2) + "\n")
     cloud_source._validate_manifest(json.loads(manifest_path.read_text()))
 
 

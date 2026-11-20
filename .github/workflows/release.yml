@@ -107,7 +107,7 @@ jobs:
         run: |
           args=(--assembly-run "$ASSEMBLY_RUN" --tag "$RELEASE_TAG" \
                 --operation "$OPERATION" --signature "$SIGNATURE")
-          if [[ "$OPERATION" == preflight || "$OPERATION" == draft || "$OPERATION" == release ]]; then
+          if [[ "$OPERATION" == draft || "$OPERATION" == release ]]; then
             args+=(--retry-evidence "$RUNNER_TEMP/preflight-validation-failure.json")
           fi
           python3 scripts/release_zip.py "${args[@]}"

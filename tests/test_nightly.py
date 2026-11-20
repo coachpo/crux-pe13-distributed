@@ -56,17 +56,16 @@ class PinSourcesTests(unittest.TestCase):
 
     def config(self):
         manifest = json.loads((self.root / "config/cloud-source-manifest.json").read_text())
-        overrides = json.loads((self.root / "config/cloud-source-overrides.json").read_text())["projects"]
-        return {project["path"]: project for project in manifest["projects"]}, overrides
+        return {project["path"]: project for project in manifest["projects"]}
 
     def test_moved_forks_and_the_new_marker_are_pinned_consistently(self):
-        projects, _ = self.config()
+        projects = self.config()
         old_patch = projects[nightly.DEVICE]["patches"][0]["path"]
         build = str(int(Path(old_patch).stem.rsplit("-", 1)[-1]) + 1)
         changes = {nightly.DEVICE: {"revision": "d" * 40}, "bootable/recovery": {"revision": "e" * 40},
                    "kernel/xiaomi/crux-pe-cepheus": {"revision": "f" * 40}}
         nightly.pin_sources(self.root, changes, build, marker=self.fake_marker)
-        projects, overrides = self.config()
+        projects = self.config()
         self.assertEqual(self.marked, "d" * 40)
         for path, fields in changes.items():
             self.assertEqual(projects[path]["revision"], fields["revision"])
@@ -74,31 +73,23 @@ class PinSourcesTests(unittest.TestCase):
         self.assertEqual(device["expected_tree"], "c" * 40)
         self.assertEqual(device["patches"][0]["path"], f"config/source-patches/device-crux-dev-marker-{build}.patch")
         self.assertFalse((self.root / old_patch).exists())
-        # The same invariants tests.test_cloud_source_config checks on the real configuration.
-        for path, fields in overrides.items():
-            for key, value in fields.items():
-                self.assertEqual(projects[path][key], value, (path, key))
         for patch in device["patches"]:
             self.assertEqual(hashlib.sha256((self.root / patch["path"]).read_bytes()).hexdigest(), patch["sha256"])
 
     def test_unmoved_device_still_gets_the_marker_of_the_new_build(self):
-        projects, _ = self.config()
+        projects = self.config()
         revision = projects[nightly.DEVICE]["revision"]
         nightly.pin_sources(self.root, {}, "2026111051", marker=self.fake_marker)
-        projects, overrides = self.config()
+        projects = self.config()
         self.assertEqual((self.marked, projects[nightly.DEVICE]["revision"]), (revision, revision))
-        self.assertEqual(overrides[nightly.DEVICE]["patches"], projects[nightly.DEVICE]["patches"])
 
-    def test_all_maintained_forks_keep_manifest_and_overrides_consistent(self):
+    def test_all_maintained_forks_are_pinned_in_the_manifest(self):
         changes = {path: {"revision": f"{number:040x}"}
                    for number, path in enumerate(nightly.TRACKED, start=1)}
         nightly.pin_sources(self.root, changes, "2026111052", marker=self.fake_marker)
-        projects, overrides = self.config()
+        projects = self.config()
         for path, fields in changes.items():
             self.assertEqual(projects[path]["revision"], fields["revision"])
-        for path, fields in overrides.items():
-            for key, value in fields.items():
-                self.assertEqual(projects[path][key], value, (path, key))
 
 
 class ChangeDetectionTests(unittest.TestCase):

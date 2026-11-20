@@ -46,11 +46,6 @@ def _digest_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _manifest_path(root: Path, value: str) -> Path:
-    path = Path(value)
-    return path if path.is_absolute() else root / path
-
-
 def _safe_relative(value: str) -> PurePosixPath:
     path = PurePosixPath(value)
     if path.is_absolute() or not path.parts or ".." in path.parts:
