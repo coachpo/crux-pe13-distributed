@@ -249,18 +249,18 @@ jobs:
           persist-credentials: false
       - name: Prepare this graph
         id: dispatch
-        continue-on-error: true
+        continue-on-error: ${{ github.ref == 'refs/heads/main' }}
         run: |
           gh workflow run prepare-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
             -f stage=full -f graph_run="$GITHUB_RUN_ID" -f build_number="$BUILD_NUMBER" \
             -f force_cold="$FORCE_COLD"
       - name: Report the failed dispatch
-        if: steps.dispatch.outcome == 'failure'
+        if: github.ref == 'refs/heads/main' && steps.dispatch.outcome == 'failure'
         run: python3 scripts/pipeline_report.py --stage freeze --detail 'The preparation could not be dispatched.'
 
   report:
     needs: [plan, sources, graph, next]
-    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
