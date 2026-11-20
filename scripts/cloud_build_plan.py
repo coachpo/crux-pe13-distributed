@@ -13,6 +13,7 @@ import subprocess
 
 import cloud_artifacts
 import cloud_schedule
+import image_inventory
 from cloud_license_inputs import LicenseMetadataReads
 from cloud_rust_native import rust_native_file_reads
 from cloud_source_reads import iter_invocations
@@ -368,6 +369,7 @@ def compose_context(shards, plan, waves, tasks, receipt, source_manifest_path, g
                'source_manifest_sha256': manifest_sha, 'plan_sha256': plan_sha,
                'graph_index': {key: receipt['pruned_database'][key] for key in ('bytes', 'sha256')},
                'waves': waves, 'tasks': tasks, 'assembly_exports': exports,
+               'image_inventory': image_inventory.declared(owners, receipt['out_root']),
                'schedule_policy': plan['partition_policy'],
                'reuse_policy': reuse_policy,
                'host_jar_runtime_bundles': host_bundles,

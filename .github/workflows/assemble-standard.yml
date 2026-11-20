@@ -101,28 +101,9 @@ jobs:
           simg2img "$work/system.img" "$work/system.raw.img"
           rm -f -- "$work/system.img"
           simg2img "$delivery/vendor.img" "$work/vendor.raw.img"
-          if [[ "$GITHUB_REF" == refs/heads/verify/system-staging-libraries-20261120 ]]; then
-            PYTHONPATH=scripts python3 - "$work/system.raw.img" "$RUNNER_TEMP/result/system-runtime-libraries.json" <<'PY'
-          import hashlib, json, platform, sys
-          from pathlib import Path
-          import crux_zip
-
-          if platform.machine() != 'x86_64':
-              raise SystemExit('System staging acceptance requires an x86_64 runner')
-          raw, receipt = map(Path, sys.argv[1:])
-          members = {}
-          for name in ('libkeystore2_aaid.so', 'libkeystore2_apc_compat.so'):
-              path = '/system/lib64/' + name
-              data = crux_zip.image_file(raw, path)
-              if data[:6] != b'\x7fELF\x02\x01' or data[18:20] != b'\xb7\x00':
-                  raise SystemExit(f'{path}: expected a 64-bit AArch64 ELF')
-              digest = hashlib.sha256(data).hexdigest()
-              members[path] = {'bytes': len(data), 'sha256': digest}
-              print(f'::notice title=System image library readback::{path} {len(data)} bytes SHA-256 {digest}')
-          receipt.write_text(json.dumps({'runner_architecture': platform.machine(), 'members': members},
-                                        indent=2, sort_keys=True) + '\n')
-          PY
-          fi
+          python3 scripts/image_inventory.py --context "$RUNNER_TEMP/context/context.json" \
+            --system "$work/system.raw.img" --vendor "$work/vendor.raw.img" \
+            --report "$RUNNER_TEMP/result/image-inventory.json" 2>&1 | tee "$RUNNER_TEMP/result/image-inventory.log"
           build=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["build_number"])' \
             "$delivery/delivery-record.json")
           profile=$(python3 -c 'import json; print(json.load(open("config/install-twrp.json"))["profile_id"])')

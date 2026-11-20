@@ -17,6 +17,7 @@ import assemble_dev
 import cloud_assemble
 import cloud_reuse
 import crux_zip
+import image_inventory
 import package_fits
 import worker
 
@@ -107,6 +108,10 @@ def execute():
     raw.mkdir()
     for name in ('system', 'vendor'):
         subprocess.run(['simg2img', str(product / (name + '.img')), str(raw / (name + '.img'))], check=True)
+    inventory = image_inventory.check(context['image_inventory'],
+                                      {'system': raw / 'system.img', 'vendor': raw / 'vendor.img'}, 'debugfs')
+    if any(entry['missing'] for entry in inventory.values()):
+        raise ValueError('Installed files missing from the image: ' + json.dumps(inventory))
     pin = replay.read(replay.ROOT / 'config/install-twrp.json')
     fit_directory = output / 'fit-stage/fits'
     crux_zip.prepare(argparse.Namespace(system=raw / 'system.img', vendor=raw / 'vendor.img',
@@ -118,7 +123,7 @@ def execute():
               'signed': False, 'installable': False, 'publication_admission': False,
               'context_sha256': record['context']['sha256'], 'execution_digest': record['execution_digest'],
               'source_selection': selection, 'producer_inputs': record['dependencies'],
-              'identity': identity, 'image_gates': gates, 'fits': fits,
+              'identity': identity, 'image_gates': gates, 'image_inventory': inventory, 'fits': fits,
               'unsigned_payload': replay.read(output / 'unsigned-payload/payload.json')}
     (output / 'local-assembly.json').write_text(json.dumps(result, indent=2) + '\n')
     (output / 'LOCAL-DIAGNOSTIC-NOT-INSTALLABLE.txt').write_text(
