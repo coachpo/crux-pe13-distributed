@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build the RAM-only B install TWRP (crux-install/1) from the exact RAM TWRP v2 FIT.
 
+    build-b-twrp.py --v2-fit TWRP-RAM-INSTALL-ONLY.ITB --public-key KEY --mkimage MKIMAGE --out DIR [--without-identity]
+
 Host only. Keeps v2's retained CI kernel and DT bytes, its PID 1 storage guard,
 empty fstab/flags and capability bounding set (no SYS_ADMIN, so TWRP's
 BLKROSET(0) unlock and BCB access stay ineffective). Ramdisk changes:
@@ -27,17 +29,19 @@ import gzip
 import importlib.util
 import json
 from pathlib import Path
-import runpy
 import shutil
 import stat
 import struct
 import subprocess
 import tempfile
 
-WORKSPACE = Path(__file__).resolve().parents[2]
-RAM_TWRP = WORKSPACE / "out/crux-pe13-device-validation-2026-11-05/RAM-TWRP"
+HERE = Path(__file__).resolve().parent
+PACKAGE_PE13 = HERE.parent / "references/pe13-boot-contracts/package-pe13.py"
+# RAM TWRP v2: the retained CI TWRP FIT (df812eef...) with the PID 1 storage guard,
+# no mount routes and a bounded capability set; kept outside the repositories
+# because its DT bootargs carry the device identity.
 V2_FIT_SHA256 = "3dab88d57ea205ac54db167282a0547461eee81a1e6eebdfdc528ba4e348e808"
-V2_MANIFEST_SHA256 = "3ca1a48923cf4a432fbe7a70a6f0066cd7cf650a5f9ff9daf34375f650dadc7d"
+V2_PROFILE_ID = "d9e985bf6ad11b6143787603898f041764813026d0da6d3b001c4cef2a8d4297"
 THEME = "twres/portrait.xml"
 KEY_DIR = ("crux", "crux/install-keys")
 KEY = "crux/install-keys/b-p256.pub"
@@ -63,8 +67,7 @@ B_SLIDER = ("\t\t\t<slider>\n"
 
 def strip_identity(fdt, require):
     """v2's DT with the ABL identity tokens dropped from /chosen/bootargs and nothing else changed."""
-    source = Path(__file__).resolve().parents[2] / "crux-pe13-distributed/references/pe13-boot-contracts/package-pe13.py"
-    spec = importlib.util.spec_from_file_location("package_pe13", source)
+    spec = importlib.util.spec_from_file_location("package_pe13", PACKAGE_PE13)
     recipe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(recipe)
 
@@ -96,20 +99,21 @@ def strip_identity(fdt, require):
 
 
 def main():
-    pack = runpy.run_path(str(RAM_TWRP / "build-ram-twrp.py"))
+    spec = importlib.util.spec_from_file_location("ram_twrp_pack", HERE / "ram_twrp_pack.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pack = vars(module)
     require, sha = pack["require"], pack["sha"]
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--v2-fit", type=Path, required=True, help="RAM TWRP v2 FIT (3dab88d5...)")
     parser.add_argument("--public-key", type=Path, required=True, help="raw 64-byte P-256 X||Y public key")
     parser.add_argument("--mkimage", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True, help="new output directory")
     parser.add_argument("--without-identity", action="store_true",
                         help="drop the ABL identity tokens from v2's DT bootargs (a new profile)")
     args = parser.parse_args()
-    manifest_path = RAM_TWRP / "v2/candidate.json"
-    require(sha(manifest_path.read_bytes()) == V2_MANIFEST_SHA256, "RAM TWRP v2 manifest differs")
-    v2 = json.loads(manifest_path.read_text())
-    source = Path(v2["fit"]["path"]).read_bytes()
-    require(sha(source) == V2_FIT_SHA256 == v2["fit"]["sha256"], "source is not the exact RAM TWRP v2 FIT")
+    source = args.v2_fit.read_bytes()
+    require(sha(source) == V2_FIT_SHA256, "source is not the exact RAM TWRP v2 FIT")
     key = args.public_key.read_bytes()
     require(len(key) == 64, "public key must be raw 64-byte P-256 X||Y")
     components = pack["fit_components"](source)
@@ -163,8 +167,7 @@ def main():
         "fit": {"path": str(destination), "sha256": sha(packed), "bytes": len(packed)},
         "components": {name: {"sha256": sha(props["data"]), "bytes": len(props["data"])}
                        for name, props in assembled.items()},
-        "source": {"manifest": str(manifest_path), "manifest_sha256": V2_MANIFEST_SHA256,
-                   "fit_sha256": V2_FIT_SHA256, "v2_profile_id": v2["profile_id"], "v2_fdt_sha256": sha(v2_fdt)},
+        "source": {"fit_sha256": V2_FIT_SHA256, "v2_profile_id": V2_PROFILE_ID, "v2_fdt_sha256": sha(v2_fdt)},
         "device_identity_in_dt_bootargs": not args.without_identity,
         "install_key_sha256": sha(key),
         "ramdisk_changed": changed,

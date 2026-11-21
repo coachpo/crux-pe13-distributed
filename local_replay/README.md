@@ -63,8 +63,10 @@ extra generated-input exemptions are introduced.
 
 ## Candidate preparation before cloud validation
 
-See the [1653 changed-slice acceptance](candidate-acceptance-2026-11-18.md) for
-the executed scope and the local ART/dexpreopt limitation.
+Local dexpreopt does not run under this AMD64 container runtime: `dex2oatd64`
+aborts on out-of-range pointers because `MAP_32BIT` can return an address above
+4 GiB. Keep the dexpreopt producer out of the replayed cut and consume its
+verified Actions archive; a local pass therefore does not establish dexpreopt.
 
 Packing is a separate phase from native execution. Use `candidate.py prepare`
 with these already downloaded, verified inputs in one directory:

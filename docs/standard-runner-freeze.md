@@ -1,15 +1,9 @@
 # PE13 hosted build and ZIP release operation guide
 
-This is the current operation guide; [README](../README.md) is the pipeline
-overview. Dated plans/acceptances retain evidence for their original inputs and
-versions, not additional supported dispatch paths.
+This is the operation guide; [README](../README.md) is the pipeline overview.
 
-The source pins come from `config/cloud-source-manifest.json`. Historical XML,
-revision and offline-transport records are retained in
-[`evidence/legacy-source-inputs/`](evidence/legacy-source-inputs/README.md), never
-used as an implicit packaging source selection. FIT packaging requires the
-explicit source-declarative boot contract; binary reference DTBs remain only
-independent equivalence fixtures. The A/B main paths are unchanged.
+The source pins come from `config/cloud-source-manifest.json`. FIT packaging
+requires the explicit source-declarative boot contract.
 
 ## Before cloud acceptance of code changes
 
@@ -41,12 +35,6 @@ The stage controls below are for diagnosis/recovery, not a second normal build
 procedure. Do not dispatch a stage again when its automatic successor is already
 queued/running. Preserve matching build, source and execution-code identities.
 
-W9 native reuse is implemented. The hosted cold baseline and normal-reuse case
-passed full signing/publication and downloaded-Release verification. The same-input
-forced-cold control also published and passed downloaded-Release verification.
-This does not establish device acceptance or exercise an automatic failure retry.
-To request a new chain without native output reuse:
-
 ```sh
 gh workflow run nightly.yml --repo coachpo/crux-pe13-distributed --ref main \
   -f force_cold=true
@@ -64,11 +52,7 @@ This workflow prepares build inputs. `m --skip-ninja bootimage recoveryimage
 systemimage vendorimage` generates the four-image build graph; it does not compile
 the ROM. `prepare-standard.yml` indexes that graph, creates and audits shards,
 and records input descriptors; it does not assemble or deploy ROM/Recovery images,
-publish the ZIP, or install anything on a device. Historical
-[preparation](standard-runner-preparation-acceptance-2026-11-04.md) and
-[compile/assembly](standard-runner-rom-build-acceptance-2026-11-05.md) acceptances
-record the original standard-runner validation. Current publication is the
-signed TWRP ZIP, not the retired phone OTA channel.
+publish the ZIP, or install anything on a device. Publication is the signed TWRP ZIP.
 
 Both workflows can be dispatched entirely from the repository's GitHub Actions
 page. The CLI commands below are optional remote controls, not local build steps.
@@ -86,7 +70,7 @@ capsules are compressed later, only for tasks with a native cache miss.
   freeze uses that run's start time. A changed build identity needs a fresh
   `freeze-standard` graph and new index, shard plan and input audits. Do not carry
   those derived graph artifacts across build identities; native content reuse
-  follows the separate W9 contract below.
+  follows the native-shard content reuse contract below.
 - `config/cloud-source-manifest.json` pins project revisions, patches and
   source layout. A source revision, patch or layout change requires updating
   that manifest. Per-layer source reuse is allowed only when that layer's pinned
@@ -102,7 +86,7 @@ capsules are compressed later, only for tasks with a native cache miss.
   them. A new source manifest or build identity requires regenerating the
   affected downstream stages.
 
-## W9 native-shard content reuse
+## Native-shard content reuse
 
 The current graph, source selection, index, slice inventory and registry are
 always admitted for the new execution. Global consuming-stage `pipeline_code`
@@ -130,13 +114,13 @@ Resolution reads only eligible successful native origins and verifies the
 versioned content key, artifact bytes/digest and full native archive inventory.
 A hit creates a current-execution adoption receipt with current dependency/run
 bindings plus the unchanged original native receipt/origin. It is not a claim
-of current recompilation. Older outputs without the W9 contract, absent/expired
+of current recompilation. Outputs without this contract, absent/expired
 entries and nonmatching keys are misses, not retroactively approved caches.
 
 Only misses mount the current source snapshot, restore the exact current
 shard/index/derived graph, pack a cold capsule and recheck its full audit
 descriptor before ordinary native compilation. Hits skip both capsule packing
-and native compilation. W11 ccache is not implemented, and `CCACHE_DISABLE=1`
+and native compilation. ccache is not used, and `CCACHE_DISABLE=1`
 remains required.
 
 `force_cold=true` disables native cache adoption for the new execution. It is
@@ -157,25 +141,6 @@ typed-failure retry occurred.
 Assembly, image/FIT gates, private snapshot checks, signing and installation
 contracts remain in force for built and adopted results. B's source, outputs,
 incremental cache, signing path and device-accepted rollback inputs are unchanged.
-
-### Observed hosted cases
-
-| Case | Compile result | Assembly / signing-publication | Downloaded-Release verification |
-| --- | --- | --- | --- |
-| Cold baseline, `2026111450-v1` | `43572079252`: 40 built, 0 reused | `43609334099` / `43610894818` | Passed |
-| Normal reuse, `2026111451-v1` | `43625161519`: 29 built, 11 reused | `43665642349` / `43667203023` | Passed |
-| Same-input forced-cold control, `2026111451-v2` | `43668750532`: 40 built, 0 reused | `43704189232` / `43705477252` | Passed |
-
-The normal and forced-cold cases use the same admitted source/graph/build epoch;
-their compile contexts differ only in execution identity and the force-cold flag.
-The normal case's 11 adopted tasks actually skipped source mounting, cold-capsule
-packing and native compilation. Code is `df115ee`; baseline source-locking commit
-is `b27c6a0` and the normal/control source-locking commit is `68d5b3e`. These cases do
-not promise a fixed hit count for future source, host or dependency content.
-Current baseline/asset identities and retained evidence belong to the workspace
-index and W9 record (outside this repository), not a new device or rollback
-identity. No B cache, recovery input or fork was
-modified, and these validations do not authorize old artifact/Release cleanup.
 
 ## 1. Generate a fresh graph
 
@@ -273,18 +238,7 @@ with the same two-repository read scope; neither operation needs Python code
 changes.
 
 Maintained Crux forks are pinned in `config/cloud-source-manifest.json`;
-`TRACKED` in `scripts/nightly.py` names the branch each fork follows. From build
-`2026110804` the device tree is fetched at fork commit `978a10a` (the development
-product only), `bootable/recovery` at `44443e3`, the kernel at `086b838`, and
-`packages/apps/Updates`, which is not built, at upstream commit `50c6109`.
-The Updates transport now points directly to
-`PixelExperience/packages_apps_Updates` at the same full commit
-`50c6109df4a3af5ecba94a1382a2d5d2460422fa` (Git tree
-`d19e8d96acbf4d332acfbf9052e1f2c593779771`). The Updates project remains in
-the source graph; only its transport changes from the retired Crux fork to
-the official repository at the identical commit and tree. Rebuilding a retained
-build whose source lock names the old fork requires this explicit URL migration;
-the loader does not silently redirect historical source locks.
+`TRACKED` in `scripts/nightly.py` names the branch each fork follows.
 Each build adds its own image marker,
 `config/source-patches/device-crux-dev-marker-<build>.patch`, and the patched
 device tree is checked against the pinned `expected_tree`. `nightly.yml`
@@ -301,7 +255,7 @@ entries are explicit manifest inputs.
 Manual dispatch of `nightly.yml` forces this full chain even without a source
 change, allocating its build number and marker automatically. An active chain
 still prevents a duplicate. Scheduled checks retain change-only behavior. Failures
-are reported; the only automatic cold retry is the typed, once-only W9 exception
+are reported; the only automatic cold retry is the typed, once-only native-reuse exception
 described above, not a general retry of every failed chain.
 
 Consuming stages require the upstream execution commit to match their own,
@@ -419,12 +373,9 @@ Record the workflow commit, build number and datetime, manifest digest, source,
 graph, index, shard and pack run IDs, and the relevant receipts/logs. An unverified
 required gate leaves acceptance pending; an intentionally skipped stage with a
 compatible accepted upstream run is a supported resume, not a missing gate.
-Original build/run bindings remain in the dated preparation and ROM acceptance
-records. Select current inputs from the successful runs of the chain being
-operated, not from a historical table.
+Select current inputs from the successful runs of the chain being operated.
 
-Artifacts are temporary Actions records. W6 applies the following retention to
-new uploads only; existing artifact expiration times are not shortened:
+Artifacts are temporary Actions records. Retention of uploads:
 
 | Role | Retention |
 | --- | --- |
@@ -442,7 +393,7 @@ stage retries and signing/publication. Normal CI signing needs `zip-manifest`;
 release verification also reads the assembly artifact and compile context/summary.
 Keeping the small compile records does not extend the three-day assembly window.
 Expired explicit inputs fail closed. Existing source-layer reuse may fetch fresh
-pinned sources when unavailable, but this is not W9 compiled-output reuse or a
+pinned sources when unavailable, but this is not compiled-output reuse or a
 general automatic cold-build fallback. Re-derive missing stages, or rebuild from
 the same pins with matching execution code/inputs, without bypassing validation.
 
@@ -481,9 +432,7 @@ Graph configuration and host build success do not establish device boot/performa
 
 The Android target-files re-signing interface and its former local fix are out
 of maintained Crux scope; do not use it as a ZIP signing alternative. The supported
-format/key path remains crux-install/1 with `crux_zip.py`. Legacy transport profiles and dated source
-records are not current production manifests and retain their original pins
-for historical rebuild contracts; existing forks are not deleted.
+format/key path is crux-install/1 with `crux_zip.py`.
 
 ## 3. Admit preparation for native compilation/reuse
 
@@ -498,7 +447,7 @@ name that graph run, build and manifest and the SHA-256 of that exact graph
 receipt. Every other check stays: registry and shard receipt bindings, plan
 digest, the exact actual dependency waves and versioned partition policy,
 shard manifest digests, unique output owners, frontend identity, product namespace
-and kernel exports. The shard count follows the graph. W10's
+and kernel exports. The shard count follows the graph.
 `config/cloud-sharding-profile.json` isolates identity, kernel and image owners
 while preserving complete native actions, atomic groups and producer exports.
 Image packaging includes the exact recovery resource archive, vendor installed
@@ -512,14 +461,12 @@ system-image intermediate rather than only its final copy, use the image role.
 Every actual task occurs exactly once, depends only on completed earlier waves,
 and fits the declared same-execution workflow slots. Extra slots are inactive,
 not empty admitted waves; the summary requires every declared slot to succeed
-and every actual task to supply its current receipt. Earlier eight/nine-wave
-graphs use their matching pipeline revision when rebuilt. If source
+and every actual task to supply its current receipt. If source
 or graph shape changes beyond a fixed policy (runtime/kernel policy, slice and
 producer requirements, image/FIT expectations), the chain stops at that check
 and reports it. Retry failed jobs on the same revision; after a code/policy change
 start a new full freeze rather than mixing stage revisions. Do not bypass
-the admission checks. The records under `docs/evidence/` are the admissions of
-earlier, manually admitted builds.
+the admission checks.
 
 ## 4. Compile, assemble and publish
 

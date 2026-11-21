@@ -11,7 +11,9 @@ The host-only token @menu-redraw sends two raw Ctrl-N bytes, without CR,
 to a verified waiting U-Boot menu so a late console can see its choices.
 
 Usage:
-    tools/edl/.venv/bin/python crux-pe13-distributed/local/uconsole_watch.py
+    python3 -m venv ~/.venvs/crux-local
+    ~/.venvs/crux-local/bin/pip install -r crux-pe13-distributed/local/requirements.txt
+    ~/.venvs/crux-local/bin/python crux-pe13-distributed/local/uconsole_watch.py
 
 Start it before triggering a reboot so the menu output is captured
 immediately.

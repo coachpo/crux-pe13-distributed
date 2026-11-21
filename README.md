@@ -8,59 +8,38 @@ publish here; its host tools are in [`local/`](local/README.md).
 
 ## Standard-runner build chain
 
-`nightly.yml` checks the sources every night at 23:37 UTC (01:37 in Helsinki in
-winter). When the configured Android 13 maintenance branch of a tracked fork
-or the commit recorded
-by a snapshot repository moved, or `main` changed `scripts/`, `config/`,
-`installer/`, `keys/`, `.github/` or the production
-`references/pe13-boot-contracts/` since the last full freeze, it
-takes the next CI build number of the Helsinki day (`YYYYMMDD50` to
-`YYYYMMDD99`; local builds use `01` to `49`), pins the sources, regenerates the
-device marker patch and its patched tree, commits as `github-actions[bot]` and
-dispatches a full freeze. A night without changes, or with a chain run still
-queued or running, starts nothing. Each stage then dispatches the next one from
-its last job; partial runs (`source-only`, `index`, `shard`) do not continue the
-chain. Build identities and upstream run provenance are recorded with the
-[published ZIP releases](https://github.com/coachpo/crux-pe13-distributed/releases),
-not maintained as a second mutable baseline in this overview.
+`nightly.yml` checks the sources every night at 23:37 UTC. When the configured
+Android 13 maintenance branch of a tracked fork or the commit recorded by a
+snapshot repository moved, or `main` changed `scripts/`, `config/`,
+`installer/`, `keys/`, `.github/` or `references/pe13-boot-contracts/` since
+the last full freeze, it takes the next CI build number of the Helsinki day
+(`YYYYMMDD50` to `YYYYMMDD99`; local builds use `01` to `49`), pins the
+sources, regenerates the device marker patch and its patched tree, commits as
+`github-actions[bot]` and dispatches a full freeze. A night without changes, or
+with a chain run still queued or running, starts nothing. Each stage then
+dispatches the next one from its last job; partial runs (`source-only`,
+`index`, `shard`) do not continue the chain. Build identities and upstream run
+provenance are recorded with the
+[published ZIP releases](https://github.com/coachpo/crux-pe13-distributed/releases).
 The entire path uses public-repository standard `ubuntu-22.04` runners.
-
-W10 output/tool-role partitioning and native-shard reuse are implemented. The
-46-task, eight-wave plan passed signed cold-seed, normal-reuse and same-input
-forced-cold cloud builds, including downloaded-Release verification. The normal
-run adopted24 tasks without packing or native compilation for those hits; the
-control built all46. Exact source/graph/runtime and full predecessor-output
-contracts still govern every adoption and miss. Residual ordinary consumers
-still rebuild, so a hit count does not establish the performance objective.
-These are [host/build/Release results](https://github.com/coachpo/crux-pe13-distributed/releases),
-not device acceptance. W11/ccache is not included.
 
 Manual dispatch of `nightly.yml` forces a complete build even with no changes,
 but does not start a duplicate while another chain is active. It allocates the
 build number and marker just like the scheduled entry. `scripts/nightly.py`'s
-`TRACKED` table names the explicit branches of all ten maintained ROM forks:
+`TRACKED` table names the explicit branches of the ten maintained ROM forks:
 device, vendor blobs, kernel, recovery, frameworks, ART, display, system/core,
 ADB and vendor/aosp. Make is fixed at official `0189aa1e52e4461d6bfd9976f6d602e23738b34c`
 and build-tools at official `7d311e630d48dcd46e6036e34e4d588bd9c064c9`, with
-their expected trees; neither follows the retained historical forks. Other upstream projects stay pinned;
-the two private snapshot inputs keep their separate identity checks. A repository
+their expected trees. Other upstream projects stay pinned; the two private
+snapshot inputs keep their separate identity checks. A repository
 default-branch change never selects another Android version implicitly.
 
-Historical XML/source audit records are indexed under
-[`docs/evidence/legacy-source-inputs/`](docs/evidence/legacy-source-inputs/README.md),
-not used as current configuration or CLI defaults. Standalone FIT packaging
-requires explicit source selection and source-declarative contract inputs;
-the normal A/B callers already supply them. Retained reference DTBs are test
-oracles only. Native, Recovery-only and diagnostic packaging modes remain.
-
-The official build-tools pin supplies nsjail normally to A's Soong host probe.
-Graph receipts record actual command-log sandbox observations, not a guess from
-binary presence. B keeps its Rosetta nsjail workaround only in its private source
-overlay. A2 restores official full dexpreopt/profile defaults in A; freeze verifies
-the generated configuration rather than assuming a source pin implies it. B's
-private profile keeps Rosetta preopt/profile disabled. Historical source forks
-remain available for their retained build pins. Android target-files re-signing
-is outside maintained Crux interfaces; delivery uses `crux_zip.py`, not that tool.
+The official build-tools pin supplies nsjail to A's Soong host probe; graph
+receipts record actual sandbox observations. A uses the official full
+dexpreopt/profile defaults, and freeze verifies the generated configuration.
+B's Rosetta nsjail and dexpreopt workaround lives only in its private source
+overlay (`local/pe13-b-host-profile.py`). Delivery uses `crux_zip.py`; Android
+target-files re-signing is not a Crux interface.
 
 Before cloud acceptance of code changes, run the
 [isolated local cold preflight](local_replay/README.md): targeted graph/contract
@@ -82,57 +61,46 @@ the failed jobs on the same commit. Every consuming stage checks that its
 upstream runs used its execution commit before consuming inputs or signing.
 If pipeline code changes, start a new full freeze (manual nightly is the unified
 entry); do not continue new code against older prepared stage artifacts.
-Verified source-layer reuse remains governed by its existing byte contracts.
+Verified source-layer reuse is governed by its byte contracts.
 
-Native reuse is content-addressed, not accepted merely because Git SHAs or task
-names match. Keys bind audited source bytes/resolved graph, execution policy,
+The execution digest covers `scripts/*.py`, `.github/workflows/*.yml`,
+`.github/actions/**` and `config/*.json` except the source lock: changing any of
+them makes every native task a miss on the next chain, a cold compile of about
+5–6.5 hours. Keep tools that A does not run out of those paths.
+
+## Native-shard reuse
+
+Native reuse is content-addressed, not accepted because Git SHAs or task names
+match. Keys bind audited source bytes and resolved graph, execution policy,
 host/runtime identity and exact predecessor output content. Adoption preserves
 the original native producer; it does not relabel old bytes as newly compiled.
-Pre-W9 outputs without this contract are misses. `force_cold=true` on manual
-nightly disables native adoption for the whole new chain without clearing any
-cache or disabling independently verified source-layer reuse. Kernel owners
-remain misses because the current kernel embeds date/user/hostname outside the
-declared Ninja inputs; W9 does not change that native behavior.
+`force_cold=true` on manual nightly disables native adoption for the whole new
+chain without clearing any cache or disabling verified source-layer reuse.
+Kernel owners always miss because the kernel embeds date/user/hostname outside
+the declared Ninja inputs.
 
-The W10 partition profile isolates build-identity outputs, the atomic kernel
-owner and final image packaging from ordinary compilation. Exact recovery-resource,
+The partition profile isolates build-identity outputs, the atomic kernel owner
+and final image packaging from ordinary compilation. Exact recovery-resource,
 installed-files and recovery-patch outputs keep those packaging helpers with
-their image dependency chain; the installed-files text/JSON co-outputs remain one
-native action. Ordinary Java, native
-and helper actions may share a task to preserve real tool-bootstrap chains;
-their language counts remain visible in the plan. Units are ordered by stable
-primary output paths rather than SQLite edge IDs. The profile's wave capacity
-declares serial reusable-workflow slots in the **same** compile execution;
-unused slots perform no native work. Regenerate their declarations with
+their image dependency chain. Ordinary Java, native and helper actions may share
+a task to preserve real tool-bootstrap chains. Units are ordered by stable
+primary output paths. The profile's wave capacity declares serial
+reusable-workflow slots in the **same** compile execution; unused slots perform
+no native work. Regenerate their declarations with
 `python3 scripts/cloud_schedule.py --write-workflow` after an intentional policy
 change. Missing, duplicate, empty, over-capacity or dependency-inverted actual
-waves fail admission; no cross-run controller or dependency-export filtering
-is used.
+waves fail admission.
 
 Recovery tree assembly, CPIO, compressed ramdisk, Recovery image and resource
-archive form one convex native packing unit: its generated resource tree never
-needs a transitive export. The kernel trio stays a separate atomic unit. Exact
-filesystem construction (including the system-image intermediate) and installed
-file-list actions are image work, not ordinary compilation. The existing full
-direct-producer co-output/directory transport and dependency-content hashing are
-unchanged.
+archive form one native packing unit; the kernel trio stays a separate atomic
+unit. Filesystem construction and installed file-list actions are image work,
+not ordinary compilation.
 
 Only a typed compile/assembly/preflight content-validation failure after actual
 reuse qualifies for one same-pin cold retry. Transport, signing, publication and
-cancellation do not. Forced-cold executions cannot loop into another automatic retry.
-See the [operation guide](docs/standard-runner-freeze.md#w9-native-shard-content-reuse)
-for the acceptance boundary and input expiry rules.
-
-Use the [hosted operation guide](docs/standard-runner-freeze.md) for the normal
-entry, stage recovery, input reuse and release checks. Dated plans and acceptance
-records describe their original runs; their old branches, defaults and commands
-are not current dispatch instructions.
-
-[`docs/evidence/`](docs/evidence/) keeps the admission records of the manually
-admitted builds as history; bootstrap no longer reads them. See the
-[execution record](docs/standard-runner-build-plan.md) for historical attempts
-and the reason for the production kernel short-source policy, which follows the
-kernel revision that the source manifest pins.
+cancellation do not. Forced-cold executions cannot loop into another automatic
+retry. See the [operation guide](docs/standard-runner-freeze.md) for stage
+recovery, input reuse, expiry rules and release checks.
 
 ## The ZIP and its installation
 
@@ -148,24 +116,17 @@ install it in TWRP.
 
 ## Checks
 
-New source/graph/preparation and assembly/signing-manifest artifacts are retained
-for 3 days. Source failure evidence remains 7 days, native shards/receipts and
-compile context/summary 30 days, maintenance fixtures 1 day. The repository
-default remains 90 days; existing artifact expiries and existing Releases are
-not changed. These temporary input windows bound retries and re-publication;
-see the [retention and recovery details](docs/standard-runner-freeze.md#acceptance-evidence-and-artifact-retention).
-W9 adds three-day per-task decisions and missed-task runtime capsules; native
-output/origin/adoption records remain in the thirty-day group. Existing objects
-are not retroactively converted into native caches or given new expiry times.
+Source/graph/preparation and assembly/signing-manifest artifacts are retained
+for 3 days, source failure evidence 7 days, native shards/receipts and compile
+context/summary 30 days, maintenance fixtures 1 day; the repository default is
+90 days. These windows bound retries and re-publication; see the
+[retention details](docs/standard-runner-freeze.md#acceptance-evidence-and-artifact-retention).
 
 ```sh
 python3 -m unittest discover -s tests
 make -C installer test
 ```
 
-`test-artifact-retention.yml` remains a maintenance test of the production
-`retain-artifact` helper's live retry/failure contract; it produces no compilation
-inputs. Production stages collect their own runner resource samples. The old
-Release-backed wave dispatchers and one-time resource probe are retired; only
-the artifact-backed chain above is maintained. Shared graph/capsule/worker and
-assembly libraries remain production dependencies, with their behavior tests.
+`test-artifact-retention.yml` tests the production `retain-artifact` helper's
+retry/failure contract; it produces no compilation inputs. Production stages
+collect their own runner resource samples.

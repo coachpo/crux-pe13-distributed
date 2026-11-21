@@ -1,42 +1,37 @@
 #!/usr/bin/env bash
 # Collect, verify and package one completed local PE13 B build on the Mac.
 #
-#   prepare-pe13-local-payload.sh [--direct-install-plan] BUILD_NUMBER STATE_DIR EVIDENCE_DIR [MARKER]
+#   prepare-pe13-local-payload.sh BUILD_NUMBER STATE_DIR EVIDENCE_DIR [MARKER]
 #
 # STATE_DIR is the VM directory given to build-pe13-local.sh; EVIDENCE_DIR is
 # the same evidence directory as a Mac path and must hold the captured
 # build.log. Produces EVIDENCE_DIR/payload (four images, raw system/vendor,
-# FIT inputs, kernel symbols and dual identity-free FITs), image-validation.json,
-# the protected installer dry run and the unsigned
-# ZIP payload (zip-payload/). The FITs, installer and ZIP payload come from the
+# FIT inputs, kernel symbols and dual identity-free FITs), image-validation.json
+# and the unsigned ZIP payload (zip-payload/). The FITs, installer and ZIP payload come from the
 # same code as the Actions assembly in crux-pe13-distributed. No device access.
 # Sign and finalize the ZIP afterwards with crux_zip.py sign and finalize.
 set -euo pipefail
 
 scripts=$(cd -- "$(dirname -- "$0")" && pwd -P)
 workspace=$(cd -- "$scripts/../.." && pwd -P)
-direct_plan=false
-if [[ ${1:-} = --direct-install-plan ]]; then
-    direct_plan=true
-    shift
-fi
 build=${1:?BUILD_NUMBER}
 state=${2:?STATE_DIR}
 evidence=$(cd -- "${3:?EVIDENCE_DIR}" && pwd -P)
 marker=${4:-crux-pe13-local-$build}
-manifest=$workspace/out/crux-pe13-device-validation-2026-11-05/RAM-TWRP/v2/candidate.json
-manifest_sha256=3ca1a48923cf4a432fbe7a70a6f0066cd7cf650a5f9ff9daf34375f650dadc7d
+mkimage=${MKIMAGE:-$workspace/crux-uboot/.output-crux/xiaomi-crux/tools/mkimage}
+test -x "$mkimage"
 [[ $build =~ ^[0-9]{10}$ ]]
 
 grep -Fq '#### build completed successfully' "$evidence/build.log"
 orb -m cruxbuild python3 "/mnt/mac$scripts/local-build-state.py" run "$state" -- \
-    bash -s -- "/mnt/mac$evidence" "/mnt/mac$workspace" "$state" "$build" "$marker" <<'VM'
+    bash -s -- "/mnt/mac$evidence" "/mnt/mac$workspace" "$state" "$build" "$marker" "/mnt/mac$scripts" <<'VM'
 set -euo pipefail
 evidence=$1
 workspace=$2
 state=$3
 build=$4
 marker=$5
+scripts=$6
 out=$state/android-out
 if [[ -f $state/local-build-cache.json ]]; then
     out=$(python3 "$scripts/local-build-state.py" logical-out "$state")
@@ -82,25 +77,11 @@ python3 "$contracts/package-pe13.py" \
     --boot-ramdisk "$inputs/ramdisk.img" --recovery-ramdisk "$inputs/ramdisk-recovery.img" \
     --dualboot --development-adb --without-identity \
     --source-contract "$contracts/source-declarative-boot-contract.json" --output-dir "$payload/fits" \
-    --mkimage "$workspace/crux-uboot/.output-tools/tools/mkimage"
+    --mkimage "$mkimage"
 (
     cd -- "$payload/fits"
     shasum -a 256 -c FIT-SHA256SUMS
 )
-python3 "$scripts/install-pe13.py" \
-    --system "$payload/system.raw.img" \
-    --system-sha256 "$(awk '$2 == "./system.raw.img" { print $1 }' "$evidence/vm-payload-SHA256SUMS")" \
-    --vendor "$payload/vendor.raw.img" \
-    --vendor-sha256 "$(awk '$2 == "./vendor.raw.img" { print $1 }' "$evidence/vm-payload-SHA256SUMS")" \
-    --out "$evidence/install-dry-run" --dry-run | tee "$evidence/install-dry-run.json"
-if $direct_plan; then
-    python3 "$scripts/direct-install-pe13.py" plan \
-    --system "$payload/system.raw.img" --vendor "$payload/vendor.raw.img" \
-    --recovery-fit "$payload/fits/recovery-cepheus.itb" --rom-fit "$payload/fits/rom-cepheus.itb" \
-    --identity "$evidence/image-validation.json" \
-    --ram-twrp-manifest "$manifest" --ram-twrp-manifest-sha256 "$manifest_sha256" \
-    --out "$evidence/direct-install-plan" | tee "$evidence/direct-install-plan.json"
-fi
 make -s -C "$actions/installer"
 python3 "$actions/scripts/crux_zip.py" prepare \
     --system "$payload/system.raw.img" --vendor "$payload/vendor.raw.img" \
