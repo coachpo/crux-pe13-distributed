@@ -4,7 +4,7 @@ This repository owns the GitHub Actions pipeline for the **development** Crux
 PE13 product (`aosp_crux-userdebug`): four development images, two U-Boot FITs
 and the signed TWRP ZIP made from them. The local OrbStack build compiles the
 same pinned source and packages the same ZIP with the same tools, but does not
-publish here.
+publish here; its host tools are in [`local/`](local/README.md).
 
 ## Standard-runner build chain
 

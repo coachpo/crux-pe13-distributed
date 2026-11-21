@@ -40,7 +40,7 @@ def require(condition, message):
 
 
 def load_ram(workspace):
-    path = Path(workspace) / "u-boot-port/scripts/ram-boot-pe13.py"
+    path = Path(workspace) / "crux-pe13-distributed/local/ram-boot-pe13.py"
     require(path.is_file(), "Missing U-Boot session helper: " + str(path))
     spec = importlib.util.spec_from_file_location("ram_boot_pe13", path)
     module = importlib.util.module_from_spec(spec)

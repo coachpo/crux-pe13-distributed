@@ -850,7 +850,7 @@ def main():
                              "U-Boot (crux_ota bootargs) can boot them")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mkimage", default=shutil.which("mkimage") or
-                        str(workspace / "u-boot-port/tools/host/mkimage"))
+                        str(workspace / "crux-uboot/.output-tools/tools/mkimage"))
     parser.add_argument("--fdtoverlay", default=shutil.which("fdtoverlay") or "fdtoverlay")
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()
