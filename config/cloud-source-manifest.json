@@ -1716,15 +1716,15 @@
       "url": "https://github.com/PixelExperience/device_qcom_sepolicy_vndr-legacy-um"
     },
     {
-      "expected_tree": "43caa8d0bfcca20a74a3b3e68e4d90c2e2a11740",
+      "expected_tree": "cbedafb4dc90f26d669620339b6eddba2a4f8c46",
       "patches": [
         {
-          "path": "config/source-patches/device-crux-dev-marker-2026112150.patch",
-          "sha256": "64c05bdfab2aba2b6427d5a451f6eb3a27347acf92642202f02935d2b25a307c"
+          "path": "config/source-patches/device-crux-dev-marker-2026112151.patch",
+          "sha256": "29caac7c4a408dba243e1c5ccaa935873fe8ead90185b12487935a43f9082483"
         }
       ],
       "path": "device/xiaomi/crux",
-      "revision": "d97331c12867719d77aa3338dced4fbb4d1f3bd4",
+      "revision": "3cb067e626ffd8a606da817891c7720535cbbb0b",
       "url": "https://github.com/coachpo/device_xiaomi_crux"
     },
     {
@@ -5811,7 +5811,7 @@
     },
     {
       "path": "kernel/xiaomi/crux-pe-cepheus",
-      "revision": "086b838e3a50f76e3e25b67b41862a401d3fa7a5",
+      "revision": "2a6319afbb1b9d7d29f7868eda5de27e63e0f2d9",
       "url": "https://github.com/coachpo/kernel_xiaomi_crux"
     },
     {
