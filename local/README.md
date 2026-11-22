@@ -70,10 +70,10 @@ python3 -m venv ~/.venvs/crux-local
    packages the identity-free FITs with `references/pe13-boot-contracts/package-pe13.py`
    (its boot contract carries no device identity), validates the images (PE fstab routing, native guard,
    development ADB properties) and writes the unsigned payload with
-   `scripts/crux_zip.py prepare`. `mkimage` is the Crux U-Boot host tool
-   (`MKIMAGE` overrides it); build it once with `crux-uboot/tools/crux/build-images.sh`
-   (see `crux-uboot/tools/crux/README.md`), which leaves it in
-   `crux-uboot/.output-crux/xiaomi-crux/tools/mkimage`.
+   `scripts/crux_zip.py prepare`. Keep the Mac-native Crux `mkimage` at
+   `crux-uboot/.output-crux/xiaomi-crux/tools/mkimage`, or select it with
+   `MKIMAGE`. The U-Boot candidate builder now runs on Linux and its host
+   tool is not a replacement for the Mac executable.
 
 4. Sign with the B install private key and finalize:
 
