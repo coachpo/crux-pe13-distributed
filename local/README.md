@@ -144,7 +144,8 @@ numbers of the remaining partitions do not change. It writes head/tail images of
 
 If the expected menu or endpoint does not appear, stop and report it.
 
-`ram-boot-pe13.py --fit F --fit-sha256 H --mode recovery|rom --out D` stages a
+`ram-boot-pe13.py --fit F --fit-sha256 H --mode recovery|rom --expected-uboot-version V --out D`
+(`ANDROID_SERIAL` names the phone, `V` is the deployed Boot U-Boot banner) stages a
 FIT into RAM from that shell with its final DT/bootargs and the checked watchdog
 for kernel debugging (`--dry-run` validates without the device); completion
 needs a unique executed marker, not command echo.

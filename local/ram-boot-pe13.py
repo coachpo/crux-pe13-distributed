@@ -568,7 +568,8 @@ def main():
     sdk = Path.home() / "Library/Android/sdk/platform-tools"
     parser.add_argument("--adb", default=shutil.which("adb") or str(sdk / "adb"))
     parser.add_argument("--fastboot", default=shutil.which("fastboot") or str(sdk / "fastboot"))
-    parser.add_argument("--expected-uboot-version", default="2026.10-rc5-00618-g5ba2e98a115a")
+    parser.add_argument("--expected-uboot-version", required=True,
+                        help="Banner of the deployed Boot U-Boot, e.g. 2026.10-rc5-00625-g183563772d6f; the deployed set is named in the component record")
     parser.add_argument("--watcher-pid", type=int, default=66661, help="Existing watcher; never started by this script")
     args = parser.parse_args()
     if not SERIAL:
