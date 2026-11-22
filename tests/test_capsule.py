@@ -1,0 +1,2323 @@
+import importlib.util
+import io
+import json
+from pathlib import Path
+import shutil
+import shlex
+import zipfile
+import subprocess
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+
+MODULE = Path(__file__).resolve().parents[1] / "scripts" / "capsule.py"
+SPEC = importlib.util.spec_from_file_location("capsule", MODULE)
+capsule = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(capsule)
+
+
+class CapsuleTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.base = Path(self.temporary.name).resolve()
+        self.source = self.base / "source"
+        self.out = self.base / "out"
+        self.slice = self.base / "slice"
+        self.slice.mkdir()
+        self.source.mkdir()
+        self.out.mkdir()
+        self.write(self.source / "prebuilts/build-tools/linux-x86/bin/ninja", "ninja", 0o755)
+        self.write(self.source / "lib/unit.c", '#include "local.h"\nint value = LOCAL;\n')
+        self.write(self.source / "lib/local.h", "#define LOCAL 7\n")
+        self.write(self.slice / "build.ninja", "rule cc\n  command = cc -c $in -o $out\n")
+        self.manifest = {"schema_version": 1, "source_root": str(self.source),
+                         "runtime_dir": ".crux-task/graph", "ninja": "build.ninja",
+                         "targets": [str(self.out / "unit.o")],
+                         "outputs": [str(self.out / "unit.o")],
+                         "external_inputs": [], "leaf_inputs": ["lib/unit.c"],
+                         "commands": [], "edges": []}
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def write(self, path, content, mode=0o644):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content if isinstance(content, bytes) else content.encode())
+        path.chmod(mode)
+
+    def collect(self, additional_source_inputs=()):
+        (self.slice / "manifest.json").write_text(json.dumps(self.manifest))
+        collector = capsule.Collector(self.manifest, self.source, self.out,
+                                      additional_source_inputs=additional_source_inputs)
+        task_path = collector.collect(self.slice)
+        metadata = collector.metadata(self.slice / "manifest.json", task_path)
+        stream = io.BytesIO()
+        collector.archive(stream, metadata, task_path)
+        stream.seek(0)
+        return collector, metadata, tarfile.open(fileobj=stream, mode="r:")
+
+    def test_cold_capsule_contains_hidden_headers_and_executable_modes(self):
+        self.write(self.out / "unit.o", b"\x7fELFstale-object")
+        _, metadata, archive = self.collect()
+        names = archive.getnames()
+        self.assertIn(str(self.source / "lib/local.h").lstrip("/"), names)
+        self.assertNotIn(str(self.out / "unit.o").lstrip("/"), names)
+        self.assertEqual(archive.getmember(str(self.source / "prebuilts/build-tools/linux-x86/bin/ninja").lstrip("/")).mode, 0o755)
+        self.assertEqual(metadata["slice_path"], str(self.source / ".crux-task/graph"))
+        self.assertIn(str(self.source / ".crux-task/graph/manifest.json").lstrip("/"), names)
+
+    def test_default_ninja_includes_declared_host_runtime_without_other_tool_commands(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/lib64/libjemalloc5.so"
+        self.write(runtime, b"\x7fELFninja runtime")
+        self.manifest["commands"] = []
+        _, metadata, archive = self.collect()
+        self.assertIn(str(runtime).lstrip("/"), archive.getnames())
+        specification = next(item for item in metadata["files"] if item["path"] == str(runtime))
+        self.assertEqual(specification["sha256"], capsule.digest(runtime))
+
+    def test_compat_r8_capsule_includes_systemui_sibling_source_without_probing_out(self):
+        parent = 'vendor/pixel-framework/SystemUIGoogle/proguard.flags'
+        child = 'frameworks/base/packages/SystemUI/proguard.flags'
+        generated = self.out / 'aar/proguard.txt'
+        self.write(self.source / parent, '-include ../../../' + child + '\n')
+        self.write(self.source / child, '-keep class example.SystemUI { *; }\n')
+        self.write(generated, '-include ' + str(self.source / 'warm-only.flags') + '\n')
+        self.manifest['leaf_inputs'].append(parent)
+        self.manifest['external_inputs'].append(str(generated))
+        self.manifest['commands'] = ['r8-compat-proguard --min-api 33 -include ' + parent
+                                     + ' -include ' + str(generated)]
+        original = json.loads(json.dumps(self.manifest))
+        def guard(method):
+            def checked(path, *args, **kwargs):
+                if path == generated:
+                    raise AssertionError('R8 input collection probed a generated config')
+                return method(path, *args, **kwargs)
+            return checked
+        with patch.object(Path, 'is_file', guard(Path.is_file)), \
+                patch.object(Path, 'read_text', guard(Path.read_text)), \
+                patch.object(Path, 'resolve', guard(Path.resolve)):
+            _, metadata, archive = self.collect()
+        spec = next(item for item in metadata['files'] if item['path'] == str(self.source / child))
+        self.assertIn('r8-proguard-source', spec['reasons'])
+        self.assertEqual(archive.extractfile(str(self.source / child).lstrip('/')).read(),
+                         (self.source / child).read_bytes())
+        self.assertNotIn(str(generated).lstrip('/'), archive.getnames())
+        self.assertEqual(self.manifest, original)
+        self.assertEqual(metadata['manifest_sha256'], capsule.digest(self.slice / 'manifest.json'))
+
+    def test_compat_r8_uses_recorded_shell_script_and_actual_cwd(self):
+        package = self.source / 'working package'
+        self.write(package / 'rules/root.flags', '@"nested rules.flags"\n')
+        self.write(package / 'rules/nested rules.flags', '-dontshrink\n')
+        self.write(self.source / 'rules/root.flags', '-include unrelated-missing.flags\n')
+        rsp = str(self.out / 'native-script.rsp')
+        self.manifest['edges'] = [{'command': 'env -C ' + shlex.quote(str(package)) + ' /bin/bash ' + rsp,
+                                   'rspfile': rsp, 'rspfile_content':
+                                   'r8-compat-proguard -include rules/root.flags'}]
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertIn(str(package / 'rules/nested rules.flags'), files)
+        self.assertNotIn(str(self.source / 'rules/root.flags'), files)
+        self.assertNotIn(rsp, files)
+
+    def test_modern_r8_flagfile_distinguishes_source_inputs_from_outputs(self):
+        source_flags = self.source / 'rules with spaces/root.flags'
+        hidden = self.source / 'rules with spaces/child.flags'
+        output_flags = self.source / 'output-only.flags'
+        args = self.source / 'modern flags.rsp'
+        self.write(source_flags, '-include child.flags\n')
+        self.write(hidden, '-dontobfuscate\n')
+        self.write(output_flags, '-include must-not-be-read.flags\n')
+        self.write(args, '\n'.join(['  --pg-conf  ', str(source_flags), '\t--pg-conf-output\t', str(output_flags),
+                                    '--desugared-lib-pg-conf-output=' + str(output_flags)]) + '\n')
+        self.manifest['commands'] = ['java -cp r8.jar com.android.tools.r8.R8 ' + shlex.quote('@' + str(args))]
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertTrue({str(source_flags), str(hidden), str(args)} <= files)
+        self.assertNotIn(str(output_flags), files)
+
+    def test_non_r8_include_operand_is_not_scanned_as_proguard(self):
+        self.write(self.source / 'rules/root.flags', '-include hidden.flags\n')
+        self.write(self.source / 'rules/hidden.flags', '-dontshrink\n')
+        self.manifest['commands'] = ['another-tool r8-compat-proguard -include rules/root.flags']
+        _, metadata, _ = self.collect()
+        files = {item['path'] for item in metadata['files']}
+        self.assertIn(str(self.source / 'rules/root.flags'), files)
+        self.assertNotIn(str(self.source / 'rules/hidden.flags'), files)
+
+    def test_r8_source_link_to_generated_out_is_not_an_input(self):
+        generated = self.out / 'warm.flags'
+        self.write(generated, '-dontshrink\n')
+        (self.source / 'linked.flags').symlink_to(generated)
+        self.manifest['commands'] = ['r8-compat-proguard -include linked.flags']
+        with self.assertRaisesRegex(capsule.CapsuleError, 'Additional SOURCE input must not be generated'):
+            self.collect()
+
+    def test_r8_source_rooted_config_links_use_existing_capsule_link_guards(self):
+        target = self.base / 'pinned-source-project/rules.flags'
+        self.write(target, '-dontshrink\n')
+        link = self.source / 'linked.flags'
+        link.symlink_to(target)
+        self.manifest['commands'] = ['r8-compat-proguard -include linked.flags']
+        _, _, archive = self.collect()
+        self.assertTrue(archive.getmember(str(link).lstrip('/')).issym())
+        self.assertEqual(archive.extractfile(str(target).lstrip('/')).read(), target.read_bytes())
+
+    def test_compiled_out_leaf_fails_instead_of_seeding_previous_build(self):
+        stale = self.out / "libupstream.a"
+        self.write(stale, b"!<arch>\nold")
+        self.manifest["leaf_inputs"].append(str(stale))
+        self.manifest["allowed_generated_inputs"] = [{"path": str(stale), "reason": "metadata"}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_out_metadata_needs_explicit_reason_and_is_recorded(self):
+        generated = self.out / "soong/soong.variables"
+        self.write(generated, '{"DeviceName":"crux"}\n')
+        self.manifest["leaf_inputs"].append(str(generated))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.manifest["allowed_generated_inputs"] = [{"path": str(generated), "reason": "frozen Soong configuration"}]
+        _, metadata, archive = self.collect()
+        self.assertEqual(metadata["allowed_generated_inputs"], self.manifest["allowed_generated_inputs"])
+        self.assertIn(str(generated).lstrip("/"), archive.getnames())
+
+    def test_source_symlink_and_target_are_preserved(self):
+        external = self.base / "kernel"
+        self.write(external / "include/kernel.h", "#define KERNEL 1\n")
+        (self.source / "kernel").symlink_to(external, target_is_directory=True)
+        self.manifest["leaf_inputs"].append("kernel/include/kernel.h")
+        _, metadata, archive = self.collect()
+        link = archive.getmember(str(self.source / "kernel").lstrip("/"))
+        self.assertTrue(link.issym())
+        self.assertEqual(link.linkname, str(external))
+        self.assertIn(str(external / "include/kernel.h").lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "kernel/include/kernel.h").lstrip("/"), archive.getnames())
+
+    def test_additional_source_inputs_default_does_not_collect_unreferenced_license_texts(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, "Unreferenced source license\n")
+        _, default_metadata, default_archive = self.collect()
+        _, empty_metadata, empty_archive = self.collect(additional_source_inputs=())
+        self.assertEqual(default_metadata, empty_metadata)
+        self.assertEqual(default_archive.getnames(), empty_archive.getnames())
+        self.assertNotIn(str(license_path).lstrip("/"), default_archive.getnames())
+        self.assertEqual(default_metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_preserve_license_bytes_modes_and_link_targets(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, b"Copyright \xc2\xa9 Example\nLicense terms\n", 0o640)
+        readme = self.source / "external/wpa_supplicant_8/README"
+        self.write(readme, "WPA supplicant license and documentation\n", 0o644)
+        link = readme.parent / "LICENSE"
+        link.symlink_to("README")
+        self.write(self.out / "unit.o", b"\x7fELFstale-object")
+        _, metadata, archive = self.collect([license_path, "external/wpa_supplicant_8/LICENSE"])
+        for path, mode in [(license_path, 0o640), (readme, 0o644)]:
+            member = archive.getmember(str(path).lstrip("/"))
+            self.assertEqual(member.mode, mode)
+            self.assertEqual(archive.extractfile(member).read(), path.read_bytes())
+            spec = next(item for item in metadata["files"] if item["path"] == str(path))
+            self.assertIn("notice-license-source", spec["reasons"])
+        member = archive.getmember(str(link).lstrip("/"))
+        self.assertTrue(member.issym())
+        self.assertEqual(member.linkname, "README")
+        self.assertEqual(member.mode, link.lstat().st_mode & 0o7777)
+        spec = next(item for item in metadata["files"] if item["path"] == str(link))
+        self.assertIn("notice-license-source:symlink", spec["reasons"])
+        self.assertNotIn(str(self.out / "unit.o").lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_allow_source_rooted_external_symlink_targets(self):
+        target = self.base / "external-library/LICENSE"
+        self.write(target, "Pinned external source license\n")
+        link = self.source / "external/library"
+        link.parent.mkdir()
+        link.symlink_to(target.parent, target_is_directory=True)
+        _, metadata, archive = self.collect(["external/library/LICENSE"])
+        self.assertTrue(archive.getmember(str(link).lstrip("/")).issym())
+        self.assertEqual(archive.extractfile(str(target).lstrip("/")).read(), target.read_bytes())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_additional_source_inputs_reject_missing_generated_out_unrooted_and_directories(self):
+        out_text = self.out / "notice/approved.txt"
+        compiled = self.out / "notice/compiled.jar"
+        generated_source = self.source / "generated/LICENSE"
+        external = self.base / "unrooted/LICENSE"
+        directory = self.source / "external/library"
+        self.write(out_text, "Old generated text\n")
+        self.write(compiled, b"PK\x03\x04old generated binary")
+        self.write(generated_source, "Generated SOURCE-path text\n")
+        self.write(external, "Unrooted external text\n")
+        self.write(directory / "LICENSE", "Source text\n")
+        out_link = self.source / "out-license"
+        out_link.symlink_to(out_text)
+        directory_link = self.source / "directory-license"
+        directory_link.symlink_to(directory, target_is_directory=True)
+        broken_link = self.source / "broken-license"
+        broken_link.symlink_to("missing-target")
+        self.manifest["outputs"].append(str(generated_source))
+        self.manifest["allowed_generated_inputs"] = [{"path": str(out_text), "reason": "frozen metadata"}]
+        for path in [self.source / "missing/LICENSE", broken_link, out_text, compiled, generated_source,
+                     external, "../unrooted/LICENSE", directory, directory_link, out_link]:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(capsule.CapsuleError, "(?:Additional|Missing additional) SOURCE input"):
+                    self.collect([path])
+
+    def test_two_hop_python_link_restores_logical_script_and_sibling_import(self):
+        target = self.source / "build/make/tools/fs_config/fs_config_generator.py"
+        self.write(target, "import sibling\nprint(sibling.VALUE)\n", 0o755)
+        self.write(target.parent / "sibling.py", "VALUE = 42\n")
+        (self.source / "build/tools").symlink_to("make/tools", target_is_directory=True)
+        logical = self.source / "bionic/libc/fs_config_generator.py"
+        logical.parent.mkdir(parents=True)
+        logical.symlink_to("../../build/tools/fs_config/fs_config_generator.py")
+        self.manifest["leaf_inputs"].append(str(logical))
+        _, _, archive = self.collect()
+        self.assertTrue(archive.getmember(str(self.source / "build/tools").lstrip("/")).issym())
+        self.assertIn(str(target.parent / "sibling.py").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        result = subprocess.run([shutil.which("python3"), str(logical)], check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(result.stdout.strip(), "42")
+
+    def test_go_test_runner_restores_binary_and_ancestor_runtime_fixtures(self):
+        package = self.source / "project/internal/zip"
+        self.write(package / "reader_test.go", "package zip\n")
+        self.write(package / "testdata/archive.zip", b"PK\x03\x04binary zip fixture")
+        self.write(self.source / "project/testdata/reference.png", b"\x89PNGfixture")
+        self.write(self.source / "project/.git", "gitdir: metadata\n")
+        script = package / "check.py"
+        self.write(script, "from pathlib import Path\nassert Path('testdata/archive.zip').read_bytes().startswith(b'PK')\nassert Path('../../testdata/reference.png').read_bytes().startswith(b'\\x89PNG')\nprint('PASS')\n")
+        self.manifest["commands"] = [str(self.out / "bin/gotestrunner") + " -p project/internal/zip -f "
+                                      + str(self.out / "test.passed") + " -- " + str(self.out / "test") + " -test.short"]
+        _, _, archive = self.collect()
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        result = subprocess.run([shutil.which("python3"), str(script)], cwd=package, check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(result.stdout.strip(), "PASS")
+
+    def test_used_toolchain_and_python_siblings_are_available(self):
+        used = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
+        unused = self.source / "prebuilts/clang/host/linux-x86/clang-r2"
+        self.write(used / "bin/clang", "compiler", 0o755)
+        self.write(used / "lib64/clang/14/lib/linux/libclang_rt.a", "runtime")
+        self.write(unused / "bin/clang", "other compiler", 0o755)
+        self.write(self.source / "build/tools/tool.py", "import sibling\n", 0o755)
+        self.write(self.source / "build/tools/sibling.py", "VALUE = 3\n")
+        go = self.source / "prebuilts/go/linux-x86"
+        self.write(go / "pkg/tool/linux_amd64/compile", "go compiler", 0o755)
+        self.write(go / "pkg/linux_amd64/runtime.a", "go runtime")
+        self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/clang -c lib/unit.c -o " + str(self.out / "unit.o"),
+                                      "python3 build/tools/tool.py", "prebuilts/go/linux-x86/pkg/tool/linux_amd64/compile lib/unit.c"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        self.assertIn(str(used / "lib64/clang/14/lib/linux/libclang_rt.a").lstrip("/"), names)
+        self.assertNotIn(str(unused / "bin/clang").lstrip("/"), names)
+        self.assertIn(str(self.source / "build/tools/sibling.py").lstrip("/"), names)
+        self.assertIn(str(go / "pkg/linux_amd64/runtime.a").lstrip("/"), names)
+
+    def test_response_include_dirs_and_observed_depfile_inputs_are_collected(self):
+        self.write(self.source / "include space/hidden.hpp", "#define HIDDEN 1\n")
+        self.write(self.source / "other/header with space.h", "#define SPACE 1\n")
+        self.write(self.out / "unit.d", str(self.out / "unit.o") + ": lib/unit.c other/header\\ with\\ space.h\n")
+        self.manifest["edges"] = [{"rspfile_content": '-I"include space"', "depfile": str(self.out / "unit.d")}]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "include space/hidden.hpp").lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "other/header with space.h").lstrip("/"), archive.getnames())
+
+    def test_proto_import_closure_cold_transport_preserves_search_order_and_generated_inputs(self):
+        schema = self.source / "schemas/root.proto"
+        chosen = self.source / "schemas/shared.data"
+        nested = self.source / "schemas/nested/weak.schema"
+        generated = self.out / "gen/generated.schema"
+        self.write(schema, 'syntax = "proto2";\nimport public "sha" /* joined string */ "red.data";\n'
+                           '// import "missing.proto";\n/* import "also-missing.proto"; */\n'
+                           'option example = \'import "string-example-missing.proto";\';\n')
+        self.write(chosen, 'import weak "nested/weak.schema";\n')
+        self.write(nested, 'import "generated.schema";\n')
+        self.write(generated, 'old generated bytes must not seed the capsule\n')
+        self.write(self.source / "shadow/shared.data", "wrong search path\n")
+        self.write(self.source / "unrelated/large.h", "unrelated C++ header\n")
+        self.manifest["external_inputs"].append(str(generated))
+        self.manifest["commands"] = [str(self.out / "bin/aprotoc") + " --cpp_out=lite:" + str(self.out / "gen")
+                                     + " -I schemas -Ishadow --proto_path=" + str(self.out / "gen")
+                                     + " schemas/root.proto"]
+        _, metadata, archive = self.collect()
+        names = archive.getnames()
+        for path in [schema, chosen, nested]:
+            self.assertIn(str(path).lstrip("/"), names)
+        for path in [generated, self.source / "shadow/shared.data", self.source / "unrelated/large.h"]:
+            self.assertNotIn(str(path).lstrip("/"), names)
+        self.assertIn({"path": str(generated)}, metadata["external_inputs"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        # A producer receipt restores the generated import after source restore.
+        self.write(generated, "fresh receipt bytes\n")
+        self.assertIn('import public "sha"', schema.read_text())
+        self.assertIn('import weak "nested/weak.schema";', chosen.read_text())
+        self.assertIn('import "generated.schema";', nested.read_text())
+        self.assertEqual(generated.read_text(), "fresh receipt bytes\n")
+
+    def test_proto_virtual_mapping_and_response_preserve_literal_nonproto_import(self):
+        self.write(self.source / "disk/root.proto", 'import "v/types.def";\n')
+        self.write(self.source / "disk/types.def", 'message Value {}\n')
+        response = self.source / "proto.rsp"
+        self.write(response, "--proto_path=v=disk\nv/root.proto\n")
+        self.manifest["commands"] = [str(self.out / "bin/protoc") + " @proto.rsp"]
+        _, _, archive = self.collect()
+        for path in [response, self.source / "disk/root.proto", self.source / "disk/types.def"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+
+    def test_proto_response_sources_keep_outer_search_path_and_order(self):
+        self.write(self.source / "schemas/root.proto", 'import "nested/types.proto";\n')
+        self.write(self.source / "schemas/nested/types.proto", 'message Value {}\n')
+        self.write(self.source / "shadow/nested/types.proto", 'import "wrong-missing.proto";\n')
+        source_response = self.source / "sources.rsp"
+        self.write(source_response, "root.proto")
+        generated_response = self.out / "sources.rsp"
+        command = str(self.out / "bin/protoc") + " -Ischemas @" + str(generated_response) + " -Ishadow"
+        self.manifest["commands"] = [str(self.out / "bin/protoc") + " -Ischemas @sources.rsp -Ishadow"]
+        self.manifest["edges"] = [{"command": command, "rspfile": str(generated_response),
+                                     "rspfile_content": "root.proto"}]
+        _, _, archive = self.collect()
+        self.assertIn(str(source_response).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated_response).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "shadow/nested/types.proto").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        self.assertEqual(source_response.read_text(), "root.proto")
+        self.assertEqual((self.source / "schemas/nested/types.proto").read_text(), "message Value {}\n")
+
+    def test_proto_decode_redirection_reads_binary_stdin_and_does_not_seed_stdout(self):
+        schema = self.source / "schema.proto"
+        stdin = self.source / "input.bin"
+        stdout = self.out / "result.txt"
+        self.write(schema, "message Value {}\n")
+        self.write(stdin, b"\x08\x01\x00binary stdin")
+        self.write(stdout, "old stdout must not seed\n")
+        self.manifest["commands"] = [str(self.out / "bin/protoc") + " --decode=Value schema.proto < input.bin > " + str(stdout)]
+        _, _, archive = self.collect()
+        for path in [schema, stdin]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(stdout).lstrip("/"), archive.getnames())
+
+    def test_proto_response_line_is_one_argument_and_nested_at_is_literal(self):
+        root = self.source / "schemas/root schema.proto"
+        nested_at = self.source / "schemas/@literal.proto"
+        self.write(root, "message Root {}\n")
+        self.write(nested_at, "message Literal {}\n")
+        self.write(self.source / "sources.rsp", "root schema.proto\n@literal.proto\n")
+        self.manifest["commands"] = [str(self.out / "bin/protoc") + " -Ischemas @sources.rsp"]
+        _, _, archive = self.collect()
+        for path in [root, nested_at]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+
+    def test_license_metadata_rsp_strings_are_not_inputs_but_explicit_reads_still_fail(self):
+        stale = self.out / "intermediates/compiler.jar"
+        header = self.out / "gen/cap_names.h"
+        self.write(stale, b"PK\x03\x04old compiled JAR")
+        self.write(header, "old generated header\n")
+        root = self.source / "project"
+        self.write(root / "unread.h", "not read by license metadata\n")
+        rsp = self.out / "meta_lic.rsp"
+        command = str(self.out / "bin/build_license_metadata") + " -o " + str(self.out / "meta_lic") + " @" + str(rsp)
+        self.manifest["edges"] = [{"command": command, "rspfile": str(rsp),
+                                     "rspfile_content": "-is_container -r project -s '" + str(stale)
+                                     + "' -t '" + str(header) + "' -d '" + str(stale) + ":static'"}]
+        _, _, archive = self.collect()
+        self.assertIn(str(root).lstrip("/"), archive.getnames())
+        for path in [stale, header, root / "unread.h"]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        self.manifest["commands"].append("java -classpath " + str(stale) + " Main")
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+        self.manifest["commands"] = []
+        self.manifest["leaf_inputs"].append(str(stale))
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_license_metadata_source_response_is_read_and_transported(self):
+        response = self.source / "license.rsp"
+        self.write(response, "-s @" + str(self.out / "missing.jar") + " -n NOTICE -is_container=true")
+        self.manifest["commands"] = [str(self.out / "bin/build_license_metadata") + " @license.rsp"]
+        _, _, archive = self.collect()
+        self.assertIn(str(response).lstrip("/"), archive.getnames())
+        response.unlink()
+        with self.assertRaisesRegex(capsule.CapsuleError, "Missing input.*license.rsp"):
+            self.collect()
+
+    def test_compiler_depfile_output_is_observed_without_becoming_a_seed(self):
+        depfile = self.out / "unit.o.d"
+        self.write(depfile, str(self.out / "unit.o") + ": lib/unit.c lib/local.h\n")
+        self.manifest["depfiles"] = [str(depfile)]
+        self.manifest["commands"] = ["cc -MF " + str(depfile) + " -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "lib/local.h").lstrip("/"), archive.getnames())
+
+    def test_forced_include_basename_uses_declared_include_directory(self):
+        self.write(self.source / "include/fenv-access.h", "#pragma STDC FENV_ACCESS ON\n")
+        self.manifest["commands"] = ["cc -include fenv-access.h -Iinclude -c lib/unit.c"]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "include/fenv-access.h").lstrip("/"), archive.getnames())
+
+    def test_forced_host_header_resolves_sysroot_standard_include_location(self):
+        sysroot = self.source / "prebuilts/host-sysroot"
+        self.write(sysroot / "usr/include/stdio.h", "int puts(const char *);\n")
+        self.manifest["commands"] = ["clang --sysroot " + str(sysroot) + " -include stdio.h -c lib/unit.c"]
+        _, _, archive = self.collect()
+        self.assertIn(str(sysroot / "usr/include/stdio.h").lstrip("/"), archive.getnames())
+
+    def test_optional_header_scan_preserves_broken_source_symlink(self):
+        broken = self.source / "include/dne"
+        broken.parent.mkdir()
+        broken.symlink_to("missing-target")
+        self.manifest["commands"] = ["cc -Iinclude -c lib/unit.c"]
+        _, _, archive = self.collect()
+        member = archive.getmember(str(broken).lstrip("/"))
+        self.assertTrue(member.issym())
+        self.assertEqual(member.linkname, "missing-target")
+
+    def test_nested_shell_command_discovers_toolchains_and_include_options(self):
+        jdk = self.source / "prebuilts/jdk/jdk11/linux-x86"
+        self.write(jdk / "bin/javac", "javac", 0o755)
+        self.write(jdk / "lib/modules", "modules")
+        self.write(self.source / "include/system/api.h", "#define API 1\n")
+        self.write(self.source / "include/quote/local.h", "#define LOCAL 1\n")
+        self.write(self.source / "include/ordinary/plain.h", "#define PLAIN 1\n")
+        self.manifest["commands"] = [
+            '/bin/bash -c "(prebuilts/jdk/jdk11/linux-x86/bin/javac '
+            '-isystem include/system -iquoteinclude/quote -Iinclude/ordinary lib/unit.c) '
+            '&& (echo done)"'
+        ]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        self.assertIn(str(jdk / "lib/modules").lstrip("/"), names)
+        for header in ["include/system/api.h", "include/quote/local.h", "include/ordinary/plain.h"]:
+            self.assertIn(str(self.source / header).lstrip("/"), names)
+
+    def test_make_environment_includes_compiler_runtimes_and_source_tree(self):
+        clang = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
+        kernel_tools = self.source / "prebuilts/kernel-build-tools/linux-x86"
+        custom_tools = self.source / "prebuilts/tools-custom/linux-x86"
+        self.write(clang / "bin/clang", "compiler", 0o755)
+        self.write(clang / "lib64/runtime.so", "runtime")
+        self.write(kernel_tools / "bin/pahole", "pahole", 0o755)
+        self.write(kernel_tools / "lib64/libdwarves.so", "dwarves")
+        self.write(custom_tools / "bin/perl", "frozen perl", 0o755)
+        self.write(custom_tools / "lib64/runtime.so", "custom runtime")
+        self.write(self.source / "prebuilts/tools-custom/common/perl-base/module.pm", "perl")
+        self.write(self.source / "prebuilts/build-tools/common/bison/skeletons/yacc.c", "bison")
+        self.write(self.source / "kernel/drivers/driver.c", "kernel driver")
+        self.manifest["commands"] = [
+            'PATH=' + str(custom_tools / "bin") + ':' + str(clang / "bin") + ':/usr/bin:$PATH '
+            'PERL5LIB=' + str(self.source / "prebuilts/tools-custom/common/perl-base") + ' '
+            'BISON_PKGDATADIR=' + str(self.source / "prebuilts/build-tools/common/bison") + ' '
+            'CC="/usr/bin/ccache clang --cuda-path=/dev/null" '
+            'PAHOLE=' + str(kernel_tools / "bin/pahole") + ' make -C kernel O=' + str(self.out / "kernel")
+        ]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for path in [clang / "lib64/runtime.so", kernel_tools / "lib64/libdwarves.so",
+                     custom_tools / "bin/perl", custom_tools / "lib64/runtime.so",
+                     self.source / "prebuilts/tools-custom/common/perl-base/module.pm",
+                     self.source / "prebuilts/build-tools/common/bison/skeletons/yacc.c",
+                     self.source / "kernel/drivers/driver.c"]:
+            self.assertIn(str(path).lstrip("/"), names)
+        self.assertFalse(any(name.startswith("usr/") for name in names))
+        self.assertEqual(archive.getmember(str(custom_tools / "bin/perl").lstrip("/")).mode, 0o755)
+
+    def test_host_link_flags_preserve_startup_objects_and_sysroot_libraries(self):
+        gcc = self.source / "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        startup = gcc / "lib/gcc/x86_64-linux/4.8.3"
+        sysroot = gcc / "sysroot"
+        self.write(startup / "crtbeginS.o", b"\x7fELFstartup object")
+        self.write(sysroot / "usr/lib/crti.o", b"\x7fELFinit object")
+        self.write(sysroot / "usr/lib/libc.so", "GROUP (libc.so.6 libc_nonshared.a)")
+        self.write(sysroot / "usr/lib/libc.so.6", b"\x7fELFlibc")
+        runtime = self.source / "prebuilts/custom-runtime"
+        self.write(runtime / "libgcc.a", b"!<arch>\nruntime")
+        resource = self.source / "prebuilts/custom-resource"
+        self.write(resource / "lib/libclang_rt.a", b"!<arch>\nclang runtime")
+        self.manifest["commands"] = ["clang++ --gcc-toolchain=" + str(gcc)
+                                      + " -B" + str(startup) + " -L " + str(runtime)
+                                      + " --sysroot " + str(sysroot) + " -resource-dir=" + str(resource)
+                                      + " -shared -o " + str(self.out / "lib.so")]
+        _, _, archive = self.collect()
+        for path in [startup / "crtbeginS.o", sysroot / "usr/lib/crti.o", sysroot / "usr/lib/libc.so.6",
+                     runtime / "libgcc.a", resource / "lib/libclang_rt.a"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+
+    def test_legacy_env_python2_script_requires_frozen_hermetic_interpreter(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        self.write(runtime, b"\x7fELFhermetic Python2 runtime", 0o755)
+        script = self.source / "build/generator.py"
+        self.write(script, "#!/usr/bin/env python2\nimport ConfigParser\n", 0o755)
+        self.manifest["leaf_inputs"].append(str(script))
+        _, metadata, archive = self.collect()
+        self.assertEqual(metadata["required_interpreters"], [{"name":"python2","aliases":["python2","python2.7"],
+                         "executable":str(runtime),"source_scripts":[str(script)]}])
+        self.assertIn(str(runtime).lstrip("/"), archive.getnames())
+
+    def test_env_python_preserves_frozen_native_python2_default(self):
+        runtime = self.source / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        self.write(runtime, b"\x7fELFhermetic Python2 runtime", 0o755)
+        wrapper = self.source / "prebuilts/build-tools/path/linux-x86/python"
+        wrapper.parent.mkdir(parents=True)
+        wrapper.symlink_to("../../linux-x86/bin/py2-cmd")
+        script = self.source / "build/hyphen.py"
+        self.write(script, "#!/usr/bin/env python\nprint('original runtime')\n", 0o755)
+        self.manifest["leaf_inputs"].append(str(script))
+        _, metadata, _ = self.collect()
+        item = metadata["required_interpreters"][0]
+        self.assertEqual(item["aliases"], ["python", "python2", "python2.7"])
+        self.assertEqual(item["native_default_wrapper"], str(wrapper))
+        self.assertEqual(item["executable"], str(runtime))
+
+    def test_symbolic_link_target_and_output_are_literal_operands(self):
+        target=self.base / "outside-source-target"
+        target.mkdir()
+        destination=self.out / "root/d"
+        destination.parent.mkdir()
+        destination.symlink_to(target)
+        self.manifest["commands"]=["/bin/bash -c 'ln -sfn " + str(target) + " " + str(destination) + "'"]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(target).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(destination).lstrip("/"), archive.getnames())
+
+    def test_rust_emit_transient_depfile_and_codegen_arguments_are_outputs_and_data(self):
+        raw=self.out / "lib.rlib.d.raw"
+        self.write(raw, "old compiler depfile\n")
+        runtime=self.source / "prebuilts/linker-runtime"
+        self.write(runtime / "libgcc.a", b"!<arch>\nruntime")
+        self.manifest["commands"]=["rustc -C 'link-args=" + " -Wl,--no-undefined"*30
+                                      + " -L"+str(runtime)+"' --emit dep-info="+str(raw)
+                                      + " lib/unit.c && grep x "+str(raw)]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(raw).lstrip("/"),archive.getnames())
+        self.assertIn(str(runtime / "libgcc.a").lstrip("/"),archive.getnames())
+
+    def test_notice_response_arguments_recreated_in_same_action_are_not_source_seeds(self):
+        arguments = self.out / "notice/module.meta_lic/arguments"
+        self.write(arguments, "stale response data\n")
+        self.manifest["commands"] = ["/bin/bash -c 'rm -f " + str(arguments) + " && touch " + str(arguments)
+            + " && echo -n source >> " + str(arguments) + " && build_license_metadata @" + str(arguments) + "'"]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(arguments).lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+
+    def test_action_fresh_write_does_not_hide_prior_reads_append_only_or_explicit_leaves(self):
+        arguments = self.out / "arguments"
+        self.write(arguments, "original response\n")
+        commands = [
+            "cat " + str(arguments) + " && rm -f " + str(arguments) + " && touch " + str(arguments)
+                + " && echo new >> " + str(arguments),
+            "echo appended >> " + str(arguments) + " && reader @" + str(arguments),
+            "touch " + str(arguments) + " && echo appended >> " + str(arguments),
+            "rm -f " + str(arguments) + " || touch " + str(arguments) + " ; reader " + str(arguments),
+            "reader --input=" + str(arguments) + " && echo new > " + str(arguments),
+            "reader CONFIG=" + str(arguments) + " && echo new > " + str(arguments),
+            "CONFIG=" + str(arguments) + " reader && echo new > " + str(arguments),
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.manifest["commands"] = [command]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = ["echo new > " + str(arguments) + " && reader @" + str(arguments)]
+        self.manifest["leaf_inputs"].append(str(arguments))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_truncating_write_recreates_action_local_argument_file(self):
+        arguments = self.out / "arguments"
+        self.write(arguments, "old data\n")
+        self.manifest["commands"] = ["echo new > " + str(arguments) + " && reader " + str(arguments)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(arguments).lstrip("/"), archive.getnames())
+
+    def test_generator_depfiles_are_same_action_outputs_with_ordered_real_reads(self):
+        depfile = self.out / "generated.d"
+        self.write(depfile, "old generated dependency data\n")
+        self.write(self.source / "input.aidl", "interface Input {}\n")
+        self.write(self.source / "schema.proto", "message Input {}\n")
+        for writer in ["aidl -d" + str(depfile) + " input.aidl", "aidl --dep=" + str(depfile) + " input.aidl",
+                       "protoc --dependency_out=" + str(depfile) + " schema.proto"]:
+            with self.subTest(writer=writer):
+                self.manifest["commands"] = [writer + " && dep_fixer " + str(depfile)]
+                _, _, archive = self.collect()
+                self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+                self.manifest["commands"] = ["reader --input=" + str(depfile) + " && " + writer]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = ["aidl -d" + str(depfile) + " input.aidl", "reader " + str(depfile)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_fresh_aar_and_module_namespaces_skip_stale_children_but_keep_real_inputs(self):
+        aar = self.source / "libs/input.aar"
+        dependency = self.source / "libs/dependency.jar"
+        stage = self.out / "module/aar"
+        child = stage / "classes.jar"
+        self.write(aar, b"PK\x03\x04source AAR")
+        self.write(dependency, b"PK\x03\x04source classpath")
+        self.write(child, b"PK\x03\x04stale compiled child")
+        self.write(stage / "libs/library.jar", b"PK\x03\x04stale compiled nested child")
+        self.manifest["commands"] = ["rm -rf " + str(stage) + " && mkdir -p " + str(stage)
+                                     + " && unzip -qo -d " + str(stage) + " " + str(aar)
+                                     + " && merge_zips " + str(self.out / "unit.o")
+                                     + " $(ls " + str(child) + ") $(ls " + str(stage / "libs/*.jar") + ")"
+                                     + " && javac -classpath " + str(dependency) + ":" + str(child) + " lib/unit.c"]
+        _, metadata, archive = self.collect()
+        for path in [aar, dependency]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(child).lstrip("/"), archive.getnames())
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        self.manifest["commands"][0] = "java -classpath " + str(child) + " Main && " + self.manifest["commands"][0]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_fresh_directory_scope_starts_after_reset_and_stops_at_action_boundary(self):
+        stage = self.out / "modules"
+        child = stage / "module.jar"
+        self.write(child, b"PK\x03\x04stale module")
+        prefix = "rm -rf " + str(stage) + " && mkdir -p " + str(stage / "jmod")
+        self.manifest["commands"] = [prefix + " && /bin/bash -c 'reader " + str(child) + "' | cat"]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(child).lstrip("/"), archive.getnames())
+        for command in ["/bin/bash -c 'reader " + str(child) + "' && " + prefix,
+                        "rm -rf " + str(stage) + " || true ; mkdir -p " + str(stage) + " ; reader " + str(child),
+                        "rm -rf " + str(stage) + " | cat ; mkdir -p " + str(stage) + " ; reader " + str(child)]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+        for command in [prefix + " || true ; cat " + str(child), prefix + " ; cat " + str(child),
+                        "(rm -rf " + str(stage) + " && mkdir -p " + str(stage) + ") || true ; cat " + str(child)]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+        self.manifest["commands"] = [prefix, "reader " + str(child)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+        self.manifest["commands"] = [prefix + " && reader " + str(child)]
+        self.manifest["leaf_inputs"].append(str(child))
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_zip_rsp_keeps_sources_and_scopes_fresh_output_reader(self):
+        temporary_zip = self.out / "gensrcs.zip"
+        response = self.source / "sources.rsp"
+        self.write(temporary_zip, b"PK\x03\x04stale generated zip")
+        self.write(self.source / "inputs/src.txt", "original source bytes\n")
+        self.write(response, "-C inputs -f inputs/src.txt")
+        self.manifest["commands"] = ["soong_zip -o " + str(temporary_zip) + " @sources.rsp && zipsync " + str(temporary_zip)]
+        _, _, archive = self.collect()
+        for path in [response, self.source / "inputs/src.txt"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(temporary_zip).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader --input=" + str(temporary_zip) + " && " + self.manifest["commands"][0]]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_xmlnotice_literal_prefixes_keep_positional_metadata_dependencies(self):
+        prefix = self.out / "boot.img"
+        metadata = self.source / "notice.meta_lic"
+        self.write(prefix, b"ANDROID!stale boot image")
+        self.write(metadata, "license_kinds: \"SPDX-Apache-2.0\"\n")
+        self.manifest["commands"] = ["xmlnotice -strip_prefix=" + str(prefix) + " -product " + str(prefix)
+                                     + " -title " + str(prefix) + " " + str(metadata)]
+        _, _, archive = self.collect()
+        self.assertIn(str(metadata).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(prefix).lstrip("/"), archive.getnames())
+        self.manifest["leaf_inputs"].append(str(prefix))
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_sourced_ninja_rsp_inherits_fresh_namespace_without_losing_copy_sources(self):
+        stage = self.out / "image.apex"
+        generated = stage / "etc/data.txt"
+        source = self.source / "payload/data.txt"
+        response = self.out / "copy_commands"
+        self.write(generated, "stale staging data\n")
+        self.write(source, "actual source data\n")
+        body = "mkdir -p " + str(stage / "etc") + " && cp " + str(source) + " " + str(generated)
+        command = "rm -rf " + str(stage) + " && mkdir -p " + str(stage) + " && (. " + str(response) + ") && apexer " + str(stage)
+        self.manifest["edges"] = [{"command": command, "rspfile": str(response), "rspfile_content": body}]
+        _, _, archive = self.collect()
+        self.assertIn(str(source).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(response).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader " + str(generated) + " && " + command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_first_append_after_successful_removal_creates_fresh_action_file(self):
+        info = self.out / "image-info.txt"
+        self.write(info, "old image metadata\n")
+        command = "rm -f " + str(info) + " && echo first >> " + str(info) + " && producer | awk x && echo second >> " + str(info) + " && build_image " + str(info)
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(info).lstrip("/"), archive.getnames())
+        self.manifest["commands"] = ["reader --input=" + str(info) + " && " + command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.manifest["commands"] = ["rm -f " + str(info) + " || true ; echo first >> " + str(info)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_llvm_output_and_kotlin_xml_are_fresh_without_global_path_exemptions(self):
+        bitcode = self.out / "lib.bc.unstripped"
+        xml = self.out / "kotlin-build.xml"
+        source_bitcode = self.source / "payload/input.bc"
+        script = self.source / "build/soong/scripts/gen-kotlin-build-file.py"
+        self.write(bitcode, b"BC\xc0\xdeold bitcode")
+        self.write(xml, "old module XML\n")
+        self.write(source_bitcode, b"BC\xc0\xdesource bitcode")
+        self.write(script, "print('generator')\n")
+        command = "llvm-link -o " + str(bitcode) + " " + str(source_bitcode) + " && bcc_strip_attr " + str(bitcode)
+        xml_command = "python3 " + str(script) + " --out " + str(xml) + " && kotlinc -Xbuild-file=" + str(xml)
+        self.manifest["commands"] = [command, xml_command]
+        _, _, archive = self.collect()
+        self.assertIn(str(source_bitcode).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(bitcode).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(xml).lstrip("/"), archive.getnames())
+        self.manifest["commands"].append("reader " + str(xml))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_rust_emit_output_is_scoped_to_its_own_action(self):
+        depfile = self.out / "lib.rlib.d.raw"
+        self.write(depfile, "old dependency data\n")
+        self.manifest["commands"] = ["rustc --emit dep-info=" + str(depfile) + " lib/unit.c",
+                                     "reader " + str(depfile)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.manifest["commands"] = ["clippy-driver --emit dep-info=" + str(depfile) + " lib/unit.c && reader " + str(depfile)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(depfile).lstrip("/"), archive.getnames())
+
+    def test_grouped_writers_and_path_string_tools_do_not_read_stale_outputs(self):
+        output = self.out / "temporary.bc"
+        info = self.out / "image-info.txt"
+        self.write(output, b"BC\xc0\xdeold bitcode")
+        self.write(info, "old image metadata\n")
+        self.manifest["commands"] = ["/bin/bash -c '(mkdir -p $(dirname " + str(output) + ")) && "
+                                     + "(llvm-link -o " + str(output) + " lib/unit.c) && (reader " + str(output) + ")'",
+                                     "(rm -rf " + str(info) + ") && (echo first >> " + str(info)
+                                     + ") && (build_image " + str(info) + ")"]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(output).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(info).lstrip("/"), archive.getnames())
+
+    def test_masked_command_substitution_reset_does_not_create_fresh_namespace(self):
+        stage = self.out / "modules"
+        child = stage / "module.jar"
+        self.write(child, b"PK\x03\x04old compiled content")
+        self.manifest["commands"] = ["echo $(rm -rf " + str(stage) + ") && mkdir -p " + str(stage)
+                                     + " && reader " + str(child)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_process_substitution_keeps_parent_writer_order_and_actual_input_reads(self):
+        stage = self.out / "temporary.bc.unstripped"
+        input_file = self.source / "input.txt"
+        filters = self.source / "filter-patterns.txt"
+        self.write(stage, "old writer bytes\n")
+        self.write(input_file, "fresh writer bytes\n")
+        self.write(filters, "warning\n")
+        self.manifest["leaf_inputs"].append(str(input_file))
+        tool = self.source / "bin/llvm-link"
+        self.write(tool, '#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncat "' + str(input_file)
+                   + '" > "$2"\necho warning >&2\n', 0o755)
+        command = "(" + str(tool) + " -o " + str(stage) + " 2> >(grep -v -f " + str(filters)
+        command += " >&2)) && (cat " + str(stage) + ")"
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        for path in [tool, input_file, filters]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(stage).lstrip("/"), archive.getnames())
+        stage.unlink()
+        result = subprocess.run(command, shell=True, executable="/bin/bash", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "fresh writer bytes\n")
+        old_input = self.out / "actual-input.jar"
+        self.write(old_input, b"PK\x03\x04old input jar")
+        self.manifest["commands"] = [command.replace("-o " + str(stage), "<(cat " + str(old_input) + ") -o " + str(stage))]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_failed_reset_rescued_by_or_or_semicolon_reads_real_old_bytes(self):
+        stage = self.out / "modules"
+        child = stage / "old.jar"
+        data = b"PK\x03\x04old bytes remain after failed reset"
+        self.write(child, data)
+        remover = self.source / "bin/rm"
+        self.write(remover, "#!/bin/sh\nexit 1\n", 0o755)
+        for tail in [" || true ; cat ", " ; cat "]:
+            command = str(remover) + " -rf " + str(stage) + " && mkdir -p " + str(stage) + tail + str(child)
+            result = subprocess.run(command, shell=True, executable="/bin/bash", capture_output=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, data)
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                self.collect()
+
+    def compiler_contract(self, command, roots, headers=(), rsp=None):
+        edge = {"command": command, "outputs": [str(self.out / "unit.o")]}
+        if rsp:
+            edge.update(rspfile=str(self.out / "unit.rsp"), rspfile_content=rsp)
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [edge]
+        self.manifest["generated_include_contract"] = {
+            "schema_version": 1, "search_roots": [str(path) for path in roots],
+            "required_headers": [str(path) for path in headers], "owned_dirs": [],
+            "compiler_contexts": [{"edge_index": 0, "primary_output": str(self.out / "unit.o"),
+                                   "search_roots": [str(path) for path in roots], "forced_files": [],
+                                   "reader": "c_cpp_frontend"}], "provenance": {"native_flags_unchanged": True}}
+
+    @unittest.skipUnless(shutil.which("cc"), "C compiler is required for cold header transport")
+    def test_compiler_contract_cold_headers_come_from_receipt_and_ambient_out_is_omitted(self):
+        root = self.out / "generated/include"
+        required = root / "needed.h"
+        stale = root / "unused-old.h"
+        self.write(required, "#define IMPORTED 99\n")
+        self.write(stale, "old ambient generated header\n")
+        self.write(self.source / "lib/unit.c", '#include "local.h"\n#include "needed.h"\nint value = LOCAL + IMPORTED;\n')
+        self.manifest["external_inputs"].append(str(required))
+        command = "cc -I" + str(root) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        self.compiler_contract(command, [root], [required])
+        _, _, archive = self.collect()
+        for path in [required, stale]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(required, "#define IMPORTED 11\n")
+        result = subprocess.run(command, shell=True, cwd=self.source, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.out / "unit.o").is_file())
+
+    def test_compiler_contract_binds_rsp_and_zero_provider_roots_without_hiding_forced_reads(self):
+        root = self.out / "empty/compiler-root"
+        stale = root / "old-only.h"
+        source_header = self.source / "ordinary/source.h"
+        self.write(stale, "old ambient header\n")
+        self.write(source_header, "// actual source header\n")
+        command = "clang @" + str(self.out / "unit.rsp") + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        self.compiler_contract(command, [root], rsp="-I" + str(root) + " -Iordinary")
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.assertIn(str(source_header).lstrip("/"), archive.getnames())
+        self.manifest["edges"][0]["rspfile_content"] += " -include " + str(stale)
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_compiler_contract_requires_real_header_and_typed_reader_bindings(self):
+        root = self.out / "include"
+        unknown = root / "missing-producer.h"
+        self.write(unknown, "old generated header\n")
+        self.compiler_contract("cc -I" + str(root) + " lib/unit.c", [root], [unknown])
+        with self.assertRaisesRegex(capsule.CapsuleError, "no selected producer or receipt"):
+            self.collect()
+        self.compiler_contract("aidl -I" + str(root) + " input.aidl", [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "not a supported C/C\+\+ frontend"):
+            self.collect()
+        self.compiler_contract("cc -I" + str(root) + " lib/unit.c", [])
+        with self.assertRaisesRegex(capsule.CapsuleError, "absent from its contract"):
+            self.collect()
+
+    def test_compiler_contract_does_not_leak_to_noncompiler_in_same_action_or_rsp(self):
+        root = self.out / "include"
+        stale = root / "old-only.h"
+        self.write(stale, "old metadata input\n")
+        command = "cc -I" + str(root) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command += " && header-abi-linker -I" + str(root) + " input.lsdump -o " + str(self.out / "linked.lsdump")
+        self.compiler_contract(command, [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        command = "cc @" + str(self.out / "unit.rsp") + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command += " && header-abi-linker @" + str(self.out / "unit.rsp") + " input.lsdump"
+        self.compiler_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_reader_contract_applies_only_after_compiler_argument_separator(self):
+        root = self.out / "include"
+        stale = root / "old-only.h"
+        self.write(stale, "old filename filter metadata\n")
+        for command, rsp in [("header-abi-dumper -I" + str(root) + " lib/unit.c -- -I" + str(root), None),
+                             ("header-abi-dumper @" + str(self.out / "unit.rsp"), "-I" + str(root) + " lib/unit.c -- -I" + str(root)),
+                             ("header-abi-dumper @" + str(self.out / "unit.rsp") + " lib/unit.c -- @" + str(self.out / "unit.rsp"), "-I" + str(root))]:
+            self.compiler_contract(command, [root], rsp=rsp)
+            with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                self.collect()
+        self.compiler_contract("header-abi-dumper lib/unit.c -- -I" + str(root), [root])
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        command = command.split(" && ")[0] + " && header-abi-linker @" + str(self.out / "unit.rsp")
+        self.compiler_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    @unittest.skipUnless(shutil.which("cc"), "C compiler is required for cold shared response transport")
+    def test_compiler_shared_semantic_rsp_keeps_source_headers_for_its_own_reader(self):
+        header = self.source / "ordinary/extra.h"
+        self.write(header, "#define EXTRA 13\n")
+        self.write(self.source / "ordinary/root.proto", 'syntax="proto2"; message X {}\n')
+        self.write(self.source / "lib/unit.c", '#include "extra.h"\nint value = EXTRA;\n')
+        rsp = self.out / "unit.rsp"
+        compile_command = "cc @" + str(rsp) + " -c lib/unit.c -o " + str(self.out / "unit.o")
+        command = compile_command + " && protoc @" + str(rsp) + " ordinary/root.proto --cpp_out=" + str(self.out / "proto")
+        self.compiler_contract(command, [], rsp="-Iordinary")
+        _, _, archive = self.collect()
+        self.assertIn(str(header).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(rsp, "-Iordinary")
+        result = subprocess.run(compile_command, shell=True, cwd=self.source, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.out / "unit.o").is_file())
+
+    def test_flatc_source_transport_preserves_ordered_roots_and_fixed_recursive_context(self):
+        self.write(self.source / "schemas/root.fbs", 'include "sub/child.schema"; table Root { value: Child; }\n')
+        self.write(self.source / "first/sub/child.schema", 'include "leaf.data"; table Child { value: Leaf; }\n')
+        self.write(self.source / "second/sub/child.schema", 'include "WRONG_SECOND_ROOT";\n')
+        self.write(self.source / "first/sub/leaf.data", 'include "WRONG_NESTED_PARENT";\n')
+        self.write(self.source / "schemas/leaf.data", 'native_include "name_only.hpp"; table Leaf { value:int; }\n')
+        self.manifest["commands"] = ["flatc -I first -I second --cpp -o " + str(self.out / "gen") + " schemas/root.fbs"]
+        _, _, archive = self.collect()
+        expected = [self.source / "schemas/root.fbs", self.source / "first/sub/child.schema", self.source / "schemas/leaf.data"]
+        for path in expected:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "first/sub/leaf.data").lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.source / "second/sub/child.schema").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        _, _, restored = self.collect()
+        for path in expected:
+            self.assertIn(str(path).lstrip("/"), restored.getnames())
+
+    def test_flatc_generated_schema_and_alias_do_not_seed_old_payload(self):
+        generated = self.out / "generated.fbs"
+        self.write(generated, 'include "OLD_PAYLOAD_MUST_NOT_BE_READ";\n')
+        alias = self.source / "schemas/alias.schema"
+        alias.parent.mkdir()
+        alias.symlink_to(generated)
+        self.write(self.source / "schemas/root.fbs", 'include "alias.schema"; table Root { value:int; }\n')
+        self.manifest["external_inputs"].append(str(generated))
+        self.manifest["commands"] = ["flatc --cpp -o " + str(self.out / "gen") + " schemas/root.fbs"]
+        _, _, archive = self.collect()
+        self.assertIn(str(alias).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        self.write(generated, 'table Fresh { value:int; }\n')
+        archive.extractall("/")
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(alias.read_text(), 'table Fresh { value:int; }\n')
+
+    def test_flatc_invocations_keep_separate_search_contexts_and_real_redirection_reads(self):
+        self.write(self.source / "schemas/root.fbs", '/* include "COMMENT"; */\ninclude "leaf.schema";\n')
+        for root in ["first", "second"]:
+            self.write(self.source / root / "leaf.schema", 'native_include "NAME_ONLY"; table Leaf { value:int; }\n')
+        self.write(self.source / "input.bin", b"data read through stdin")
+        self.write(self.out / "depfile.d", b"OLD_METADATA")
+        self.manifest["commands"] = ["flatc -M -I first schemas/root.fbs > " + str(self.out / "depfile.d")
+                                     + " && flatc -I second --cpp -o " + str(self.out / "gen") + " schemas/root.fbs < input.bin"]
+        _, _, archive = self.collect()
+        for path in [self.source / "first/leaf.schema", self.source / "second/leaf.schema", self.source / "input.bin"]:
+            self.assertIn(str(path).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(self.out / "depfile.d").lstrip("/"), archive.getnames())
+
+    def test_flatc_missing_generated_include_remains_a_real_producer_gate(self):
+        unknown = self.out / "include/old.fbs"
+        self.write(unknown, 'table Old { value:int; }\n')
+        self.write(self.source / "schemas/root.fbs", 'include "old.fbs";\n')
+        self.manifest["commands"] = ["flatc -I " + str(unknown.parent) + " schemas/root.fbs"]
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_flatc_single_invocation_schema_after_dirname_substitution_survives_cold_transport(self):
+        self.write(self.source / "tensorflow/lite/schema/schema.fbs", 'include "child.schema"; table Root { value: Child; }\n')
+        child = self.source / "tensorflow/lite/schema/child.schema"
+        self.write(child, 'table Child { value:int; }\n')
+        output = self.out / "tensorflow/lite/schema/mutable/schema_generated.h"
+        self.write(output, "OLD_GENERATED_OUTPUT")
+        self.manifest["commands"] = ["flatc --cpp --gen-mutable --keep-prefix -o $(dirname " + str(output)
+                                     + ") tensorflow/lite/schema/schema.fbs"]
+        _, _, archive = self.collect()
+        self.assertIn(str(child).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(output).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        _, _, restored = self.collect()
+        self.assertIn(str(child).lstrip("/"), restored.getnames())
+
+    def test_flatc_embedded_writefile_recipe_is_collected_at_its_sbox_consumer(self):
+        generated = self.out / "genrule.sbox.textproto"
+        self.write(generated, 'OLD_PAYLOAD_MUST_NOT_BE_READ')
+        self.write(self.source / "schemas/root.fbs", 'include "module.schema"; table Root { value: Module; }\n')
+        self.write(self.source / "schemas/module.schema", 'table Module { value:int; }\n')
+        self.manifest["external_inputs"].append(str(generated))
+        command = "sbox --manifest " + str(generated) + " --sandbox-path " + str(self.out / "sandbox")
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [{"command": command, "outputs": self.manifest["outputs"]}]
+        context = {"edge_index": 0, "primary_output": self.manifest["outputs"][0], "generated_manifest": str(generated),
+                   "producer_original_edge": 1234, "producer_primary_output": str(generated), "command": "tools/out/bin/flatc -I schemas --cpp -o __SBOX__/out schemas/root.fbs",
+                   "cwd": str(self.source), "chdir": False, "copy_before": [{"from": "/compiled/flatc", "to": "tools/out/bin/flatc", "executable": True}],
+                   "provenance": {"producer_rule": "g.android.writeFile"}}
+        self.manifest["embedded_tool_contexts"] = [context]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "schemas/module.schema").lstrip("/"), archive.getnames())
+        self.assertNotIn(str(generated).lstrip("/"), archive.getnames())
+        for change in [{"chdir": True}, {"copy_before": [{"from": "schemas/root.fbs", "to": "root.fbs"}]},
+                       {"generated_manifest": str(self.out / "unbound.textproto")}, {"primary_output": str(self.out / "other")}]:
+            saved = dict(context)
+            context.update(change)
+            with self.assertRaises(capsule.CapsuleError):
+                self.collect()
+            context.clear()
+            context.update(saved)
+
+    def test_generated_header_scan_excludes_editor_config_and_extensionless_elf(self):
+        headers=self.out / "include"
+        self.write(headers / ".clang-format", "BasedOnStyle: LLVM\n")
+        self.write(headers / "wpa_cli", b"\x7fELFpreviously built executable")
+        self.manifest["commands"]=["cc -I"+str(headers)+" -c lib/unit.c"]
+        _, _, archive=self.collect()
+        self.assertNotIn(str(headers / ".clang-format").lstrip("/"),archive.getnames())
+        self.assertNotIn(str(headers / "wpa_cli").lstrip("/"),archive.getnames())
+
+    def test_source_extensionless_binary_is_not_header_but_literal_inputs_remain(self):
+        root = self.source / "includes"
+        text = root / "vector"
+        image = root / "modules"
+        macho = root / "emulator"
+        self.write(text, "// C++ text header\nnamespace std {}\n")
+        self.write(image, bytes.fromhex("dadafeca0000010000000000e5940000") + b"jimage")
+        self.write(macho, bytes.fromhex("cffaedfe070000010300000002000000") + b"Mach-O")
+        self.write(self.source / "asm/data.s", '.incbin "modules"\n')
+        self.manifest["commands"] = ["cc -Iincludes -c lib/unit.c"]
+        _, _, archive = self.collect()
+        self.assertIn(str(text).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(image).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(macho).lstrip("/"), archive.getnames())
+        self.manifest["commands"].append("clang -Iincludes -c asm/data.s")
+        self.manifest["leaf_inputs"].append("asm/data.s")
+        _, _, archive = self.collect()
+        self.assertIn(str(image).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(macho).lstrip("/"), archive.getnames())
+
+    def test_blueprint_glob_captures_runtime_asset_directory(self):
+        self.write(self.source / "app/assets/nested/data.bin", b"opaque asset\x00")
+        glob_tool=self.out / "soong/bpglob"
+        self.manifest["outputs"].append(str(glob_tool))
+        self.manifest["commands"]=[str(glob_tool)+" -o "+str(self.out / "assets.glob")
+                                    +" -p 'app/assets/**/*' -e .git"]
+        _, _, archive=self.collect()
+        self.assertIn(str(self.source / "app/assets/nested/data.bin").lstrip("/"),archive.getnames())
+
+    def test_glob_arguments_are_scoped_to_the_executed_tool_not_later_mkdir(self):
+        graph = self.out / 'soong/build.ninja'
+        tool = self.out / 'soong/bpglob'
+        asset = self.source / 'app/assets/data.bin'
+        self.write(graph, 'current graph text')
+        self.write(asset, b'asset')
+        self.manifest['outputs'].append(str(tool))
+        commands = [
+            'build_go bpglob github.com/google/blueprint/bootstrap/bpglob; mkdir -p ' + str(graph.parent),
+            str(tool) + " -p 'app/assets/**/*' && mkdir -p " + str(graph.parent),
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.manifest['commands'] = [command]
+                _, metadata, archive = self.collect()
+                self.assertNotIn(str(graph).lstrip('/'), archive.getnames())
+                self.assertEqual(metadata['allowed_generated_inputs'], [])
+                if command.startswith(str(tool)):
+                    self.assertIn(str(asset).lstrip('/'), archive.getnames())
+
+    def test_go_runner_name_argument_does_not_capture_a_later_directory_creation(self):
+        unrelated = self.source / 'unused-package'
+        fixture = unrelated / 'testdata/not-an-input.bin'
+        self.write(fixture, b'unrelated fixture')
+        self.manifest['commands'] = ['build_go gotestrunner example/gotestrunner; mkdir -p ' + str(unrelated)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(fixture).lstrip('/'), archive.getnames())
+
+    def test_compiler_include_closure_follows_quoted_search_paths_and_nested_bodies(self):
+        self.write(self.source / "lib/body.c", '#include "inner.c"\n')
+        self.write(self.source / "lib/inner.c", "int inner_body;\n")
+        self.write(self.source / "lib/table.ipp", "#define TABLE 1\n")
+        self.write(self.source / "api/api.rsh", "#pragma version(1)\n")
+        self.write(self.source / "lib/unit.c",
+                   '#include "body.c"\n#include "table.ipp"\n#include <api.rsh>\n#include "absent.h"\n')
+        self.manifest["commands"] = ["clang -Iapi -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["lib/body.c", "lib/inner.c", "lib/table.ipp", "api/api.rsh"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_compiler_include_closure_uses_the_includer_directory_before_search_paths(self):
+        self.write(self.source / "lib/body.c", "int local_body;\n")
+        self.write(self.source / "other/body.c", "int search_path_body;\n")
+        self.write(self.source / "lib/unit.c", '#include "body.c"\n')
+        self.manifest["commands"] = ["clang -Iother -c lib/unit.c -o " + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        self.assertIn(str(self.source / "lib/body.c").lstrip("/"), names)
+        self.assertNotIn(str(self.source / "other/body.c").lstrip("/"), names)
+
+    def test_compiler_nested_includes_do_not_depend_on_filename_extensions(self):
+        unit = self.source / 'compile/unit.cpp'
+        extensionless = self.source / 'private/Entry'
+        fragment = self.source / 'private/bits/config.fragment'
+        leaf = self.source / 'private/Leaf.h'
+        unrelated = self.source / 'private/Unrelated.h'
+        generated = self.out / 'generated.fragment'
+        hidden = self.out / 'private-must-not-read.h'
+        self.write(unit, '#include "../private/Entry"\n')
+        self.write(extensionless, '#include "bits/config.fragment"\n#include <generated.fragment>\n')
+        self.write(fragment, '#include "../Leaf.h"\n')
+        self.write(leaf, '#include "Entry"\n')
+        self.write(unrelated, '#define NOT_CONSUMED 1\n')
+        self.write(generated, '#include "private-must-not-read.h"\n')
+        self.write(hidden, '#define GENERATED_CONTENT 1\n')
+        self.manifest['leaf_inputs'] = [str(unit)]
+        self.manifest['external_inputs'] = [str(generated)]
+        self.manifest['commands'] = ['clang++ -Icompile -I' + str(self.out)
+                                     + ' -c compile/unit.cpp -o ' + str(self.out / 'unit.o')]
+        _, metadata, archive = self.collect()
+        names = archive.getnames()
+        for path in (unit, extensionless, fragment, leaf):
+            self.assertIn(str(path).lstrip('/'), names)
+        self.assertEqual(sum(row['path'] == str(extensionless) for row in metadata['files']), 1)
+        self.assertNotIn(str(unrelated).lstrip('/'), names)
+        self.assertNotIn(str(generated).lstrip('/'), names)
+        self.assertNotIn(str(hidden).lstrip('/'), names)
+        self.assertEqual(metadata['allowed_generated_inputs'], [])
+
+    def test_rust_module_closure_follows_mod_path_and_inline_include(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   "pub mod buf;\nmod fmt;\ninclude!(\"generated.rs\");\n"
+                   '#[path = "alt/renamed.rs"]\nmod renamed;\n')
+        self.write(self.source / "crate/src/buf.rs", "mod inner;\n")
+        self.write(self.source / "crate/src/buf/inner.rs", "pub fn value() {}\n")
+        self.write(self.source / "crate/src/fmt/mod.rs", "pub mod write;\n")
+        self.write(self.source / "crate/src/fmt/write.rs", "pub fn write() {}\n")
+        self.write(self.source / "crate/src/generated.rs", "pub const GENERATED: u8 = 1;\n")
+        self.write(self.source / "crate/src/alt/renamed.rs", "pub const RENAMED: u8 = 1;\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/buf.rs", "crate/src/buf/inner.rs", "crate/src/fmt/mod.rs",
+                         "crate/src/fmt/write.rs", "crate/src/generated.rs", "crate/src/alt/renamed.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_sbox_manifest_payload_reveals_inner_tool_inputs(self):
+        self.write(self.source / "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                   "package android.media;\nparcelable VolumeShaperConfiguration;\n")
+        self.write(self.source / "interfaces/aidl/android/media/IPlayer.aidl",
+                   "package android.media;\nimport android.media.VolumeShaperConfiguration;\n"
+                   "interface IPlayer {}\n")
+        manifest_path = str(self.out / "gen/aidl.sbox.textproto")
+        payload = ('commands:{command:"prebuilts/.../aidl-cpp -Iinterfaces/aidl '
+                   'interfaces/aidl/android/media/IPlayer.aidl __SBOX_SANDBOX_DIR__/out" }')
+        self.manifest["commands"] = [
+            "host/sbox --sandbox-path " + str(self.out / "temp") + " --output-dir " + str(self.out / "gen")
+            + " --manifest " + manifest_path]
+        original = capsule.Collector.writefile_payload
+        capsule.Collector.writefile_payload = lambda self, path: payload
+        try:
+            _, _, archive = self.collect()
+        finally:
+            capsule.Collector.writefile_payload = original
+        names = archive.getnames()
+        for relative in ["interfaces/aidl/android/media/IPlayer.aidl",
+                         "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_aidl_import_closure_follows_package_and_search_paths(self):
+        self.write(self.source / "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                   "package android.media;\nparcelable VolumeShaperConfiguration;\n")
+        self.write(self.source / "interfaces/aidl/android/media/IPlayer.aidl",
+                   "package android.media;\nimport android.media.VolumeShaperConfiguration;\n"
+                   "interface IPlayer {}\n")
+        # Soong passes import roots through a shell variable, so the analyzer
+        # expands the same words the shell would.
+        self.manifest["commands"] = ["FLAGS=' -Iinterfaces/aidl --min_sdk_version=current' && "
+                                     "prebuilts/.../aidl --lang=java $FLAGS "
+                                     "-o " + str(self.out / "IPlayer.java")
+                                     + " interfaces/aidl/android/media/IPlayer.aidl"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["interfaces/aidl/android/media/IPlayer.aidl",
+                         "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_aidl_source_package_closure_collects_implicit_and_transitive_types_only(self):
+        package = self.source / "interfaces/aidl/android/media"
+        self.write(package / "IPlayer.aidl",
+                   "package android.media;\n"
+                   "interface IPlayer { VolumeShaperConfiguration local(); "
+                   "android.hardware.foo.Bar qualified(); "
+                   "android.hardware.foo.Outer.Inner nested(); "
+                   "android.media.Generated generated(); }\n")
+        self.write(package / "VolumeShaperConfiguration.aidl",
+                   "package android.media;\n"
+                   "import android.hardware.foo.Other;\n"
+                   "parcelable VolumeShaperConfiguration { Other transitive; }\n")
+        self.write(package / "WrongPackage.aidl", "package android.other;\nparcelable WrongPackage;\n")
+        self.write(package / "nested/Subpackage.aidl", "package android.media.nested;\nparcelable Subpackage;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Bar.aidl",
+                   "package android.hardware.foo;\nparcelable Bar;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Other.aidl",
+                   "package android.hardware.foo;\nparcelable Other;\n")
+        self.write(self.source / "interfaces/aidl/android/hardware/foo/Outer.aidl",
+                   "package android.hardware.foo;\nparcelable Outer;\n")
+        generated = self.out / "gen/android/media/Generated.aidl"
+        self.write(generated, "package android.media;\nparcelable Generated;\n")
+        self.manifest["commands"] = [
+            "aidl -Iinterfaces/aidl -I" + str(self.out / "gen")
+            + " interfaces/aidl/android/media/IPlayer.aidl"]
+        _, _, archive = self.collect()
+        names = set(archive.getnames())
+        for relative in (
+                "interfaces/aidl/android/media/IPlayer.aidl",
+                "interfaces/aidl/android/media/VolumeShaperConfiguration.aidl",
+                "interfaces/aidl/android/hardware/foo/Bar.aidl",
+                "interfaces/aidl/android/hardware/foo/Other.aidl",
+                "interfaces/aidl/android/hardware/foo/Outer.aidl"):
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+        for excluded in (package / "WrongPackage.aidl", package / "nested/Subpackage.aidl", generated):
+            self.assertNotIn(str(excluded).lstrip("/"), names)
+
+    def test_aidl_qualified_type_probe_is_cached_per_include_root_set(self):
+        roots = [self.source / "aidl-one", self.source / "aidl-two"]
+        for root in roots:
+            self.write(root / "android/example/Type.aidl", "package android.example;\nparcelable Type;\n")
+        collector = capsule.Collector(self.manifest, self.source, self.out)
+        with patch.object(capsule, "optional_probe", wraps=capsule.optional_probe) as probe:
+            first = collector.aidl_qualified_type("android.example.Type", roots)
+            probes = probe.call_count
+            repeated = collector.aidl_qualified_type("android.example.Type", roots)
+            self.assertEqual(repeated, first)
+            self.assertEqual(probe.call_count, probes)
+            distinct = collector.aidl_qualified_type("android.example.Type", [roots[1]])
+            self.assertEqual(distinct, roots[1] / "android/example/Type.aidl")
+            self.assertGreater(probe.call_count, probes)
+
+    def test_aidl_leaf_fallback_uses_aidl_roots_not_global_cpp_root_union(self):
+        package = self.source / "interfaces/aidl/android/media"
+        self.write(package / "IPlayer.aidl",
+                   "package android.media;\ninterface IPlayer { android.hardware.foo.Type value(); }\n")
+        target = self.source / "interfaces/aidl/android/hardware/foo/Type.aidl"
+        self.write(target, "package android.hardware.foo;\nparcelable Type;\n")
+        self.write(self.source / "lib/input.c", "int input(void) { return 0; }\n")
+        self.manifest["leaf_inputs"] = ["interfaces/aidl/android/media/IPlayer.aidl", "lib/input.c"]
+        self.manifest["commands"] = [
+            "aidl -Iinterfaces/aidl interfaces/aidl/android/media/IPlayer.aidl",
+            "clang -Icpp/large-header-root lib/input.c",
+        ]
+        collector, _, archive = self.collect()
+        self.assertIn(str(target).lstrip("/"), archive.getnames())
+        exact_aidl_roots = (self.source / "interfaces/aidl",)
+        self.assertEqual(tuple(collector.aidl_search_paths), exact_aidl_roots)
+        self.assertIn(("android.hardware.foo.Type", exact_aidl_roots), collector.aidl_type_source_cache)
+        self.assertNotIn(("android.hardware.foo.Type", tuple(collector.compiler_search_paths)),
+                         collector.aidl_type_source_cache)
+
+    def test_aidl_cpp_marks_real_frontend_and_unvisited_cp_leaf_uses_its_roots(self):
+        source_root = self.source / "interfaces/aidl"
+        uses = source_root / "android/media/Uses.aidl"
+        sibling = source_root / "android/media/Sibling.aidl"
+        trigger = source_root / "android/test/Trigger.aidl"
+        self.write(uses, "package android.media;\ninterface Uses { Sibling value(); }\n")
+        self.write(sibling, "package android.media;\nparcelable Sibling;\n")
+        self.write(trigger, "package android.test;\ninterface Trigger {}\n")
+        self.manifest["leaf_inputs"] = [str(uses)]
+        self.manifest["commands"] = [
+            "cp " + str(uses) + " " + str(self.out / "copied-uses.aidl"),
+            "aidl-cpp -Iinterfaces/aidl " + str(trigger),
+        ]
+        collector, _, archive = self.collect()
+        names = set(archive.getnames())
+        self.assertNotIn(uses.resolve(), collector.aidl_frontend_inputs)
+        self.assertIn(trigger.resolve(), collector.aidl_frontend_inputs)
+        self.assertIn(str(sibling).lstrip("/"), names)
+        self.assertIn(str(uses).lstrip("/"), names)
+        self.assertEqual(tuple(collector.aidl_search_paths), (source_root,))
+
+    def test_aidl_search_roots_keep_first_seen_order_and_symlink_provenance(self):
+        first_root, second_root, alias = [self.source / name
+                                          for name in ('z-root', 'a-root', 'alias-root')]
+        uses = first_root / 'android/example/Uses.aidl'
+        sibling = first_root / 'android/example/Sibling.aidl'
+        first_type = first_root / 'android/dep/Type.aidl'
+        second_type = second_root / 'android/dep/Type.aidl'
+        self.write(uses, 'package android.example;\ninterface Uses { android.dep.Type value(); }\n')
+        self.write(sibling, 'package android.example;\nparcelable Sibling;\n')
+        for path in (first_type, second_type):
+            self.write(path, 'package android.dep;\nparcelable Type;\n')
+        alias.symlink_to(first_root, target_is_directory=True)
+        collector = capsule.Collector(self.manifest, self.source, self.out)
+        roots = [first_root, second_root, first_root]
+        collector.aidl_input(uses, roots, actual_frontend=False)
+        self.assertFalse(collector.aidl_frontend_inputs)
+        self.assertEqual(tuple(collector.aidl_search_paths), ())
+        # A cache hit must still mark the real frontend and register its roots.
+        collector.aidl_input(uses, roots, actual_frontend=True)
+        self.assertEqual(collector.aidl_frontend_inputs, {uses.resolve()})
+        self.assertEqual(tuple(collector.aidl_search_paths), (first_root, second_root))
+        alias_roots = [alias, second_root, first_root, alias]
+        collector.aidl_input(alias / 'android/example/Uses.aidl', alias_roots, actual_frontend=True)
+        self.assertEqual(tuple(collector.aidl_search_paths), (first_root, second_root, alias))
+        self.assertEqual(collector.aidl_qualified_type('android.dep.Type', [first_root, second_root]), first_type)
+        self.assertEqual(collector.aidl_qualified_type('android.dep.Type', [second_root, first_root]), second_type)
+        self.assertIn(sibling, collector.entries)
+        self.assertNotIn(second_type, collector.entries)
+        self.assertIn(alias, collector.entries)
+        self.assertTrue(any(reason.endswith(':symlink') for reason in collector.entries[alias]))
+        observed = lambda: ({path: set(reasons) for path, reasons in collector.entries.items()},
+                            set(collector.aidl_frontend_inputs), tuple(collector.aidl_search_paths),
+                            set(collector.external_roots), set(collector.system_tools))
+        before = observed()
+        collector.aidl_input(alias / 'android/example/Uses.aidl', alias_roots, actual_frontend=True)
+        self.assertEqual(observed(), before)
+        collector.aidl_input(self.source / 'missing.aidl', [self.source / 'unseen-root'], actual_frontend=True)
+        self.assertEqual(observed(), before)
+
+    def test_tablegen_include_closure_follows_declared_search_paths(self):
+        self.write(self.source / "external/llvm/include/llvm/Option/OptParser.td",
+                   'include "llvm/Option/Record.td"\n')
+        self.write(self.source / "external/llvm/include/llvm/Option/Record.td",
+                   "def Record : Value;\n")
+        self.write(self.source / "external/clang/include/clang/Driver/Options.td",
+                   'include "llvm/Option/OptParser.td"\n')
+        self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/llvm-tblgen "
+                                     "-Iexternal/clang -Iexternal/llvm/include -gen-opt-parser-defs "
+                                     "-o " + str(self.out / "Options.inc")
+                                     + " external/clang/include/clang/Driver/Options.td"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["external/clang/include/clang/Driver/Options.td",
+                         "external/llvm/include/llvm/Option/OptParser.td",
+                         "external/llvm/include/llvm/Option/Record.td"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_rust_module_closure_follows_modules_sharing_a_line_with_attributes(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   '#[macro_use] mod macros;\n'
+                   '#[cfg(feature = "std")] pub mod rngs;\n'
+                   '#[cfg(all(feature = "std", feature = "std_rng"))] pub(crate) mod thread;\n')
+        self.write(self.source / "crate/src/macros.rs", "macro_rules! value { () => {}; }\n")
+        self.write(self.source / "crate/src/rngs/mod.rs", "pub mod adapter;\n")
+        self.write(self.source / "crate/src/rngs/adapter/mod.rs", "pub struct Adapter;\n")
+        self.write(self.source / "crate/src/thread.rs", "pub fn thread() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/macros.rs", "crate/src/rngs/mod.rs",
+                         "crate/src/rngs/adapter/mod.rs", "crate/src/thread.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_rust_module_closure_follows_conditional_path_attributes(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   '#[cfg_attr(not(feature = "human"), path = "shim_impl.rs")]\n'
+                   '#[cfg_attr(feature = "human", path = "extern_impl.rs")]\n'
+                   "mod imp;\n"
+                   "mod readme_doctest {}\n"
+                   "mod later;\n")
+        self.write(self.source / "crate/src/shim_impl.rs", "pub fn shim() {}\n")
+        self.write(self.source / "crate/src/extern_impl.rs", "pub fn external() {}\n")
+        self.write(self.source / "crate/src/later.rs", "pub fn later() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/shim_impl.rs", "crate/src/extern_impl.rs", "crate/src/later.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_rust_module_closure_follows_interleaved_attributes_and_inline_modules(self):
+        self.write(self.source / "crate/src/lib.rs",
+                   "#[cfg(not(feature = \"spin\"))]\n#[path=\"inline_lazy.rs\"]\n#[doc(hidden)]\npub mod lazy;\n"
+                   "mod group {\n    #[path = \"platform_impl.rs\"] mod imp;\n    mod sibling;\n}\n")
+        self.write(self.source / "crate/src/inline_lazy.rs", "pub fn value() {}\n")
+        self.write(self.source / "crate/src/group/platform_impl.rs", "pub fn imp() {}\n")
+        self.write(self.source / "crate/src/group/sibling.rs", "pub fn sibling() {}\n")
+        self.manifest["commands"] = ["prebuilts/rust/bin/rustc --emit link -o "
+                                     + str(self.out / "libcrate.rlib") + " crate/src/lib.rs"]
+        _, _, archive = self.collect()
+        names = archive.getnames()
+        for relative in ["crate/src/inline_lazy.rs", "crate/src/group/platform_impl.rs",
+                         "crate/src/group/sibling.rs"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), names)
+
+    def test_assembler_include_recurses_through_command_search_paths_and_opaque_data(self):
+        self.write(self.source / "asm/main.s", '.include "outer.s"\n.incbin "payload.bin"\n')
+        self.write(self.source / "macros/outer.s", '.include "inner.S"\n')
+        self.write(self.source / "macros/inner.S", '.macro RETURN\n ret\n.endm\n')
+        self.write(self.source / "macros/payload.bin", b"opaque assembler input\x00")
+        self.manifest["leaf_inputs"].append("asm/main.s")
+        self.manifest["commands"] = ["clang -target aarch64-linux-android -Imacros -c asm/main.s -o "
+                                      + str(self.out / "unit.o")]
+        _, _, archive = self.collect()
+        for relative in ["macros/outer.s", "macros/inner.S", "macros/payload.bin"]:
+            self.assertIn(str(self.source / relative).lstrip("/"), archive.getnames())
+
+    def test_generated_assembly_can_include_source_bodies_after_cold_transport(self):
+        generated = self.out / "gen/interpreter.S"
+        self.write(generated, '#include "warm-only.S"\n')
+        self.write(self.source / "runtime/arch/support.S", '#include "nested.s"\n')
+        self.write(self.source / "runtime/arch/nested.s", '#define ASSEMBLY_VALUE 42\n')
+        self.write(self.source / "runtime/unrelated.cpp", 'unrelated source\n')
+        self.write(self.source / "runtime/stale.o", b"\x7fELFstale")
+        self.manifest["leaf_inputs"] = [str(generated)]
+        self.manifest["external_inputs"] = [str(generated)]
+        self.manifest["commands"] = ["cc -Iruntime -c " + str(generated)
+                                     + " -o " + str(self.out / "unit.o")]
+        original = Path.read_text
+        def reject_generated_read(path, *args, **kwargs):
+            if path == generated:
+                raise AssertionError("Capsule must not read an earlier OUT assembly")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", reject_generated_read):
+            _, metadata, archive = self.collect()
+        self.assertEqual(metadata["external_inputs"], [{"path": str(generated)}])
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        for path in [generated, self.source / "runtime/unrelated.cpp", self.source / "runtime/stale.o"]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        archive.extractall("/")
+        # A fresh producer supplies the generated input, not the source capsule.
+        self.write(generated, '#include "arch/support.S"\nASSEMBLY_VALUE\n')
+        result = subprocess.run(["cc", "-E", "-P", "-x", "assembler-with-cpp", "-Iruntime", str(generated)],
+                                cwd=self.source, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), "42")
+
+    def test_external_produced_objects_are_required_from_receipts(self):
+        external = self.out / "upstream.o"
+        self.write(external, b"\x7fELFold")
+        self.manifest["leaf_inputs"].append(str(external))
+        self.manifest["external_inputs"].append(str(external))
+        _, metadata, archive = self.collect()
+        self.assertEqual(metadata["external_inputs"], [{"path": str(external)}])
+        self.assertNotIn(str(external).lstrip("/"), archive.getnames())
+
+    def test_generated_directory_tree_is_built_or_received_instead_of_seeded(self):
+        kernel_output = self.out / "obj/KERNEL_OBJ"
+        external_output = self.out / "obj/EXTERNAL_OBJ"
+        for directory in (kernel_output, external_output):
+            self.write(directory / "usr/include/display/header.h", "#define OLD 1\n")
+            self.write(directory / "kernel.o", b"\x7fELFold")
+            self.manifest["leaf_inputs"].append(str(directory / "usr/include/display/header.h"))
+            self.manifest["commands"].append("cc -I" + str(directory / "usr/include") + " -c lib/unit.c")
+        self.manifest["outputs"].append(str(kernel_output))
+        self.manifest["external_inputs"].append(str(external_output))
+        _, metadata, archive = self.collect()
+        names = archive.getnames()
+        self.assertEqual(metadata["output_dirs"], [str(kernel_output)])
+        self.assertEqual(metadata["external_input_dirs"], [str(external_output)])
+        for directory in (kernel_output, external_output):
+            self.assertFalse(any(name == str(directory).lstrip("/")
+                                 or name.startswith(str(directory).lstrip("/") + "/") for name in names))
+
+    def test_system_tools_are_recorded_without_archiving_host_paths(self):
+        self.manifest["commands"] = ["PWD=/proc/self/cwd /usr/bin/python3 -c 'pass'"]
+        _, metadata, archive = self.collect()
+        self.assertIn(str(Path("/usr/bin/python3").resolve()), metadata["system_tools"])
+        self.assertFalse(any(name.startswith("usr/") or name == "bin" for name in archive.getnames()))
+
+    def test_writefile_payload_is_data_instead_of_an_input_path(self):
+        self.manifest["commands"] = ["/bin/bash -c 'echo -e -n \"$0\" > " + str(self.out / "config.json")
+                                      + "' '" + "A" * 8192 + "'"]
+        _, _, archive = self.collect()
+        self.assertIn(str(self.source / "lib/unit.c").lstrip("/"), archive.getnames())
+
+    def test_transfer_digest_cache_reuses_unchanged_input_and_refreshes_changed_bytes(self):
+        cache_path = self.base / "digests.json"
+        source_path = self.source / "lib/unit.c"
+        first = capsule.DigestCache(cache_path)
+        original = first(source_path)
+        first.save()
+        second = capsule.DigestCache(cache_path)
+        self.assertEqual(second(source_path), original)
+        self.assertEqual((second.computed, second.reused), (0, 1))
+        self.write(source_path, "int changed = 22;\n")
+        self.assertNotEqual(second(source_path), original)
+        self.assertEqual((second.computed, second.reused), (1, 1))
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_pack_emits_compressed_archive_and_transfer_digest(self):
+        manifest_path = self.slice / "manifest.json"
+        manifest_path.write_text(json.dumps(self.manifest))
+        output = self.base / "inputs.tar.zst"
+        metadata_path, metadata = capsule.pack(manifest_path, self.source, output, self.out)
+        self.assertTrue(metadata_path.is_file())
+        self.assertEqual(metadata["archive"]["sha256"], capsule.digest(output))
+        compressed = subprocess.run(["zstd", "-q", "-dc", str(output)], check=True, stdout=subprocess.PIPE).stdout
+        with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:") as archive:
+            self.assertIn(str(self.source / ".crux-task/graph/bundle.json").lstrip("/"), archive.getnames())
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_pack_additional_source_inputs_preserve_frozen_manifest_bytes_and_identity(self):
+        license_path = self.source / "external/library/LICENSE"
+        self.write(license_path, "Source license required by generated metadata\n", 0o640)
+        manifest_path = self.slice / "manifest.json"
+        original = ("\n" + json.dumps(self.manifest, indent=3) + "\n\n").encode()
+        manifest_path.write_bytes(original)
+        manifest_identity = capsule.digest(manifest_path)
+        output = self.base / "inputs.tar.zst"
+        _, metadata = capsule.pack(manifest_path, self.source, output, self.out,
+                                   additional_source_inputs=["external/library/LICENSE"])
+        self.assertEqual(manifest_path.read_bytes(), original)
+        self.assertEqual(metadata["manifest_sha256"], manifest_identity)
+        self.assertEqual(metadata["allowed_generated_inputs"], [])
+        compressed = subprocess.run(["zstd", "-q", "-dc", str(output)], check=True, stdout=subprocess.PIPE).stdout
+        with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:") as archive:
+            frozen_manifest = self.source / ".crux-task/graph/manifest.json"
+            self.assertEqual(archive.extractfile(str(frozen_manifest).lstrip("/")).read(), original)
+            self.assertEqual(archive.extractfile(str(license_path).lstrip("/")).read(), license_path.read_bytes())
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_shared_layer_and_task_capsule_restore_verified_complete_inputs(self):
+        used = self.source / "prebuilts/clang/host/linux-x86/clang-r1"
+        unused = self.source / "prebuilts/clang/host/linux-x86/clang-r2"
+        self.write(used / "bin/clang", "compiler", 0o755)
+        self.write(used / "lib64/runtime.so", "compiler runtime")
+        self.write(unused / "bin/clang", "unused compiler", 0o755)
+        self.manifest["commands"] = ["prebuilts/clang/host/linux-x86/clang-r1/bin/clang -c lib/unit.c"]
+        manifest_path = self.slice / "manifest.json"
+        manifest_path.write_text(json.dumps(self.manifest))
+        cache_path = self.base / "input-digests.json"
+        layer_archive = self.base / "layer.tar.zst"
+        layer_path, layer = capsule.build_layer([self.slice], self.source, layer_archive, self.out,
+                                                 digest_cache=cache_path)
+        task_archive = self.base / "task.tar.zst"
+        _, task = capsule.pack(manifest_path, self.source, task_archive, self.out,
+                               digest_cache=cache_path, shared_manifest=layer_path)
+        self.assertFalse(any(spec["path"].startswith(str(unused)) for spec in layer["files"]))
+        self.assertFalse(any(spec["path"].startswith(str(self.out)) for spec in layer["files"]))
+        self.assertEqual(task["shared_layers"][0]["layer_id"], layer["layer_id"])
+        compiler_name = str(used / "bin/clang").lstrip("/")
+        task_data = subprocess.run(["zstd", "-q", "-dc", str(task_archive)], check=True, stdout=subprocess.PIPE).stdout
+        with tarfile.open(fileobj=io.BytesIO(task_data), mode="r:") as archive:
+            self.assertNotIn(compiler_name, archive.getnames())
+        self.assertIn(str(used / "bin/clang"), [spec["path"] for spec in task["files"]])
+        shutil.rmtree(self.source)
+        for archive_path in [layer_archive, task_archive]:
+            data = subprocess.run(["zstd", "-q", "-dc", str(archive_path)], check=True, stdout=subprocess.PIPE).stdout
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+                self.assertTrue(all(member.name.startswith(str(self.base).lstrip("/") + "/") for member in archive))
+                archive.extractall("/")
+        worker_spec = importlib.util.spec_from_file_location("worker", MODULE.parent / "worker.py")
+        worker = importlib.util.module_from_spec(worker_spec)
+        worker_spec.loader.exec_module(worker)
+        worker.verify_bundle(self.source / ".crux-task/graph/bundle.json",
+                             self.source / ".crux-task/graph/manifest.json")
+        self.assertEqual((used / "lib64/runtime.so").read_text(), "compiler runtime")
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_task_rejects_source_changed_after_shared_layer_freeze(self):
+        manifest_path = self.slice / "manifest.json"
+        manifest_path.write_text(json.dumps(self.manifest))
+        layer_path, _ = capsule.build_layer([self.slice], self.source, self.base / "layer.tar.zst", self.out)
+        self.write(self.source / "prebuilts/build-tools/linux-x86/bin/ninja", "different executable", 0o755)
+        with self.assertRaisesRegex(capsule.CapsuleError, "differs from frozen shared source layer"):
+            capsule.pack(manifest_path, self.source, self.base / "task.tar.zst", self.out,
+                          shared_manifest=layer_path)
+
+    def test_active_quoted_cat_is_transported_and_runs_cold(self):
+        self.write(self.source / "settings/config", "PE_CONFIG=active\n")
+        native = 'printf "%s\\n" "meta=$(cat settings/config)"'
+        self.manifest["commands"] = [native]
+        collector, metadata, archive = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+        cold = self.base / "cold"
+        cold.mkdir()
+        archive.extractall(cold)
+        result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "meta=PE_CONFIG=active\n")
+
+    def test_active_substitution_rejects_old_compiled_out_input(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "$(cat %s)"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_singlequotes_escaped_dollar_and_pid_do_not_read_old_out(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        path = self.out / "old.jar"
+        self.manifest["commands"] = ["echo '$(cat %s)'" % path,
+                                     'echo "\\$(cat %s)"' % path,
+                                     'echo "$$(cat %s)"' % path]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_declared_cpp_rsp_is_argument_data_not_evaluated_shell(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        rsp = str(self.out / "compile.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")],
+                                  "command": 'clang @%s -c lib/unit.c -o %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp,
+                                  "rspfile_content": '-DVALUE="$(cat %s)"' % (self.out / "old.jar")}]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_real_shell_source_file_enables_active_substitutions(self):
+        self.write(self.source / "settings/config", "active")
+        self.write(self.source / "shell.rsp", 'VALUE="$(cat settings/config)"\n')
+        self.manifest["commands"] = [". shell.rsp"]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_sourced_script_comments_preserve_literal_hash_inputs_and_run_cold(self):
+        inputs = {
+            "settings/#quoted.cfg": "quoted\n",
+            "settings/escaped #literal.cfg": "space\n",
+            "settings/escaped;#literal.cfg": "separator\n",
+            "settings/continued#literal.cfg": "continued\n",
+        }
+        for name, content in inputs.items():
+            self.write(self.source / name, content)
+        stale = self.out / "old.jar"
+        self.write(stale, b"PK\x03\x04old compiled input")
+        comment_only = self.source / "settings/comment-only.cfg"
+        self.write(comment_only, "not a shell input\n")
+        script = self.source / "scripts/helper.sh"
+        content = (
+            "# This helper doesn't read $(cat %s) or settings/comment-only.cfg\n"
+            "cat 'settings/#quoted.cfg' settings/escaped\\ #literal.cfg "
+            "settings/escaped\\;#literal.cfg settings/continued\\\n#literal.cfg "
+            "# This isn't another input: 'unterminated\n"
+        ) % stale
+        self.write(script, content)
+        native = "bash -eu -c " + shlex.quote("source scripts/helper.sh")
+        self.manifest["commands"] = [native]
+
+        _, metadata, archive = self.collect()
+        paths = {item["path"] for item in metadata["files"]}
+        self.assertTrue({str(self.source / name) for name in inputs} <= paths)
+        self.assertIn(str(script), paths)
+        self.assertNotIn(str(stale), paths)
+        self.assertNotIn(str(comment_only), paths)
+        self.assertEqual(archive.extractfile(str(script).lstrip("/")).read(), content.encode())
+        cold = self.base / "cold"
+        cold.mkdir()
+        archive.extractall(cold)
+        result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "".join(inputs.values()))
+
+    def test_protoc_response_hash_filename_is_argument_data(self):
+        schema = self.source / "#response.proto"
+        self.write(schema, 'syntax = "proto2"; message HashInput {}\n')
+        rsp = str(self.out / "schemas.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "descriptor.pb")],
+                                  "command": "aprotoc @%s --descriptor_set_out=%s" % (
+                                      rsp, self.out / "descriptor.pb"),
+                                  "rspfile": rsp, "rspfile_content": "#response.proto\n"}]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(schema), {item["path"] for item in metadata["files"]})
+
+    def test_literal_bash_payload_decodes_outer_escaped_dollar(self):
+        self.write(self.source / "settings/config", "active")
+        self.manifest["commands"] = [r'bash --norc -c "echo \"\$(cat settings/config)\""']
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_bash_argument_carrier_is_not_an_invocation(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ["printf '%%s\\n' bash -c 'echo \"$(cat %s)\"'" % (self.out / "old.jar")]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_active_child_inherits_completed_prior_write(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo fresh > %s && echo "$(cat %s)"' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_active_read_before_writer_keeps_old_out_gate(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "$(cat %s)" && echo fresh > %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_current_invocation_redirection_is_not_prior_child_write(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo > %s "$(cat %s)"' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_child_write_does_not_establish_parent_freshness(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "$(echo fresh > %s)" && cat %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_inline_protoc_rsp_marker_text_cannot_activate_parent_child(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        literal_schema = "__CRUX_ANALYSIS_SUB_000000__"
+        self.write(self.source / literal_schema, 'syntax = "proto2"; message LiteralData {}\n')
+        rsp = str(self.out / "schemas.rsp")
+        native = 'aprotoc @%s --descriptor_set_out=%s && echo fresh > %s && echo "$(cat %s)"' % (
+            rsp, self.out / "descriptor.pb", path, path)
+        self.manifest["edges"] = [{"outputs": [str(self.out / "descriptor.pb")], "command": native,
+                                  "rspfile": rsp, "rspfile_content": literal_schema + "\n"}]
+        _, metadata, _ = self.collect()
+        paths = {x["path"] for x in metadata["files"]}
+        self.assertIn(str(self.source / literal_schema), paths)
+        self.assertNotIn(str(path), paths)
+
+    def test_arithmetic_quotes_do_not_suppress_explicit_active_child(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "$((1 + \'$(cat %s)\'))"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_second_bash_payload_uses_its_own_prefix_snapshot(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['bash -c true && echo fresh > %s && bash -c \'echo "$(cat %s)"\'' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_evaluated_backtick_transports_nested_modern_date_read_cold(self):
+        self.write(self.source / "settings/date", "1791434831")
+        native = 'printf "%s\\n" "`date -u -d @$(cat settings/date) +%s`"'
+        self.manifest["commands"] = [native]
+        _, metadata, archive = self.collect()
+        self.assertIn(str(self.source / "settings/date"), {x["path"] for x in metadata["files"]})
+        if subprocess.run(["date", "-u", "-d", "@1791434831", "+%s"], capture_output=True).returncode == 0:
+            cold = self.base / "cold"
+            cold.mkdir()
+            archive.extractall(cold)
+            result = subprocess.run(["bash", "-c", native], cwd=cold / str(self.source).lstrip("/"),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "1791434831\n")
+
+    def test_backtick_outer_quoted_escaped_dollar_activates_nested_child(self):
+        self.write(self.source / "settings/config", "active")
+        native = r'echo "`printf \'%s\' "\$(cat settings/config)"`"'
+        self.manifest["commands"] = [native]
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/config"), {x["path"] for x in metadata["files"]})
+
+    def test_backtick_singlequoted_and_escaped_literals_do_not_read_old_out(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        path = self.out / "old.jar"
+        self.manifest["commands"] = ["echo '`cat %s`'" % path,
+                                     'echo "\\`cat %s\\`"' % path]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_backtick_in_declared_cpp_rsp_remains_argument_data(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        rsp = str(self.out / "compile.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")],
+                                  "command": 'clang @%s -c lib/unit.c -o %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp, "rspfile_content": '-DVALUE="`cat %s`"' % (self.out / "old.jar")}]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "old.jar"), {x["path"] for x in metadata["files"]})
+
+    def test_real_backtick_rejects_old_compiled_out_read(self):
+        self.write(self.out / "old.jar", b"PK\x03\x04old")
+        self.manifest["commands"] = ['echo "`cat %s`"' % (self.out / "old.jar")]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_backtick_child_inherits_prior_and_not_current_redirection(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo fresh > %s && echo "`cat %s`"' % (path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+        self.manifest["commands"] = ['echo > %s "`cat %s`"' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_backtick_child_writer_does_not_leak_parent_freshness(self):
+        path = self.out / "temp"
+        self.write(path, b"\x7fELFold")
+        self.manifest["commands"] = ['echo "`echo fresh > %s`" && cat %s' % (path, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_rust_copy_backtick_rsp_reader_uses_declared_graph_input_contract(self):
+        rsp = str(self.out / "rust/out.rsp")
+        self.manifest["edges"] = [{"outputs": [str(self.out / "unit.o")], "command": 'cp `cat %s` %s' % (rsp, self.out / "unit.o"),
+                                  "rspfile": rsp, "rspfile_content": str(self.out / "actual.rlib")}]
+        self.manifest["external_inputs"] = [str(self.out / "actual.rlib")]
+        self.write(self.out / "actual.rlib", b"!<arch>\nstale")
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(self.out / "actual.rlib"), {x["path"] for x in metadata["files"]})
+
+    def test_arithmetic_backtick_read_transports_its_source(self):
+        self.write(self.source / "settings/number", "2")
+        self.manifest["commands"] = ['echo $((1 + `cat settings/number`))']
+        _, metadata, _ = self.collect()
+        self.assertIn(str(self.source / "settings/number"), {x["path"] for x in metadata["files"]})
+
+    def test_rsync_android_exclude_is_pattern_data_and_source_filters_transport_cold(self):
+        self.write(self.source / "tree/root/sepolicy", "excluded Android policy\n")
+        self.write(self.source / "tree/kept.txt", "kept\n")
+        self.write(self.source / "filters.txt", "*.temporary\n")
+        command = "rsync -a --exclude=/root/sepolicy --include '*.txt' --exclude-from filters.txt tree/ " + str(self.out / "copy")
+        self.manifest["commands"] = [command]
+        _, metadata, archive = self.collect()
+        paths = {item["path"] for item in metadata["files"]}
+        self.assertIn(str(self.source / "filters.txt"), paths)
+        self.assertIn(str(self.source / "tree/kept.txt"), paths)
+        self.assertNotIn("/root/sepolicy", paths)
+        if shutil.which("rsync"):
+            cold = self.base / "cold"
+            cold.mkdir()
+            archive.extractall(cold)
+            destination = cold / "copy"
+            result = subprocess.run(["rsync", "-a", "--exclude=/root/sepolicy", "--include", "*.txt", "--exclude-from", "filters.txt", "tree/", str(destination)],
+                                    cwd=cold / str(self.source).lstrip("/"), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((destination / "kept.txt").read_text(), "kept\n")
+            self.assertFalse((destination / "root/sepolicy").exists())
+
+    def test_rsync_filter_file_and_actual_source_keep_old_out_gates(self):
+        old = self.out / "old.jar"
+        self.write(old, b"PK\x03\x04old")
+        for command in ["rsync --exclude-from=" + str(old) + " tree/ " + str(self.out / "copy"),
+                        "rsync --exclude=/root/sepolicy " + str(old) + " " + str(self.out / "copy")]:
+            self.manifest["commands"] = [command]
+            with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+                self.collect()
+
+    def test_observed_depfile_keeps_its_own_completed_transient_output_out_of_source_tar(self):
+        temporary = self.out / "withres-withoutdex.jar"
+        depfile = self.out / "compiled.d"
+        self.write(temporary, b"PK\x03\x04OLD_TEMPORARY")
+        self.write(depfile, str(self.out / "unit.o") + ": " + str(temporary) + " lib/unit.c\n")
+        command = "zip2zip -i input.jar -o " + str(temporary) + " && r8-compat-proguard -injars " + str(temporary)
+        self.manifest["edges"] = [{"command": command, "outputs": self.manifest["outputs"], "depfile": str(depfile)}]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(temporary), {item["path"] for item in metadata["files"]})
+        self.assertNotIn(str(temporary).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "lib/unit.c").lstrip("/"), archive.getnames())
+
+    def test_observed_depfile_other_action_and_prior_read_do_not_inherit_later_writer(self):
+        temporary = self.out / "withres-withoutdex.jar"
+        self.write(temporary, b"PK\x03\x04OLD_REAL_INPUT")
+        first = self.out / "first.d"
+        self.write(first, str(self.out / "first.o") + ": " + str(temporary) + "\n")
+        self.manifest["edges"] = [{"command": "hidden-reader lib/unit.c", "outputs": [str(self.out / "first.o")], "depfile": str(first)},
+                                  {"command": "zip2zip -i input.jar -o " + str(temporary) + " && consumer " + str(temporary), "outputs": self.manifest["outputs"]}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+        self.manifest["edges"] = [{"command": "cat " + str(temporary) + " && zip2zip -i input.jar -o " + str(temporary) + " && consumer " + str(temporary),
+                                  "outputs": self.manifest["outputs"], "depfile": str(first)}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+
+
+    def test_guarded_for_internal_separators_preserve_prior_fresh_namespace(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = [
+            'rm -rf %s && mkdir -p %s && for INPUT in source; do echo "--input=$INPUT"; echo "--output=%s"; done | cat >/dev/null && cat %s'
+            % (directory, directory, path, path)]
+        _, metadata, _ = self.collect()
+        self.assertNotIn(str(path), {x["path"] for x in metadata["files"]})
+
+    def test_for_outer_semicolon_does_not_preserve_prior_freshness(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s && mkdir -p %s ; for INPUT in source; do echo "$INPUT"; done && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_body_reset_cannot_establish_parent_freshness(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['for INPUT in source; do rm -rf %s && mkdir -p %s; cat %s; done' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_after_masked_reset_or_still_rejects_old_out(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s || true && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_external_or_barrier_still_rejects_old_out(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['rm -rf %s && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done || true && cat %s' % (directory, directory, path)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def test_for_prior_read_before_prefix_reset_stays_rejected(self):
+        directory = self.out / "tmp"
+        path = directory / "dex.jar"
+        self.write(path, b"PK\x03\x04old")
+        self.manifest["commands"] = ['cat %s && rm -rf %s && mkdir -p %s && for INPUT in source; do echo "$INPUT"; done' % (path, directory, directory)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input"):
+            self.collect()
+
+    def abi_contract(self, command, roots, files=(), rsp=None):
+        edge = {"command": command, "outputs": self.manifest["outputs"]}
+        if rsp:
+            edge.update(rspfile=str(self.out / "abi.rsp"), rspfile_content=rsp)
+        self.manifest["commands"] = [command]
+        self.manifest["edges"] = [edge]
+        self.manifest["abi_header_namespace_contract"] = {
+            "schema_version": 1, "exported_roots": [str(path) for path in roots], "required_files": [str(path) for path in files],
+            "owned_dirs": [], "contexts": [{"edge_index": 0, "primary_output": self.manifest["outputs"][0],
+                                             "exported_roots": [str(path) for path in roots], "required_files": [str(path) for path in files],
+                                             "owned_dirs": [], "reader": "header_abi_linker_namespace"}],
+            "provenance": {"native_flags_unchanged": True}}
+
+    def test_abi_namespace_uses_real_receipt_files_and_omits_unselected_old_headers(self):
+        root = self.out / "generated/include"
+        needed, stale = root / "public.h", root / "old-unrelated.h"
+        self.write(needed, "old header bytes never transported\n")
+        self.write(stale, "old unrelated header\n")
+        self.write(self.source / "source-include/plain.h", "source public header\n")
+        self.manifest["external_inputs"].append(str(needed))
+        command = "header-abi-linker -I" + str(root) + " -Isource-include input.lsdump -o " + str(self.out / "linked.lsdump")
+        self.abi_contract(command, [root], [needed])
+        _, _, archive = self.collect()
+        self.assertNotIn(str(needed).lstrip("/"), archive.getnames())
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "source-include/plain.h").lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.write(needed, "FRESH PRODUCER BYTES\n")
+        self.assertEqual([path.name for path in root.rglob("*.h")], ["public.h"])
+
+    def test_abi_namespace_and_cpp_shared_rsp_are_checked_per_actual_reader(self):
+        root = self.out / "include"
+        stale = root / "unowned.h"
+        self.write(stale, "unowned old generated header\n")
+        rsp = str(self.out / "abi.rsp")
+        command = "header-abi-linker @" + rsp + " input.lsdump && cc @" + rsp + " -c lib/unit.c"
+        self.abi_contract(command, [root], rsp="-I" + str(root))
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_rsp_and_shared_cpp_rsp_bind_real_caller_positions(self):
+        root = self.out / "include"
+        needed, stale = root / "public.h", root / "old-unselected.h"
+        self.write(needed, "old producer bytes\n")
+        self.write(stale, "old unrelated header\n")
+        self.manifest["external_inputs"].append(str(needed))
+        rsp = str(self.out / "abi.rsp")
+        command = "header-abi-linker @" + rsp + " input.lsdump"
+        self.abi_contract(command, [root], [needed], rsp="-I" + str(root))
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        command += " && cc @" + rsp + " -c lib/unit.c"
+        self.abi_contract(command, [root], [needed], rsp="-I" + str(root))
+        self.compiler_contract(command, [root], [needed], rsp="-I" + str(root))
+        self.manifest["edges"][0]["rspfile"] = rsp
+        _, _, archive = self.collect()
+        self.assertNotIn(str(stale).lstrip("/"), archive.getnames())
+        self.manifest.pop("generated_include_contract")
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_contract_does_not_leak_to_unrelated_reader_or_hide_literal_input(self):
+        root = self.out / "include"
+        stale = root / "unowned.h"
+        self.write(stale, "unowned old generated header\n")
+        command = "header-abi-linker -I" + str(root) + " input.lsdump && unknown-reader -I" + str(root)
+        self.abi_contract(command, [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+        self.abi_contract("header-abi-linker -I" + str(root) + " " + str(stale), [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+            self.collect()
+
+    def test_abi_namespace_requires_exact_real_producer_and_typed_consumer(self):
+        root = self.out / "include"
+        unknown = root / "unowned.h"
+        self.write(unknown, "old unowned header\n")
+        self.abi_contract("header-abi-linker -I" + str(root), [root], [unknown])
+        with self.assertRaisesRegex(capsule.CapsuleError, "no selected producer or receipt"):
+            self.collect()
+        self.abi_contract("cc -I" + str(root) + " lib/unit.c", [root])
+        with self.assertRaisesRegex(capsule.CapsuleError, "not header-abi-linker"):
+            self.collect()
+        self.abi_contract("header-abi-linker -I" + str(root), [])
+        with self.assertRaisesRegex(capsule.CapsuleError, "absent from its contract"):
+            self.collect()
+
+
+
+
+    def test_move_overwrite_after_skipped_conditionals_cold_restores_source_archive_and_log(self):
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("classes.dex", b"FRESH_SOURCE_DEX")
+            archive.writestr("lib/arm64/fixture.so", b"FRESH_SOURCE_NATIVE")
+        source = self.source / "inputs/archive.data"
+        unsigned = self.out / "unsigned.data"
+        signed = self.out / "signed.data"
+        log = self.out / "compatibility.data"
+        output = self.out / "unit.o"
+        self.write(source, content.getvalue())
+        for path in [unsigned, signed, output]:
+            self.write(path, b"PK\x03\x04OLD_POISON")
+        self.write(log, "OLD_POISON_LOG")
+        append = " && ".join("printf 'record%d\\n' >> %s" % (i, log) for i in range(8))
+        body = ("mkdir -p %s && (cp %s %s) && "
+                "(if false; then printf skipped > %s; fi) && "
+                "(if false; then printf skipped > %s; fi) && "
+                "(rm -f %s && %s) && (mv %s %s) && "
+                "(cat %s > %s) && (mv %s %s)") % (
+                    self.out, source, output, unsigned, unsigned, log, append,
+                    output, unsigned, unsigned, signed, signed, output)
+        self.manifest["commands"] = ["bash -c " + shlex.quote(body)]
+        _, metadata, archive = self.collect()
+        self.assertIn(str(source).lstrip("/"), archive.getnames())
+        for path in [unsigned, signed, output, log]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        subprocess.run(["bash", "-c", body], check=True)
+        self.assertEqual(output.read_bytes(), content.getvalue())
+        self.assertEqual(log.read_text().splitlines(), ["record%d" % i for i in range(8)])
+
+    def test_move_overwrite_preserves_real_source_reads_and_prior_destination_reads(self):
+        old_source = self.out / "previous.data"
+        destination = self.out / "stage.data"
+        self.write(old_source, b"PK\x03\x04OLD_REAL_INPUT")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["mv %s %s && cat %s" % (old_source, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer.*previous.data"):
+            self.collect()
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        self.manifest["commands"] = ["cat %s && mv input.data %s && cat %s" % (destination, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer.*stage.data"):
+            self.collect()
+
+    def test_move_non_overwrite_unknown_and_directory_modes_keep_old_destination_gates(self):
+        source = self.source / "input.data"
+        destination = self.out / "stage.data"
+        self.write(source, "FRESH_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        for option in ["-n", "--no-clobber", "-u", "--update", "-i", "--interactive", "-fn", "--backup", "--unknown-mode"]:
+            with self.subTest(option=option):
+                self.manifest["commands"] = ["mv %s input.data %s && cat %s" % (option, destination, destination)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+        directory = self.out / "directory"
+        self.write(directory / "old.data", b"PK\x03\x04OLD_DIRECTORY_CHILD")
+        for expression in [str(directory), str(directory) + "/", "-t " + str(directory), "--target-directory=" + str(directory)]:
+            with self.subTest(expression=expression):
+                self.manifest["commands"] = ["mv input.data %s && cat %s/old.data" % (expression, directory)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+        source_directory = self.source / "source-directory"
+        self.write(source_directory / "data", "fresh source child")
+        self.manifest["commands"] = ["mv %s %s && cat %s" % (source_directory, destination, destination)]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+    def test_skipped_if_and_or_branch_move_writers_do_not_establish_parent_freshness(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        expressions = [
+            "(if false; then mv input.data %s; fi) && cat %s",
+            "(if false; then mv input.data %s && true; fi) && cat %s",
+            "true || mv input.data %s && cat %s",
+            "true || (mv input.data %s && true) && cat %s",
+            "true || ((mv input.data %s && true)) && cat %s",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                self.manifest["commands"] = [expression % (path, path)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_pipeline_branch_move_and_masked_reset_keep_old_input_gates(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        expressions = [
+            "mv input.data %s | true && cat %s",
+            "true | mv input.data %s && cat %s",
+            "(mv input.data %s && true) | true && cat %s",
+            "true | (mv input.data %s && true) && cat %s",
+            "(rm -f %s && printf new >> %s) | true && cat %s",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                values = (path,) * expression.count("%s")
+                self.manifest["commands"] = [expression % values]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_unconditional_move_after_completed_pipeline_uses_its_own_success_guard(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["printf x | cat && mv -f input.data %s && cat %s" % (path, path)]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        self.assertIn(str(self.source / "input.data").lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+
+    def test_repeated_move_reestablishes_fresh_destination_after_a_separator_cold(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = "mv -f %s %s && true ; mv -f %s %s && cat %s" % (
+            first, destination, second, destination, destination)
+        self.manifest["commands"] = [command]
+        _, metadata, archive = self.collect()
+        self.assertNotIn(str(destination).lstrip("/"), archive.getnames())
+        self.assertFalse(metadata["allowed_generated_inputs"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.out.mkdir(exist_ok=True)
+        result = subprocess.run(["bash", "-c", command], check=True, stdout=subprocess.PIPE)
+        self.assertEqual(result.stdout, b"SECOND_SOURCE")
+
+    def test_repeated_move_keeps_each_completed_write_for_earlier_reads_and_substitutions(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        first_read, second_read = self.out / "first.read", self.out / "second.read"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = ("mv -f %s %s && printf '%%s' \"$(cat %s)\" > %s ; "
+                   "mv -f %s %s && printf '%%s' \"$(cat %s)\" > %s") % (
+                       first, destination, destination, first_read,
+                       second, destination, destination, second_read)
+        self.manifest["commands"] = [command]
+        _, _, archive = self.collect()
+        for path in [destination, first_read, second_read]:
+            self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.out)
+        archive.extractall("/")
+        self.out.mkdir(exist_ok=True)
+        subprocess.run(["bash", "-c", command], check=True)
+        self.assertEqual(first_read.read_text(), "FIRST_SOURCE")
+        self.assertEqual(second_read.read_text(), "SECOND_SOURCE")
+
+    def test_repeated_move_does_not_hide_a_read_before_its_success_guard(self):
+        first, second = self.source / "first.data", self.source / "second.data"
+        destination = self.out / "stage.data"
+        self.write(first, "FIRST_SOURCE")
+        self.write(second, "SECOND_SOURCE")
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        for prefix in ["cat %s && " % destination,
+                       "mv -f %s %s && true ; cat %s && " % (first, destination, destination)]:
+            with self.subTest(prefix=prefix):
+                self.manifest["commands"] = [prefix + "mv -f %s %s && cat %s" % (
+                    second, destination, destination)]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+
+    def test_late_append_requires_local_guaranteed_reset_and_keeps_prior_reads(self):
+        path = self.out / "compatibility.data"
+        self.write(path, "OLD_LOG")
+        prefix = "(if false; then true; fi) && (if false; then true; fi) && "
+        for body in ["echo new >> %s && cat %s", "(rm -f %s || true) && echo new >> %s && cat %s",
+                     "(if false; then rm -f %s; fi) && echo new >> %s && cat %s",
+                     "cat %s && rm -f %s && echo new >> %s"]:
+            with self.subTest(body=body):
+                self.manifest["commands"] = [prefix + body % ((path,) * body.count("%s"))]
+                with self.assertRaisesRegex(capsule.CapsuleError, "explicit metadata approval"):
+                    self.collect()
+        self.manifest["commands"] = [prefix + "(rm -f %s && echo new >> %s) && cat %s" % (path, path, path)]
+        _, _, archive = self.collect()
+        self.assertNotIn(str(path).lstrip("/"), archive.getnames())
+
+    def test_response_argument_data_cannot_supply_a_move_overwrite_scope(self):
+        self.write(self.source / "input.data", "FRESH_SOURCE")
+        path = self.out / "stage.data"
+        self.write(path, b"PK\x03\x04OLD_DESTINATION")
+        self.manifest["commands"] = ["argument_reader @" + str(self.out / "args.rsp")]
+        self.manifest["edges"] = [{"command": self.manifest["commands"][0], "outputs": self.manifest["outputs"],
+                                  "rspfile": str(self.out / "args.rsp"),
+                                  "rspfile_content": "mv input.data %s && cat %s" % (path, path)}]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+
+
+
+    def test_negated_or_defined_function_writer_remains_opaque_and_reads_old_bytes(self):
+        source = self.source / "input.data"
+        path = self.out / "stage.data"
+        self.write(source, "FRESH_SOURCE")
+        old = b"PK\x03\x04OLD_NOT_REPLACED"
+        for body in ["! (false && mv %s %s) && cat %s",
+                     "time ! (false && mv %s %s) && cat %s",
+                     "coproc (false && mv %s %s) && cat %s",
+                     "true || {\n false && mv %s %s && true\n } && cat %s",
+                     "{\n false && mv %s %s && true\n } | true && cat %s",
+                     "f() (mv %s %s) && cat %s",
+                     "f() { mv %s %s; } && cat %s"]:
+            with self.subTest(body=body):
+                self.write(path, old)
+                command = body % (source, path, path)
+                self.manifest["commands"] = [command]
+                with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+                    self.collect()
+                if command.startswith("coproc ") and subprocess.run(
+                        ["bash", "-c", "help coproc"], stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE).returncode:
+                    continue  # The gate is portable; this native construct requires Bash 4+.
+                result = subprocess.run(["bash", "-c", command], check=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.assertEqual(result.stdout, old)
+                self.assertEqual(source.read_text(), "FRESH_SOURCE")
+
+    def test_moving_relative_source_symlink_does_not_hide_its_relocated_old_target(self):
+        self.write(self.source / "payload.data", "FRESH_SOURCE_TARGET")
+        old = b"PK\x03\x04OLD_RELOCATED_TARGET"
+        self.write(self.out / "payload.data", old)
+        source = self.source / "relative-link"
+        source.symlink_to("payload.data")
+        destination = self.out / "stage.data"
+        self.write(destination, b"PK\x03\x04OLD_DESTINATION")
+        command = "mv %s %s && cat %s" % (source, destination, destination)
+        self.manifest["commands"] = [command]
+        with self.assertRaisesRegex(capsule.CapsuleError, "Compiled OUT input has no selected producer"):
+            self.collect()
+        result = subprocess.run(["bash", "-c", command], check=True, stdout=subprocess.PIPE)
+        self.assertEqual(result.stdout, old)
+
+
+if __name__ == "__main__":
+    unittest.main()

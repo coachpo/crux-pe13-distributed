@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "role": "RAM-only install TWRP v6 (fastboot boot from the Recovery container U-Boot); no device identity",
+  "name": "twrp-b-install.itb",
+  "bytes": 43287728,
+  "sha256": "5afc86ddf76784b4c7b08a5bade0e6a3d3a359157504c5979ffb176913d3c46a",
+  "profile_id": "f058a26529367025d082a4fa035e8c54034d39f0a3860a554483989510b70494",
+  "release_tag": "crux-install-twrp-v6",
+  "asset_id": 780192140
+}

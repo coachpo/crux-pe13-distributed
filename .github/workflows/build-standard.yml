@@ -1,0 +1,214 @@
+name: Compile fresh PE13 on standard runners
+run-name: Fresh PE13 compile ${{ inputs.build_number }}${{ inputs.cold_retry_of != '' && format(' cold retry of {0}', inputs.cold_retry_of) || '' }}
+on:
+  workflow_dispatch:
+    inputs:
+      pack_run:
+        description: Successful cold-capsule preparation run (its pack registry is admitted here)
+        required: true
+        type: string
+      shard_run:
+        description: Successful slice plan run named by that pack registry
+        required: true
+        type: string
+      build_number:
+        description: Identity embedded in the admitted capsules
+        required: true
+        type: string
+      force_cold:
+        description: Do not reuse matching incremental cache results
+        required: true
+        default: false
+        type: boolean
+      cold_retry_of:
+        description: Original compile run ID for one automatic cold retry; leave empty otherwise
+        required: false
+        default: ''
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fresh-build-${{ inputs.build_number }}
+  cancel-in-progress: false
+jobs:
+  bootstrap:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FORCE_COLD: ${{ inputs.force_cold }}
+      COLD_RETRY_OF: ${{ inputs.cold_retry_of }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Bind preparation to this pipeline revision
+        env:
+          PACK_RUN: ${{ inputs.pack_run }}
+          SHARD_RUN: ${{ inputs.shard_run }}
+        run: python3 scripts/pipeline_code.py --run "$PACK_RUN" --run "$SHARD_RUN"
+      - name: Install metadata transport
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Admit cold inputs and create empty execution
+        run: |
+          set -euo pipefail
+          reuse_args=()
+          if [[ "$FORCE_COLD" == true ]]; then reuse_args+=(--force-cold); fi
+          python3 scripts/cloud_build_plan.py bootstrap \
+            --pack-run "${{ inputs.pack_run }}" --shard-run "${{ inputs.shard_run }}" \
+            --build-number "${{ inputs.build_number }}" --output "$RUNNER_TEMP/context" \
+            --staging "$RUNNER_TEMP/bootstrap" "${reuse_args[@]}" \
+            --cold-retry-of "$COLD_RETRY_OF"
+      - uses: ./.github/actions/retain-artifact
+        with:
+          name: cloud-build-context
+          path: ${{ runner.temp }}/context/context.json
+          retention-days: 30
+
+  wave0:
+    needs: bootstrap
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 0
+
+  wave1:
+    needs: [bootstrap, wave0]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave0.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 1
+
+  wave2:
+    needs: [bootstrap, wave1]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave1.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 2
+
+  wave3:
+    needs: [bootstrap, wave2]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave2.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 3
+
+  wave4:
+    needs: [bootstrap, wave3]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave3.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 4
+
+  wave5:
+    needs: [bootstrap, wave4]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave4.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 5
+
+  wave6:
+    needs: [bootstrap, wave5]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave5.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 6
+
+  wave7:
+    needs: [bootstrap, wave6]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'success' && needs.wave6.result == 'success' }}
+    uses: ./.github/workflows/compile-standard-wave.yml
+    with:
+      wave: 7
+
+  summary:
+    needs: [bootstrap, wave0, wave1, wave2, wave3, wave4, wave5, wave6, wave7]
+    if: ${{ !cancelled() && !failure() && needs.bootstrap.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Restore admitted execution
+        run: |
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name cloud-build-context --destination "$RUNNER_TEMP/context"
+      - name: Verify all new compilation receipts
+        env:
+          WAVE_SLOT_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/cloud_build_plan.py summary --context "$RUNNER_TEMP/context/context.json" \
+            --staging "$RUNNER_TEMP/summary" --output "$RUNNER_TEMP/result" \
+            --slot-results "$WAVE_SLOT_RESULTS"
+      - uses: ./.github/actions/retain-artifact
+        if: always()
+        with:
+          name: cloud-fresh-build-summary
+          path: ${{ runner.temp }}/result/
+          retention-days: 30
+
+  next:
+    needs: summary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assemble this compilation
+        id: dispatch
+        continue-on-error: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          gh workflow run assemble-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f build_run="$GITHUB_RUN_ID"
+      - name: Report the failed dispatch
+        if: github.ref == 'refs/heads/main' && steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage compile --detail 'The assembly could not be dispatched.'
+
+  report:
+    needs: [bootstrap, wave0, wave1, wave2, wave3, wave4, wave5, wave6, wave7, summary, next]
+    if: ${{ always() && github.ref == 'refs/heads/main' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACK_RUN: ${{ inputs.pack_run }}
+      SHARD_RUN: ${{ inputs.shard_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      FORCE_COLD: ${{ inputs.force_cold }}
+      COLD_RETRY_OF: ${{ inputs.cold_retry_of }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Retry eligible validation failure without cache reuse
+        if: ${{ inputs.cold_retry_of == '' && !inputs.force_cold && !cancelled() }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/retry/context" "$RUNNER_TEMP/retry/receipts"
+          if ! python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+              --name cloud-build-context --destination "$RUNNER_TEMP/retry/context"; then
+            echo 'No admitted context is available for a safe cold retry.'
+            exit 0
+          fi
+          if ! python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+              --pattern 'fresh-receipt-*' --destination "$RUNNER_TEMP/retry/receipts"; then
+            echo 'No worker receipts are available for a safe cold retry.'
+            exit 0
+          fi
+          python3 scripts/pipeline_retry.py --stage compile \
+            --context "$RUNNER_TEMP/retry/context/context.json" \
+            --receipts "$RUNNER_TEMP/retry/receipts" --origin-run "$GITHUB_RUN_ID"
+      - name: Report the failed compilation
+        run: python3 scripts/pipeline_report.py --stage compile

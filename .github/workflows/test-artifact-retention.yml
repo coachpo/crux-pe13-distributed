@@ -1,0 +1,66 @@
+name: Test bounded artifact retention
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RETENTION_ARTIFACT: artifact-retention-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Create seed payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/retention-fixture"
+          printf 'seed payload\n' > "$RUNNER_TEMP/retention-fixture/payload.txt"
+      - name: Seed an immutable same-name artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ${{ env.RETENTION_ARTIFACT }}
+          path: ${{ runner.temp }}/retention-fixture/payload.txt
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Replace local payload
+        run: printf 'replacement payload\n' > "$RUNNER_TEMP/retention-fixture/payload.txt"
+      # The seed forces a name conflict on the first attempt, before retry overwrites it.
+      - name: Retain replacement after expected first-attempt conflict
+        id: retained
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: ${{ env.RETENTION_ARTIFACT }}
+          path: ${{ runner.temp }}/retention-fixture/payload.txt
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: 'false'
+      - name: Verify successful retry and retained replacement bytes
+        env:
+          RETAINED_OUTCOME: ${{ steps.retained.outcome }}
+          ARTIFACT_ID: ${{ steps.retained.outputs.artifact-id }}
+        run: |
+          test "$RETAINED_OUTCOME" = success
+          test -n "$ARTIFACT_ID"
+          python3 scripts/cloud_artifacts.py --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" \
+            --name "$RETENTION_ARTIFACT" --destination "$RUNNER_TEMP/retention-download"
+          cmp "$RUNNER_TEMP/retention-fixture/payload.txt" "$RUNNER_TEMP/retention-download/payload.txt"
+          printf 'Retry succeeded and retained replacement bytes.\n'
+      - name: Exercise terminal failure when both uploads have no files
+        id: missing
+        continue-on-error: true
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: ${{ env.RETENTION_ARTIFACT }}-missing
+          path: ${{ runner.temp }}/retention-fixture/nonexistent.txt
+          retention-days: 1
+          if-no-files-found: error
+      - name: Verify terminal upload failure propagates
+        env:
+          MISSING_OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          test "$MISSING_OUTCOME" = failure
+          printf 'Both failed uploads propagated failure from the helper.\n'

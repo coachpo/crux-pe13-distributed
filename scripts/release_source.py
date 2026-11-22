@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""Verify that a fresh assembly artifact and its ZIP payload come from successful source runs."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import urllib.request
+import zipfile
+
+import cloud_layers
+import cloud_schedule
+
+
+API = cloud_layers.API
+REPOSITORY = "coachpo/crux-pe13-distributed"
+PRODUCT = "aosp_crux-userdebug"
+COMPILE_WORKFLOW = ".github/workflows/build-standard.yml"
+ASSEMBLY_WORKFLOW = ".github/workflows/assemble-standard.yml"
+COMPILE_TITLE_RE = re.compile(r"Fresh PE13 compile ([0-9]{10})(?: cold retry of ([1-9][0-9]*))?")
+ZIP_MANIFEST_ARTIFACT = "zip-manifest"
+TAG_RE = re.compile(r"crux-pe13-([0-9]{10})-v([1-9][0-9]*)")
+DELIVERY_NAMES = ("delivery-record.json", "SHA256SUMS", "boot.img", "recovery.img",
+                  "rom-cepheus.itb", "recovery-cepheus.itb", "system.img.zst", "vendor.img")
+DELIVERY_ASSET_NAMES = frozenset(DELIVERY_NAMES) - {"delivery-record.json", "SHA256SUMS"}
+PAYLOAD_NAMES = ("update-binary", "crux-install.txt", "README.txt", "recovery-cepheus.itb",
+                 "rom-cepheus.itb", "system.raw.img.zst", "vendor.raw.img.zst", "payload.json")
+MAX_MEMBER_SIZE = 4 * 1024 * 1024 * 1024
+
+
+class SourceError(RuntimeError):
+    """Source-run provenance or artifact verification failed."""
+
+
+class SourceTransportError(SourceError):
+    """A GitHub metadata or artifact request failed before content was verified."""
+
+
+class ReuseContentError(SourceError):
+    """A verified reused build failed a later assembly/payload content gate."""
+
+    def __init__(self, message: str, *, execution_id: str, worker_commit: str,
+                 build_number: str, reused_tasks: list[str]):
+        super().__init__(message)
+        self.execution_id = execution_id
+        self.worker_commit = worker_commit
+        self.build_number = build_number
+        self.reused_tasks = list(reused_tasks)
+
+
+@dataclass(frozen=True)
+class VerifiedBuild:
+    tag: str
+    build: str
+    payload: Path
+    assembly_commit: str
+    assembly_run: str
+    compile_run: str
+    artifact_id: int
+    artifact_digest: str
+    manifest_sha256: str
+    reuse_provenance: dict | None = None
+
+
+def _require(ok: bool, message: str) -> None:
+    if not ok:
+        raise SourceError(message)
+
+
+def _is_sha(value) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def sha256(path) -> str:
+    result = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 22), b""):
+            result.update(chunk)
+    return result.hexdigest()
+
+
+def parse_tag(tag):
+    match = TAG_RE.fullmatch(tag or "")
+    return {"build": match.group(1), "version": int(match.group(2))} if match else None
+
+
+def parse_sums(text: str) -> dict[str, str]:
+    sums = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("  ", 1)
+        _require(len(parts) == 2 and re.fullmatch(r"[0-9a-f]{64}", parts[0]),
+                 "invalid SHA256SUMS line: " + line)
+        _require(parts[1] not in sums, "duplicate SHA256SUMS entry: " + parts[1])
+        sums[parts[1]] = parts[0]
+    _require(bool(sums), "empty SHA256SUMS")
+    return sums
+
+
+def _token() -> str:
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    _require(bool(token), "GH_TOKEN or GITHUB_TOKEN is required for source verification")
+    return token
+
+
+def _json_api(path: str, token: str) -> dict:
+    url = API + "/repos/" + REPOSITORY + "/" + path.lstrip("/")
+    try:
+        payload, _ = cloud_layers._request(url, token)
+        value = json.loads(payload)
+    except Exception as error:
+        raise SourceTransportError("GitHub source metadata request failed: " + str(error)) from error
+    _require(isinstance(value, dict), "GitHub source metadata response is malformed")
+    return value
+
+
+def _run(run_id: str, workflow_path: str, token: str) -> dict:
+    _require(isinstance(run_id, str) and run_id.isdecimal(), "invalid Actions run ID")
+    record = _json_api("actions/runs/" + run_id, token)
+    _require(str(record.get("id")) == run_id, "Actions run ID mismatch")
+    _require(record.get("status") == "completed" and record.get("conclusion") == "success",
+             "Actions run did not complete successfully: " + run_id)
+    _require(record.get("event") == "workflow_dispatch", "Actions run was not manually dispatched: " + run_id)
+    _require(record.get("head_branch") == "main", "Actions run did not use main: " + run_id)
+    _require(record.get("path") == workflow_path, "Actions run used the wrong workflow: " + run_id)
+    _require(isinstance(record.get("head_sha"), str)
+             and re.fullmatch(r"[0-9a-f]{40}", record["head_sha"]) is not None,
+             "Actions run has an invalid target commit: " + run_id)
+    return record
+
+
+def _inventory(run_id: str, token: str) -> dict:
+    try:
+        return cloud_layers.artifact_inventory(run_id, REPOSITORY, token)
+    except Exception as error:
+        raise SourceTransportError("Actions artifact inventory failed: " + str(error)) from error
+
+
+def _artifact(inventory: dict, name: str) -> dict:
+    artifact = inventory.get(name)
+    _require(isinstance(artifact, dict), "required Actions artifact is missing: " + name)
+    _require(not artifact.get("expired"), "Actions artifact has expired: " + name)
+    _require(isinstance(artifact.get("id"), int), "Actions artifact has an invalid ID: " + name)
+    digest = artifact.get("digest")
+    _require(isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest),
+             "Actions artifact has no trusted SHA-256 digest: " + name)
+    return artifact
+
+
+def _download_zip(artifact: dict, destination: Path, token: str) -> tuple[Path, str]:
+    url = f"{API}/repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"
+    request = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json", "Authorization": "Bearer " + token,
+        "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "crux-release-source",
+    })
+    path = destination / (str(artifact["id"]) + ".zip")
+    digest = hashlib.sha256()
+    try:
+        with cloud_layers._open_retry(request) as response, path.open("xb") as output:
+            while True:
+                block = response.read(8 * 1024 * 1024)
+                if not block:
+                    break
+                output.write(block)
+                digest.update(block)
+    except Exception as error:
+        path.unlink(missing_ok=True)
+        raise SourceTransportError("Actions artifact download failed: " + str(error)) from error
+    actual = "sha256:" + digest.hexdigest()
+    _require(actual == artifact["digest"], "downloaded Actions ZIP digest differs from GitHub metadata")
+    expected_size = artifact.get("size_in_bytes")
+    _require(type(expected_size) is int and path.stat().st_size == expected_size,
+             "downloaded Actions ZIP size differs from GitHub metadata")
+    return path, actual
+
+
+def _read_members(zip_path: Path, members: set[str], output: Path) -> dict[str, Path]:
+    found = {}
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            for info in archive.infolist():
+                name = info.filename
+                posix = PurePosixPath(name)
+                _require(not posix.is_absolute() and ".." not in posix.parts,
+                         "unsafe Actions artifact member path")
+                if name not in members:
+                    continue
+                _require(name not in found, "duplicate Actions artifact member: " + name)
+                mode = info.external_attr >> 16
+                _require(not info.is_dir() and (mode & 0o170000) != 0o120000
+                         and info.file_size <= MAX_MEMBER_SIZE,
+                         "invalid or oversized Actions artifact member: " + name)
+                target = output / Path(*posix.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                size = 0
+                with archive.open(info) as src, target.open("xb") as dst:
+                    while True:
+                        block = src.read(8 * 1024 * 1024)
+                        if not block:
+                            break
+                        size += len(block)
+                        _require(size <= MAX_MEMBER_SIZE, "Actions artifact member is oversized: " + name)
+                        dst.write(block)
+                _require(size == info.file_size, "Actions artifact member size mismatch: " + name)
+                found[name] = target
+    except (zipfile.BadZipFile, OSError) as error:
+        raise SourceError("invalid Actions artifact ZIP: " + str(error)) from error
+    missing = members - found.keys()
+    _require(not missing, "Actions artifact is missing required files: " + ", ".join(sorted(missing)))
+    return found
+
+
+def _artifact_json(run_id: str, name: str, filename: str, work: Path, token: str) -> dict:
+    artifact = _artifact(_inventory(run_id, token), name)
+    zip_path, _ = _download_zip(artifact, work, token)
+    extracted = _read_members(zip_path, {filename}, work / ("json-" + str(artifact["id"])))
+    try:
+        return json.loads(extracted[filename].read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise SourceError("malformed " + filename + " in " + name) from error
+
+
+def _validate_summary(summary: dict, compile_run: str, worker: str) -> None:
+    _require(isinstance(summary, dict) and summary.get("schema_version") == 1
+             and summary.get("status") == "success",
+             "compile summary is not a successful build")
+    _require(summary.get("execution_id") == compile_run, "compile summary execution ID mismatch")
+    _require(summary.get("worker_commit") == worker,
+             "compile summary worker does not match the compile run commit")
+    fresh = summary.get("fresh_build")
+    _require(isinstance(fresh, dict) and fresh.get("execution_id") == compile_run,
+             "compile summary fresh-build binding mismatch")
+    _require(isinstance(fresh.get("pack_run"), str) and fresh["pack_run"].isdecimal()
+             and isinstance(fresh.get("shard_run"), str) and fresh["shard_run"].isdecimal()
+             and _is_sha(fresh.get("plan_sha256"))
+             and _is_sha(fresh.get("source_manifest_sha256")),
+             "compile summary has invalid source/plan bindings")
+    producers = summary.get("producers")
+    _require(isinstance(producers, list) and producers and summary.get("task_count") == len(producers),
+             "compile summary does not bind every compiled task to a producer")
+    try:
+        policy = cloud_schedule.load_policy()
+        declared = cloud_schedule.validate_waves(summary.get('waves'), policy=policy)
+    except ValueError as error:
+        raise SourceError('compile summary has an invalid actual-wave inventory: ' + str(error)) from error
+    _require(summary.get('schedule_policy') == policy,
+             'compile summary schedule policy differs from the current configured policy')
+    ids = set()
+    for producer in producers:
+        _require(isinstance(producer, dict), "invalid compile producer binding")
+        ident = producer.get("id")
+        match = re.fullmatch(r"w([0-9]{3})-s[0-9]{3}", ident) if isinstance(ident, str) else None
+        _require(match is not None, "invalid compile producer task ID")
+        _require(ident not in ids, "duplicate compile producer task ID")
+        ids.add(ident)
+        wave_index = int(match.group(1))
+        _require(wave_index < len(summary['waves']) and ident in summary['waves'][wave_index],
+                 'compile producer differs from its declared actual wave')
+        _require(producer.get("run_id") == compile_run
+                 and producer.get("artifact") == "shard-" + ident
+                 and producer.get("expected_worker_commit") == worker
+                 and _is_sha(producer.get("expected_manifest_sha256")),
+                 "compile producer provenance mismatch: " + ident)
+    _require(ids == set(declared), 'compile summary does not cover every declared actual-wave task')
+
+
+def _lineage(assembly_run: str, token: str):
+    """Return the successful assembly, its artifacts, compile run and build number."""
+    assembly = _run(assembly_run, ASSEMBLY_WORKFLOW, token)
+    inventory = _inventory(assembly_run, token)
+    candidates = [(name, match.group(1)) for name in inventory
+                  if (match := re.fullmatch(r"cloud-fresh-rom-([1-9][0-9]*)", name))]
+    _require(len(candidates) == 1, "assembly run does not identify exactly one fresh compile artifact")
+    artifact_name, compile_run = candidates[0]
+    _require(assembly.get("display_title") == "Verify fresh PE13 compilation " + compile_run,
+             "assembly run title does not match its cold compilation artifact")
+    compile = _run(compile_run, COMPILE_WORKFLOW, token)
+    match = COMPILE_TITLE_RE.fullmatch(compile.get("display_title") or "")
+    _require(match is not None, "compile run title does not name its build number")
+    return assembly, inventory, artifact_name, compile_run, compile, match.group(1)
+
+
+def assembly_build(assembly_run: str) -> str:
+    """Return the build number of a successful assembly run's compilation."""
+    return _lineage(assembly_run, _token())[-1]
+
+
+def signing_manifest(assembly_run: str, work: Path) -> tuple[str, Path]:
+    """Download the install manifest a successful assembly retained for signing.
+
+    Only the identity fields are checked here; the release verifies the whole payload
+    and the signature over these exact bytes before it publishes anything.
+    """
+    work = Path(work)
+    _require(work.is_dir() and not any(work.iterdir()), "signing work directory must be empty")
+    token = _token()
+    _, inventory, _, _, _, build = _lineage(assembly_run, token)
+    zip_path, _ = _download_zip(_artifact(inventory, ZIP_MANIFEST_ARTIFACT), work, token)
+    manifest = _read_members(zip_path, {"crux-install.txt"}, work / "manifest")["crux-install.txt"]
+    zip_path.unlink()
+    _manifest_fields(manifest.read_bytes(), build)
+    return build, manifest
+
+
+def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
+                                compile: dict, build: str) -> dict[str, dict]:
+    """Derive the exact assembly owner set from the same successful compile context."""
+    # Keep the key-bearing manifest-signing path from importing assembly/compile
+    # planning code it does not use.
+    import cloud_assemble
+    import cloud_build_plan
+
+    _require(isinstance(context, dict) and context.get("schema_version") == 1,
+             "compile build context is malformed")
+    _require(context.get("execution_id") == compile_run
+             and context.get("repository") == REPOSITORY
+             and context.get("build_number") == build
+             and context.get("worker_commit") == compile.get("head_sha"),
+             "compile build context identity differs from the successful compile run")
+    try:
+        fresh = cloud_build_plan.fresh_binding(context)
+    except (KeyError, TypeError) as error:
+        raise SourceError("compile build context has incomplete fresh-build bindings") from error
+    _require(fresh == summary.get("fresh_build"),
+             "compile build context fresh binding differs from its successful summary")
+
+    tasks, producers = context.get("tasks"), summary.get("producers")
+    _require(isinstance(tasks, dict) and isinstance(producers, list),
+             "compile build context has no task inventory")
+    producer_ids = {producer.get("id") for producer in producers if isinstance(producer, dict)}
+    _require(len(producer_ids) == len(producers) and set(tasks) == producer_ids,
+             "compile build context tasks differ from its successful producer summary")
+    try:
+        cloud_schedule.validate_context(context)
+    except ValueError as error:
+        raise SourceError('compile context schedule is invalid: ' + str(error)) from error
+    _require(context['waves'] == summary.get('waves')
+             and context['schedule_policy'] == summary.get('schedule_policy'),
+             'compile context waves/policy differ from its successful summary')
+    selected = {}
+    for producer in producers:
+        ident = producer["id"]
+        task = tasks[ident]
+        _require(isinstance(task, dict) and task.get("id") == ident,
+                 "compile build context task identity differs: " + ident)
+        try:
+            binding = cloud_build_plan.producer_binding(context, ident)
+        except (KeyError, TypeError) as error:
+            raise SourceError("compile build context producer binding is incomplete: " + ident) from error
+        _require(binding == producer,
+                 "compile build context producer binding differs from its successful summary: " + ident)
+        selected[ident] = producer
+
+    reuse_records = summary.get("reuse")
+    output_identity = summary.get("output_identity")
+    if context.get("reuse_policy") is None:
+        _require(reuse_records is None and output_identity is None,
+                 "compile summary has reuse provenance without an admitted reuse policy")
+    else:
+        _require(isinstance(reuse_records, dict) and isinstance(output_identity, dict)
+                 and set(reuse_records) == set(tasks) and set(output_identity) == set(tasks),
+                 "compile summary reuse provenance does not cover every admitted task")
+        _require(all(isinstance(task.get('input_identity'), str)
+                     and _is_sha(task.get('input_identity'))
+                     and isinstance(task.get('reuse_descriptor'), dict)
+                     and task['reuse_descriptor'].get('input_identity') == task.get('input_identity')
+                     and task['reuse_descriptor'].get('execution_digest') ==
+                         context['reuse_policy'].get('execution_digest')
+                     for task in tasks.values()),
+                 "compile context has an invalid reuse input descriptor")
+        import cloud_reuse
+        try:
+            cloud_reuse.validate_summary(context, summary)
+        except ValueError as error:
+            raise SourceError("compile summary reuse provenance is invalid: " + str(error)) from error
+        for ident, producer in selected.items():
+            task = tasks[ident]
+            synthetic_receipt = {
+                "id": ident,
+                "run_id": str(context["execution_id"]),
+                "worker_commit": context["worker_commit"],
+                "manifest_sha256": task["manifest_sha256"],
+                "status": "success",
+                "fresh_build": fresh,
+                "outputs": output_identity[ident],
+                "reuse": reuse_records[ident],
+            }
+            try:
+                cloud_reuse.validate_receipt(context, synthetic_receipt, ident)
+            except ValueError as error:
+                raise SourceError("compile summary reuse provenance is invalid for %s: %s" %
+                                  (ident, error)) from error
+
+    try:
+        _, owner_ids = cloud_assemble.required_exports(context)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SourceError("compile build context has invalid assembly output owners: " + str(error)) from error
+    _require(bool(owner_ids) and owner_ids <= set(tasks),
+             "assembly output owners are outside the successful compile task inventory")
+    return {ident: selected[ident] for ident in owner_ids}
+
+
+def verify_source(assembly_run: str, tag: str, work: Path) -> VerifiedBuild:
+    """Download and verify the fresh assembly artifact, its same-run lineage and ZIP payload.
+
+    `work` must be a new existing empty directory. The returned payload directory holds
+    the verified crux_zip.py payload of this build, under `zip-payload/`.
+    """
+    work = Path(work)
+    _require(work.is_dir() and not any(work.iterdir()), "source verification work directory must be empty")
+    parsed = parse_tag(tag)
+    _require(parsed is not None, "invalid release tag")
+    token = _token()
+    assembly, inventory, artifact_name, compile_run, compile, build = _lineage(assembly_run, token)
+    _require(build == parsed["build"], "compile run title does not match the requested build")
+    summary = _artifact_json(compile_run, "cloud-fresh-build-summary", "build-summary.json", work, token)
+    _validate_summary(summary, compile_run, compile["head_sha"])
+    context = _artifact_json(compile_run, "cloud-build-context", "context.json", work, token)
+    compile_title = COMPILE_TITLE_RE.fullmatch(compile.get("display_title") or "")
+    retry_origin = compile_title.group(2) if compile_title is not None else None
+    policy_retry_origin = (context.get("reuse_policy", {}).get("cold_retry_of")
+                           if isinstance(context.get("reuse_policy"), dict) else None)
+    _require(retry_origin == policy_retry_origin,
+             "compile run cold-retry title differs from its admitted reuse policy")
+    assembly_producers = _assembly_producer_bindings(context, summary, compile_run, compile, build)
+    reuse_map = summary.get("reuse")
+    reused_tasks = sorted(task_id for task_id, record in (reuse_map if isinstance(reuse_map, dict) else {}).items()
+                          if isinstance(record, dict) and record.get("mode") == "reused")
+    reuse_provenance = None
+    if isinstance(reuse_map, dict):
+        reuse_provenance = {}
+        for task_id, envelope in sorted(reuse_map.items()):
+            origin = envelope["origin"]
+            compact_origin = {"run_id": origin["run_id"], "worker_commit": origin["worker_commit"]}
+            if envelope["mode"] == "reused":
+                compact_origin["artifact_id"] = origin["artifact_id"]
+                compact_origin["artifact_digest"] = origin["artifact_digest"]
+            reuse_provenance[task_id] = {"mode": envelope["mode"], "key": envelope["key"],
+                                         "origin": compact_origin}
+
+    artifact = _artifact(inventory, artifact_name)
+    zip_path, zip_digest = _download_zip(artifact, work, token)
+    names = ({"delivery/" + name for name in DELIVERY_NAMES} | {"zip-payload/" + name for name in PAYLOAD_NAMES}
+             | {"assembly-receipt.json"})
+    try:
+        _read_members(zip_path, names, work)
+        zip_path.unlink()
+        record = _verify_delivery(parsed["build"], work, summary, assembly_producers)
+        manifest_sha = _verify_payload(parsed["build"], work / "zip-payload", record)
+    except (SourceError, ValueError, KeyError, TypeError) as error:
+        if reused_tasks and not isinstance(error, SourceTransportError):
+            raise ReuseContentError(str(error), execution_id=compile_run,
+                                    worker_commit=compile["head_sha"], build_number=build,
+                                    reused_tasks=reused_tasks) from error
+        raise
+    return VerifiedBuild(tag, parsed["build"], work / "zip-payload", assembly["head_sha"], assembly_run,
+                         compile_run, artifact["id"], zip_digest, manifest_sha, reuse_provenance)
+
+
+def _verify_delivery(build: str, work: Path, summary: dict,
+                     assembly_producers: dict[str, dict]) -> dict:
+    delivery_dir = work / "delivery"
+    record = json.loads((delivery_dir / "delivery-record.json").read_text())
+    sums = parse_sums((delivery_dir / "SHA256SUMS").read_text())
+    receipt = json.loads((work / "assembly-receipt.json").read_text())
+    _require(isinstance(receipt, dict) and isinstance(record, dict),
+             "assembly receipt or delivery record is malformed")
+    _require(receipt.get("schema_version") == 1 and receipt.get("status") == "success"
+             and receipt.get("build_number") == build and receipt.get("product") == PRODUCT,
+             "assembly receipt does not match successful requested build")
+    _require(record.get("schema_version") == 1 and record.get("status") == "success"
+             and record.get("build_number") == build and record.get("product") == PRODUCT,
+             "delivery record does not match successful requested build")
+    source_selection = record.get("source_selection")
+    fresh = summary["fresh_build"]
+    _require(isinstance(source_selection, dict)
+             and source_selection.get("shard_run") == fresh["shard_run"]
+             and source_selection.get("source_manifest_sha256") == fresh["source_manifest_sha256"]
+             and source_selection.get("build_number") == build
+             and source_selection.get("target_product") == "aosp_crux"
+             and source_selection.get("target_build_variant") == "userdebug",
+             "delivery source selection differs from the successful compile summary")
+    source_env = source_selection.get("env", {})
+    _require(isinstance(source_env, dict) and source_env.get("USE_CCACHE") == "0"
+             and source_env.get("CCACHE_DISABLE") == "1"
+             and str(source_env.get("BUILD_FINGERPRINT", "")).endswith(f"/{build}:userdebug/test-keys"),
+             "delivery source selection is not a ccache-free Dev test-keys build of this number")
+    assets = record.get("delivery")
+    _require(isinstance(assets, dict) and set(assets) == DELIVERY_ASSET_NAMES,
+             "delivery record has an incomplete asset set")
+    _require(set(sums) == DELIVERY_ASSET_NAMES | {"delivery-record.json"},
+             "SHA256SUMS and delivery assets differ")
+    _require(sums["delivery-record.json"] == sha256(delivery_dir / "delivery-record.json"),
+             "delivery record digest differs from SHA256SUMS")
+    receipt_assets = receipt.get("assets")
+    _require(isinstance(receipt_assets, dict) and set(receipt_assets) == set(assets),
+             "assembly receipt asset inventory mismatch")
+    record_producers = record.get("producers")
+    _require(isinstance(record_producers, list) and assembly_producers
+             and all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in record_producers),
+             "delivery record has invalid assembly producer bindings")
+    producer_ids = [item["id"] for item in record_producers]
+    _require(len(producer_ids) == len(assembly_producers)
+             and len(set(producer_ids)) == len(producer_ids)
+             and set(producer_ids) == set(assembly_producers),
+             "delivery producer IDs differ from graph-derived assembly owners")
+    _require(all(item == assembly_producers[item["id"]] for item in record_producers),
+             "delivery producer bindings differ from the successful compile context")
+    for name in sorted(DELIVERY_ASSET_NAMES):
+        path = delivery_dir / name
+        digest = sha256(path)
+        _require(sums.get(name) == digest, "asset digest differs from SHA256SUMS: " + name)
+        _require(path.stat().st_size == assets[name].get("size") and assets[name].get("sha256") == digest
+                 and receipt_assets[name] == digest, "delivery asset differs from its record: " + name)
+    fit = record.get("fit_validation", {})
+    _require(fit.get("release_ready") is False and fit.get("development_adb") is True,
+             "the FITs are not the development ADB profile")
+    images = record.get("gates", {}).get("images", {})
+    _require(all(images.get(role, {}).get("failures") == [] for role in ("boot", "recovery")),
+             "an image gate failed")
+    return record
+
+
+def _manifest_fields(text: bytes, build: str) -> dict:
+    fields = dict(line.split("=", 1) for line in text.decode().splitlines() if "=" in line)
+    _require(fields.get("schema") == "crux-install/1" and fields.get("kind") == "zip"
+             and fields.get("product") == PRODUCT and fields.get("target_build") == build
+             and fields.get("serialno") == "any" and fields.get("data_policy") == "discard",
+             "the ZIP payload manifest is not this build's identity-free clean-install package")
+    return fields
+
+
+def _verify_payload(build: str, payload: Path, record: dict) -> str:
+    text = (payload / "crux-install.txt").read_bytes()
+    fields = _manifest_fields(text, build)
+    delivery = record["delivery"]
+    for role, name in (("recovery", "recovery-cepheus.itb"), ("rom", "rom-cepheus.itb")):
+        _require(fields.get(f"fit.{role}.entry") == name
+                 and fields.get(f"fit.{role}.sha256") == delivery[name]["sha256"] == sha256(payload / name),
+                 f"the ZIP payload {role} FIT is not the verified assembly FIT")
+    record_path = payload / "payload.json"
+    payload_record = json.loads(record_path.read_text())
+    _require(payload_record.get("manifest_sha256") == hashlib.sha256(text).hexdigest()
+             and payload_record.get("installer_sha256") == sha256(payload / "update-binary"),
+             "payload.json does not describe this payload")
+    return hashlib.sha256(text).hexdigest()

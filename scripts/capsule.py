@@ -1,0 +1,3033 @@
+#!/usr/bin/env python3
+"""Package the cold inputs of a Ninja graph slice for a standard Linux runner."""
+
+import argparse
+import ast
+import errno
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+DEFAULT_SOURCE = "/srv/crux/crux-pe13-offline-2026-09-25/pe13"
+DEFAULT_OUT = "/srv/crux/android-out"
+FORBIDDEN_PARTS = {".git", ".repo", ".ssh", ".gnupg", ".aws"}
+COMPILED_SUFFIXES = {
+    ".o", ".a", ".so", ".jar", ".apk", ".dex", ".class", ".art",
+    ".odex", ".vdex", ".img", ".dtb", ".dtbo", ".ko", ".bc", ".zip",
+}
+# Generated translation units can include assembly bodies from their -I namespace;
+# their contents are not available to the source-only collector for direct scanning.
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".def", ".hal", ".rsh", ".s", ".S"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".m", ".mm"}
+# A preprocessor include can name a body whose suffix is not a header, such as
+# BoringSSL's fipsmodule/aes/aes.c, libc++'s exception_libcxxabi.ipp or a
+# RenderScript .rsh interface. These scanners follow the compiler's own search
+# instead of filtering by header suffix.
+COMPILER_SCAN_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES | {".ipp", ".rsh", ".tcc", ".cuh"}
+# TableGen descriptions pull in further .td files through their own include
+# directives, and llvm-tblgen resolves them against the declared -I paths.
+TABLEGEN_SUFFIXES = {".td"}
+# AIDL interfaces import each other by package name; the tool resolves them
+# against its declared -I roots.
+AIDL_SUFFIXES = {".aidl"}
+AIDL_PACKAGE_RE = re.compile(r'^[ \t]*package[ \t]+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)[ \t]*;',
+                            re.MULTILINE)
+
+
+_SOURCE_READS = None
+
+
+def source_reads_module():
+    """Load the sibling collector for direct script and file-based imports."""
+    global _SOURCE_READS
+    if _SOURCE_READS is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "crux_capsule_source_reads", Path(__file__).with_name("cloud_source_reads.py"))
+        _SOURCE_READS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SOURCE_READS)
+    return _SOURCE_READS
+
+
+def aidl_package_name(text):
+    match = AIDL_PACKAGE_RE.search(text)
+    return match.group(1) if match else None
+
+
+class CapsuleError(Exception):
+    pass
+
+
+def strip_attributes(statement):
+    """Return what follows any leading Rust attribute groups on one line."""
+    index = 0
+    while statement.startswith("#[", index):
+        depth = 0
+        position = index + 1
+        while position < len(statement):
+            character = statement[position]
+            if character == "[":
+                depth += 1
+            elif character == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            position += 1
+        index = position + 1
+        while index < len(statement) and statement[index] in " \t":
+            index += 1
+    return statement[index:]
+
+
+def optional_probe(path, method="is_file"):
+    # Commands such as Kati writeFile carry JSON as a quoted operand. Such text
+    # can exceed a filename's byte limit and is never an input path.
+    try:
+        return getattr(path, method)()
+    except OSError as error:
+        if error.errno == errno.ENAMETOOLONG:
+            return False
+        raise
+
+
+def digest(path):
+    result = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(block)
+    return result.hexdigest()
+
+
+class DigestCache:
+    """Reuse transfer digests while the local source identity remains unchanged."""
+    def __init__(self, path=None):
+        self.path = Path(path) if path else None
+        self.entries = {}
+        self.reused = self.computed = 0
+        if self.path and self.path.exists():
+            data = json.loads(self.path.read_text())
+            if data.get("schema_version") != 1:
+                raise CapsuleError("Unsupported digest cache schema")
+            self.entries = data["entries"]
+
+    def identity(self, path):
+        info = Path(path).stat()
+        return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+
+    def __call__(self, path):
+        key = str(Path(path).resolve())
+        identity = self.identity(path)
+        prior = self.entries.get(key)
+        if prior and prior["identity"] == identity:
+            self.reused += 1
+            return prior["sha256"]
+        result = digest(path)
+        if identity != self.identity(path):
+            raise CapsuleError("Input changed while its digest was computed: %s" % path)
+        self.entries[key] = {"identity": identity, "sha256": result}
+        self.computed += 1
+        return result
+
+    def save(self):
+        if not self.path:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", prefix=self.path.name + ".", dir=self.path.parent,
+                                         delete=False) as temporary:
+            json.dump({"schema_version": 1, "entries": self.entries}, temporary, sort_keys=True)
+            temporary.write("\n")
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(self.path)
+
+
+def beneath(path, root):
+    return path == root or root in path.parents
+
+
+def make_dependencies(text):
+    """Read GCC Make depfiles, including escaped spaces and line continuations."""
+    text = text.replace("\\\n", " ")
+    colon = re.search(r"(?<!\\):", text)
+    if not colon:
+        return []
+    dependencies = []
+    for token in re.findall(r"(?:\\.|[^\s])+", text[colon.end():]):
+        if token.endswith(":"):
+            continue  # GCC -MP emits an extra empty rule for each header.
+        dependencies.append(re.sub(r"\\(.)", r"\1", token))
+    return dependencies
+
+
+def command_tokens(command):
+    try:
+        # shlex combines adjacent punctuation into "))". Shell parentheses
+        # delimit separate scopes; preserve quoted and escaped literal names.
+        separated, quote, index = [], None, 0
+        while index < len(command):
+            character = command[index]
+            if character == "\\" and quote != "'" and index + 1 < len(command):
+                separated.append(command[index:index + 2])
+                index += 2
+                continue
+            if quote:
+                separated.append(character)
+                if character == quote:
+                    quote = None
+            elif character in {"'", '"'}:
+                quote = character
+                separated.append(character)
+            else:
+                separated.append(" " + character + " " if character in {"(", ")"} else character)
+            index += 1
+        lexer = shlex.shlex("".join(separated), posix=True, punctuation_chars=";&|()<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError as error:
+        raise CapsuleError("Cannot parse expanded command: %s" % error) from error
+
+
+def command_operand(token):
+    if token.startswith("@"):
+        return token[1:]
+    return token.partition("=")[2] if "=" in token else token
+
+
+def command_invocations(tokens):
+    """Locate the program of each simple shell command, including env prefixes."""
+    start = 0
+    for end in range(len(tokens) + 1):
+        if end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "&", "(", ")"}:
+            continue
+        program = start
+        while program < end and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[program]):
+            program += 1
+        if program < end and Path(tokens[program]).name == "env":
+            program += 1
+            while program < end:
+                option = tokens[program]
+                if option == "--":
+                    program += 1
+                    break
+                if option in {"-u", "--unset", "-C", "--chdir"}:
+                    program += 2
+                elif option.startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", option):
+                    program += 1
+                else:
+                    break
+        if program < end:
+            yield program, end
+        start = end + 1
+
+
+def substitution_positions(tokens):
+    stack, positions = [], set()
+    for index, token in enumerate(tokens):
+        if token == "(":
+            stack.append((bool(stack) and stack[-1]) or (index > 0 and tokens[index - 1] in {"$", "<", ">"}))
+        elif token == ")" and stack:
+            stack.pop()
+        elif stack and stack[-1]:
+            positions.add(index)
+    return positions
+
+
+def command_completion(tokens, end):
+    # A trailing process-substitution redirection belongs to the parent
+    # invocation. Its own commands remain separately inspected as readers.
+    while end < len(tokens) and tokens[end] == "(" and end > 0 and tokens[end - 1] in {"<", ">"}:
+        depth = 1
+        end += 1
+        while end < len(tokens) and depth:
+            depth += (tokens[end] == "(") - (tokens[end] == ")")
+            end += 1
+    while end < len(tokens) and tokens[end] == ")":
+        end += 1
+    return end
+
+
+def response_context(command, response=None):
+    tokens = command_tokens(command)
+    for position, end in command_invocations(tokens):
+        name = Path(tokens[position]).name
+        if name in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"} and (response is None or any(
+                token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+                for token in tokens[position + 1:end])):
+            return name
+        invocation = source_reads_module().r8_invocation(tokens[position:end]) if "r8" in command else None
+        if invocation and invocation[0] == "modern" and any(
+                token.startswith("@") and (response is None or os.path.normpath(token[1:]) == os.path.normpath(response))
+                for token in tokens[position + 1:end]):
+            return "r8"
+        if tokens[position] in {".", "source"} and (response is None or any(
+                os.path.normpath(token) == os.path.normpath(response) for token in tokens[position + 1:end])):
+            return "shell-source"
+        if name in {"bash", "sh", "dash"}:
+            for index in range(position + 1, len(tokens) - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:]:
+                    context = response_context(tokens[index + 1], response)
+                    if context:
+                        return context
+    return None
+
+
+def cpp_invocations(tokens):
+    names = {"clang", "clang++", "gcc", "g++", "cc", "c++", "header-abi-dumper", "clang-tidy"}
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name in names or (name == "ccache" and program + 1 < end and Path(tokens[program + 1]).name in names):
+            yield program, end
+
+
+def cpp_frontend(command, response=None):
+    tokens = command_tokens(command)
+    for program, end in cpp_invocations(tokens):
+        if response is None or any(token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+                                   for token in tokens[program + 1:end]):
+            return True
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:] and cpp_frontend(tokens[index + 1], response):
+                    return True
+    return False
+
+
+def abi_namespace_frontend(command):
+    tokens = command_tokens(command)
+    for program, end in command_invocations(tokens):
+        name = Path(tokens[program]).name
+        if name == "header-abi-linker":
+            return True
+        if name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and not tokens[index].startswith("--") and "c" in tokens[index][1:] and abi_namespace_frontend(tokens[index + 1]):
+                    return True
+    return False
+
+
+def rsp_callers(command, response):
+    tokens = command_tokens(command)
+    cpp_programs = {program for program, _ in cpp_invocations(tokens)}
+    callers = []
+    for program, end in command_invocations(tokens):
+        if any(token.startswith("@") and os.path.normpath(token[1:]) == os.path.normpath(response)
+               for token in tokens[program + 1:end]):
+            name = Path(tokens[program]).name
+            if program in cpp_programs:
+                if name == "ccache":
+                    name = Path(tokens[program + 1]).name
+                dash = next((index for index in range(program + 1, end) if tokens[index] == "--"), None)
+                for index in range(program + 1, end):
+                    if tokens[index].startswith("@") and os.path.normpath(tokens[index][1:]) == os.path.normpath(response):
+                        after_dash = dash is not None and index > dash
+                        callers.append((name + " --" if name in {"header-abi-dumper", "clang-tidy"} and after_dash else name, True))
+            else:
+                invocation = source_reads_module().r8_invocation(tokens[program:end]) if "r8" in command else None
+                reader = {"compat": "r8-compat-proguard", "modern": "r8"}[invocation[0]] if invocation else name
+                callers.append((reader, False))
+        if Path(tokens[program]).name in {"bash", "sh", "dash"}:
+            for index in range(program + 1, end - 1):
+                if tokens[index].startswith("-") and "c" in tokens[index][1:]:
+                    callers.extend(rsp_callers(tokens[index + 1], response))
+    return list(dict.fromkeys(callers))
+
+
+class ShellSubstitutionParseError(CapsuleError):
+    pass
+
+
+class ShellSubstitutionAnalysis:
+    def __init__(self, native_command, analysis_command, evaluated_shell,
+                 substitutions=None, arithmetic_carriers=None, limitations=None):
+        self.native_command = native_command
+        self.analysis_command = analysis_command
+        self.evaluated_shell = evaluated_shell
+        self.substitutions = substitutions or {}
+        self.arithmetic_carriers = arithmetic_carriers or {}
+        self.limitations = limitations or []
+
+
+class ShellSubstitutionScanner:
+    def __init__(self, text):
+        self.text = text
+        self.nodes = {}
+        self.arithmetic = {}
+        self.limitations = []
+        self.counter = 0
+
+    def marker(self, kind):
+        while True:
+            marker = '__CRUX_ANALYSIS_%s_%06d__' % (kind, self.counter)
+            self.counter += 1
+            if marker not in self.text:
+                return marker
+
+    def scan(self, start=0, closing=None):
+        text, result, index, quote, depth = self.text, [], start, None, 0
+        word_start = True
+        while index < len(text):
+            char = text[index]
+            if quote == "'":
+                result.append(char)
+                index += 1
+                if char == "'":
+                    quote = None
+                continue
+            if char == '\\':
+                # In double quotes only these escapes suppress shell meaning.
+                if quote != '"' or (index + 1 < len(text) and text[index + 1] in '$`"\\\n'):
+                    if index + 1 < len(text) and text[index + 1] == '\n':
+                        # Shell line continuation preserves the current word.
+                        index += 2
+                        continue
+                    result.append(text[index:index + 2])
+                    word_start = False
+                    index += 2
+                    continue
+            if char == "'" and quote is None:
+                quote = "'"
+                word_start = False
+                result.append(char)
+                index += 1
+                continue
+            if char == '"':
+                quote = None if quote == '"' else '"'
+                word_start = False
+                result.append(char)
+                index += 1
+                continue
+            if char == '#' and quote is None and word_start:
+                end = text.find('\n', index)
+                end = len(text) if end < 0 else end
+                # Keep native SOURCE bytes and offsets; comments are absent
+                # only from evaluated analysis, never from response data.
+                result.append(' ' * (end - index))
+                index = end
+                continue
+            if char == '`':
+                marker, end = self.scan_backtick(index, quote == '"')
+                result.append(marker)
+                word_start = False
+                index = end
+                continue
+            if quote is None and text.startswith('<<', index):
+                self.limitations.append({'offset': index, 'kind': 'here-document/here-string grammar not certified'})
+            if text.startswith('$$', index):
+                result.append('$$')
+                word_start = False
+                index += 2
+                continue
+            if text.startswith('$((', index):
+                marker, end = self.scan_arithmetic(index)
+                result.append(self.arithmetic[marker]['analysis_carrier'])
+                word_start = False
+                index = end
+                continue
+            if text.startswith('$(', index):
+                marker, end = self.scan_substitution(index)
+                result.append(marker)
+                word_start = False
+                index = end
+                continue
+            if quote is None and closing is not None:
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    if depth == 0:
+                        return ''.join(result), index
+                    depth -= 1
+            result.append(char)
+            if quote is None:
+                word_start = char.isspace() or char in ';|&()<>'
+            index += 1
+        if quote is not None:
+            raise ShellSubstitutionParseError('Unclosed quote at offset %d' % start)
+        if closing is not None:
+            raise ShellSubstitutionParseError('Unclosed command substitution at offset %d' % (start - 2))
+        return ''.join(result), index
+
+    def scan_backtick(self, start, outer_double):
+        """Decode one proven legacy substitution layer without running it.
+
+        Legacy backquotes remove backslash before $, backquote and backslash
+        before the body is evaluated. Outer double quotes also remove escaped
+        double quotes. A nested modern substitution is then parsed by the
+        child Collector invocation, with its own isolated temporary state.
+        """
+        body, index = [], start + 1
+        while index < len(self.text):
+            char = self.text[index]
+            if char == '\\' and index + 1 < len(self.text):
+                following = self.text[index + 1]
+                if following in '$`\\\n' or (outer_double and following == '"'):
+                    if following != '\n':
+                        body.append(following)
+                    index += 2
+                    continue
+            if char == '`':
+                marker = self.marker('SUB')
+                self.nodes[marker] = {'marker': marker, 'native_body': ''.join(body),
+                                      'analysis_body': ''.join(body), 'start': start,
+                                      'end': index + 1, 'children': [],
+                                      'legacy_backtick': True}
+                return marker, index + 1
+            body.append(char)
+            index += 1
+        raise ShellSubstitutionParseError('Unclosed backtick substitution at offset %d' % start)
+
+    def scan_substitution(self, start):
+        marker = self.marker('SUB')
+        previous = set(self.nodes)
+        body, end = self.scan(start + 2, closing=')')
+        native_body = self.text[start + 2:end]
+        # Balanced punctuation cannot distinguish shell case pattern closers.
+        if native_body.lstrip().startswith('case '):
+            raise ShellSubstitutionParseError('case grammar inside command substitution is unsupported')
+        self.nodes[marker] = {'marker': marker, 'native_body': native_body,
+                              'analysis_body': body, 'start': start, 'end': end + 1,
+                              'children': [key for key in self.nodes if key not in previous]}
+        return marker, end + 1
+
+    def scan_arithmetic(self, start):
+        text, index, depth, quote, active = self.text, start + 3, 0, None, []
+        while index < len(text):
+            char = text[index]
+            if char == '\\':
+                index += 2
+                continue
+            # Arithmetic content is not an ordinary shell word: singlequote
+            # characters do not suppress an explicit nested $(...) expansion.
+            if char == '"':
+                quote = None if quote == '"' else '"'
+                index += 1
+                continue
+            if char == '`':
+                marker, index = self.scan_backtick(index, quote == '"')
+                active.append(marker)
+                continue
+            if text.startswith('$$', index):
+                index += 2
+                continue
+            if text.startswith('$((', index):
+                nested, index = self.scan_arithmetic(index)
+                active.extend(self.arithmetic[nested]['active_markers'])
+                continue
+            if text.startswith('$(', index):
+                marker, index = self.scan_substitution(index)
+                active.append(marker)
+                continue
+            if quote is None:
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    if depth == 0 and text.startswith('))', index):
+                        end = index + 2
+                        carrier = self.marker('ARITH')
+                        # Arithmetic expansion yields a scalar word. Keep it
+                        # opaque to the shell-token model while retaining its
+                        # active children at the same parent argument position.
+                        analysis = carrier + ''.join(active)
+                        self.arithmetic[carrier] = {'native_text': text[start:end],
+                                                    'start': start, 'end': end,
+                                                    'active_markers': active,
+                                                    'analysis_carrier': analysis}
+                        return carrier, end
+                    depth -= 1
+            index += 1
+        raise ShellSubstitutionParseError('Unclosed arithmetic expansion at offset %d' % start)
+
+
+def analyze_shell_substitutions(command, *, evaluated=False):
+    if not evaluated:
+        return ShellSubstitutionAnalysis(command, command, False)
+    scanner = ShellSubstitutionScanner(command)
+    rewritten, _ = scanner.scan()
+    return ShellSubstitutionAnalysis(command, rewritten, True, scanner.nodes, scanner.arithmetic, scanner.limitations)
+
+
+def shell_child_snapshot(temporaries, tokens, position, command_invocations):
+    """Inherit completed prior writes; exclude the invoking command's writes.
+
+    Shell expansions precede that command's redirections even when the
+    redirection token occurs before the substitution's argument in source.
+    Nothing written within the child is merged back into this snapshot.
+    """
+    start = next((program for program, end in command_invocations(tokens)
+                  if program <= position < end), position)
+    temporaries.position = position
+    files, directories = temporaries.snapshot()
+    files = {path for path in files if path in temporaries.inherited_files
+             or temporaries.file_active(path, before=start)}
+    directories = {path for path in directories if path in temporaries.inherited_directories
+                   or temporaries.directory_active(path, before=start)}
+    return files, directories
+
+
+def literal_shell_words(command):
+    """Keep quote/escape provenance needed for a static shell -c payload."""
+    words, start, index, quote = [], None, 0, None
+    while index < len(command):
+        char = command[index]
+        if start is None:
+            if char == '#' and (index == 0 or command[index - 1].isspace() or command[index - 1] in ';&|()<>'):
+                end = command.find('\n', index)
+                index = len(command) if end < 0 else end
+                continue
+            if char == '\n' or char in ';&|()<>':
+                end = index + 1
+                while end < len(command) and command[end] == char and char != '\n':
+                    end += 1
+                words.append({'raw': command[index:end], 'start': index, 'end': end, 'kind': 'operator'})
+                index = end
+                continue
+            if char.isspace():
+                index += 1
+                continue
+            start = index
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == '\\':
+            if quote != '"' or (index + 1 < len(command) and command[index + 1] in '$`"\\\n'):
+                index += 2
+                continue
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        elif quote is None and (char.isspace() or char in ';&|()<>'):
+            words.append({'raw': command[start:index], 'start': start, 'end': index, 'kind': 'word'})
+            start = None
+            continue
+        index += 1
+    if start is not None:
+        words.append({'raw': command[start:], 'start': start, 'end': len(command), 'kind': 'word'})
+    return words
+
+
+def decode_literal_shell_word(raw):
+    """Decode one shell word without expanding/evaluating it.
+
+    Unlike Python shlex, a backslash before $ inside double quotes disappears
+    when the outer shell constructs argv. The resulting $ may be active when
+    the proven inner shell later evaluates this literal -c argument.
+    """
+    result, index, quote, static = [], 0, None, True
+    while index < len(raw):
+        char = raw[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                result.append(char)
+            index += 1
+            continue
+        if char == '\\' and index + 1 < len(raw):
+            following = raw[index + 1]
+            if quote != '"' or following in '$`"\\\n':
+                if following != '\n':
+                    result.append(following)
+                index += 2
+                continue
+        if char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        else:
+            if char in '$`':
+                static = False
+            result.append(char)
+        index += 1
+    if quote is not None:
+        raise ShellSubstitutionParseError('Unclosed quote in shell word')
+    return ''.join(result), static
+
+
+def evaluated_shell_payloads(command, *, analysis_markers=()):
+    words = literal_shell_words(command)
+    boundaries = {';', '&&', '||', '|', '&', '(', ')', '\n'}
+    start = 0
+    for end in range(len(words) + 1):
+        if end < len(words) and not (words[end]['kind'] == 'operator' and words[end]['raw'] in boundaries):
+            continue
+        index = start
+        start = end + 1
+        while index < end and re.match(r'^[A-Za-z_][A-Za-z_0-9]*=', words[index]['raw']):
+            index += 1
+        if index >= end:
+            continue
+        program, static_program = decode_literal_shell_word(words[index]['raw'])
+        if Path(program).name == 'env':
+            index += 1
+            while index < end and (words[index]['raw'].startswith('-') or re.match(r'^[A-Za-z_][A-Za-z_0-9]*=', words[index]['raw'])):
+                index += 1
+            if index >= end:
+                continue
+            program, static_program = decode_literal_shell_word(words[index]['raw'])
+        if not static_program or Path(program).name not in {'bash', 'sh', 'dash'}:
+            continue
+        program_start = words[index]['start']
+        option_index = index + 1
+        while option_index < end:
+            option, static_option = decode_literal_shell_word(words[option_index]['raw'])
+            if not static_option or option == '--' or not option.startswith(('-', '+')):
+                break  # A script operand ends option parsing.
+            if option in {'-o', '+o', '-O', '+O', '--rcfile', '--init-file'}:
+                option_index += 2
+                continue
+            if option.startswith('-') and not option.startswith('--') and 'c' in option[1:]:
+                if option_index + 1 >= end:
+                    break
+                payload_word = words[option_index + 1]
+                payload, static = decode_literal_shell_word(payload_word['raw'])
+                static = static and not any(marker in payload for marker in analysis_markers)
+                yield {**payload_word, 'native_body': payload, 'static_literal_argv': static,
+                       'program': program, 'program_start': program_start, 'option': option}
+                break
+            option_index += 1
+
+
+class ShellAnalysisToken(str):
+    """A native shell word's analysis children, never assigned to RSP data."""
+    def __new__(cls, value, children):
+        instance = super().__new__(cls, value)
+        instance.shell_children = tuple(marker for marker in children if marker in value)
+        return instance
+
+    def partition(self, separator):
+        return tuple(ShellAnalysisToken(part, self.shell_children) if any(marker in part for marker in self.shell_children)
+                     else part for part in super().partition(separator))
+
+    def __getitem__(self, key):
+        result = super().__getitem__(key)
+        return ShellAnalysisToken(result, self.shell_children) if any(marker in result for marker in self.shell_children) else result
+
+
+
+SHELL_ASSIGNMENT = re.compile(
+    r"(?:^|[;&|(]|\s)([A-Za-z_][A-Za-z_0-9]*)="
+    r"((?:'[^']*')|(?:\"[^\"]*\")|(?:[^\s;&|()<>\"'\\]+))")
+
+
+def shell_assignment_values(command):
+    """Map simple assignment words to the literal values the shell would use."""
+    values = {}
+    for match in SHELL_ASSIGNMENT.finditer(command):
+        raw = match.group(2)
+        values[match.group(1)] = raw[1:-1] if raw[:1] in "'\"" else raw
+    return values
+
+
+def expand_shell_variables(command, values, depth=0):
+    """Expand ``$NAME``/``${NAME}`` for names assigned in this same command.
+
+    Soong delivers many flag sets as shell variables (``FLAGS=' -I...' && aidl
+    $FLAGS ...``). The command that runs under Ninja expands them, so input
+    discovery has to see the same words; unknown names and single-quoted text
+    stay untouched, and only names assigned earlier in the same command expand.
+    """
+    if not values or depth > 4:
+        return command
+    result = []
+    index = 0
+    quote = None
+    while index < len(command):
+        character = command[index]
+        if character == "\\" and quote != "'" and index + 1 < len(command):
+            result.append(command[index:index + 2])
+            index += 2
+            continue
+        if character == "'" and quote != '"':
+            quote = None if quote == "'" else "'"
+        elif character == '"' and quote != "'":
+            quote = None if quote == '"' else '"'
+        elif character == "$" and quote != "'":
+            match = re.match(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?", command[index:])
+            if match and match.group(1) in values:
+                result.append(values[match.group(1)])
+                index += match.end()
+                continue
+        result.append(character)
+        index += 1
+    expanded = "".join(result)
+    return expanded if expanded == command else expand_shell_variables(expanded, values, depth + 1)
+
+
+def shell_analysis_words(command, evaluated):
+    analysis = analyze_shell_substitutions(command, evaluated=evaluated)
+    children = {marker: {**node, 'kind': 'substitution'} for marker, node in analysis.substitutions.items()}
+    rewritten = analysis.analysis_command
+    if evaluated:
+        payloads = list(evaluated_shell_payloads(rewritten,
+                         analysis_markers=set(children) | set(analysis.arithmetic_carriers)))
+        for ordinal, payload in reversed(list(enumerate(payloads))):
+            if not payload['static_literal_argv']:
+                continue
+            marker = '__CRUX_ANALYSIS_SHELL_%06d__' % ordinal
+            while marker in rewritten or marker in command:
+                marker += '_'
+            children[marker] = {'marker': marker, 'native_body': payload['native_body'], 'kind': 'shell'}
+            rewritten = rewritten[:payload['start']] + marker + rewritten[payload['end']:]
+    tokens = command_tokens(rewritten)
+    tokens = [ShellAnalysisToken(token, tuple(children)) if any(marker in token for marker in children) else token
+              for token in tokens]
+    return rewritten, tokens, children
+
+
+def guarded_for_body_barriers(tokens):
+    """Recognize plain guarded for/in/do/done bodies, not general shell AST.
+
+    Only writes established before the loop may cross its internal separators.
+    The outside guard and every outside/OR barrier retain their prior meaning.
+    Nested compounds are deliberately left to existing conservative handling.
+    """
+    invocations = list(command_invocations(tokens))
+    starts = {program for program, _ in invocations}
+    result = {}
+    for program, header_end in invocations:
+        if tokens[program] != "for" or program + 2 >= header_end:
+            continue
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tokens[program + 1]) or tokens[program + 2] != "in":
+            continue
+        previous = program - 1
+        while previous >= 0 and tokens[previous] == "(":
+            previous -= 1
+        if previous < 0 or tokens[previous] != "&&":
+            continue
+        if header_end >= len(tokens) or tokens[header_end] != ";" or header_end + 1 >= len(tokens) or tokens[header_end + 1] != "do":
+            continue
+        end = next((index for index in sorted(starts) if index > header_end and tokens[index] == "done"), None)
+        if end is None:
+            continue
+        if any(tokens[index] in {"for", "while", "until", "if", "case", "select", "function"}
+               for index in starts if header_end < index < end):
+            continue
+        for index in range(header_end, end):
+            if tokens[index] == ";":
+                result[index] = program
+    return result
+
+
+def unconditional_command_positions(tokens):
+    """Bound simple commands outside opaque controls and skipped/piped branches.
+
+    Parenthesized groups retain their caller's branch. Conditional bodies never
+    supply parent freshness; a later simple command may establish its own write.
+    Unsupported controls remain opaque through the end of this analysis scope.
+    """
+    invocations = list(command_invocations(tokens))
+    blocked, controls = [], []
+    for program, end in invocations:
+        keyword = tokens[program]
+        if keyword in {"then", "else", "do"} and program + 1 < end:
+            keyword = tokens[program + 1]
+        if (keyword in {"!", "time", "coproc", "{", "}", "while", "until", "case", "select", "function"}
+                or (end + 1 < len(tokens) and tokens[end:end + 2] == ["(", ")"])):
+            blocked.append((program, len(tokens)))
+        elif keyword in {"if", "for"}:
+            controls.append(("fi" if keyword == "if" else "done", program))
+        elif keyword in {"fi", "done"} and controls:
+            closing, start = controls.pop()
+            if closing != keyword:
+                blocked.append((start, len(tokens)))
+            else:
+                blocked.append((start, end))
+    blocked.extend((start, len(tokens)) for _, start in controls)
+    stack = []
+    for index, token in enumerate(tokens):
+        if token == "(":
+            stack.append(index)
+        elif token == ")" and stack:
+            opening = stack.pop()
+            before = tokens[opening - 1] if opening else None
+            after = tokens[index + 1] if index + 1 < len(tokens) else None
+            if before in {"||", "|", "&", "$", "<", ">"} or after in {"|", "&"}:
+                blocked.append((opening, index + 1))
+    blocked.extend((opening, len(tokens)) for opening in stack)
+    result = set()
+    separators = {";", "&&", "||", "|", "&", "(", ")"}
+    for program, end in invocations:
+        boundary = program - 1
+        while boundary >= 0 and tokens[boundary] not in separators:
+            boundary -= 1
+        before = tokens[boundary] if boundary >= 0 else None
+        after = tokens[end] if end < len(tokens) else None
+        if (before not in {"||", "|", "&"} and after not in {"|", "&"}
+                and not any(start <= program < stop for start, stop in blocked)):
+            result.add(program)
+    return result
+
+
+class ActionTemporaries:
+    """Literal outputs that become fresh at a specific point of one action."""
+    def __init__(self, files=(), directories=(), inherited=None, barriers=(), for_barriers=()):
+        self.files = {path: tuple(positions) if isinstance(positions, (list, tuple)) else (positions,)
+                      for path, positions in dict(files).items()}
+        self.directories = {path: tuple(positions) if isinstance(positions, (list, tuple)) else (positions,)
+                            for path, positions in dict(directories).items()}
+        self.position = -1
+        self.inherited_files, self.inherited_directories = inherited or (set(), set())
+        self.barriers = tuple(barriers)
+        self.for_barriers = dict(for_barriers)
+
+    def active(self, position):
+        return position <= self.position and not any(
+            position <= barrier <= self.position and not position < self.for_barriers.get(barrier, -1)
+            for barrier in self.barriers)
+
+    def file_active(self, path, before=float("inf")):
+        return any(position < before and self.active(position) for position in self.files.get(path, ()))
+
+    def directory_active(self, path, before=float("inf")):
+        return any(position < before and self.active(position) for position in self.directories.get(path, ()))
+
+    def __contains__(self, path):
+        return (path in self.inherited_files
+                or self.file_active(path)
+                or any(beneath(path, root) for root in self.inherited_directories)
+                or any(self.directory_active(root) and beneath(path, root)
+                       for root in self.directories))
+
+    def snapshot(self):
+        return (self.inherited_files | {path for path in self.files if self.file_active(path)},
+                self.inherited_directories | {path for path in self.directories if self.directory_active(path)})
+
+
+class Collector:
+    def __init__(self, manifest, source_root, out_root, allowed_generated=(), digester=None,
+                 selection_roots=None, scan_cache=None, graph_index=None,
+                 additional_source_inputs=()):
+        self.manifest = manifest
+        self.graph_index = Path(graph_index).resolve() if graph_index else None
+        self.graph_module = None
+        self.graph_database = None
+        self.source_root = Path(source_root).resolve()
+        self.out_root = Path(out_root).resolve()
+        self.additional_source_inputs = tuple(additional_source_inputs)
+        # Sbox substitutes __SBOX_SANDBOX_DIR__ with a temporary runtime tree in
+        # OUT; nothing under it is a frozen source input.
+        self.sandbox_root = self.out_root / ".crux-sbox"
+        self.entries = {}
+        self.virtual_files = {}
+        self.errors = set()
+        self.outputs = {self.path(item) for item in manifest.get("outputs", [])}
+        self.external = {self.path(item) for item in manifest.get("external_inputs", [])}
+        self.aux_outputs = {self.path(item) for item in manifest.get("depfiles", []) + manifest.get("rspfiles", [])}
+        self.aux_outputs.update(self.path(edge[key]) for edge in manifest.get("edges", [])
+                                for key in ("depfile", "rspfile") if edge.get(key))
+        self.response_contents = {self.path(edge["rspfile"]): edge["rspfile_content"]
+                                  for edge in manifest.get("edges", [])
+                                  if edge.get("rspfile") and edge.get("rspfile_content")}
+        self.output_dirs = ({self.path(item) for item in manifest.get("output_dirs", [])}
+                            | {path for path in self.outputs if path.is_dir()})
+        self.external_dirs = ({self.path(item) for item in manifest.get("external_input_dirs", [])}
+                              | {path for path in self.external if path.is_dir()})
+        self.allowed_generated = {}
+        for item in manifest.get("allowed_generated_inputs", []):
+            if not isinstance(item, dict) or not item.get("reason"):
+                raise CapsuleError("allowed_generated_inputs needs {path, reason} entries")
+            self.allowed_generated[self.path(item["path"])] = item["reason"]
+        for item in allowed_generated:
+            path, separator, reason = item.partition("=")
+            if not separator or not reason:
+                raise CapsuleError("--allow-generated requires PATH=REASON")
+            self.allowed_generated[self.path(path)] = reason
+        self.external_roots = set()
+        self.used_generated = set()
+        self.system_tools = set()
+        self.required_interpreters = {}
+        self.assembler_scan_cache = set()
+        self.proto_scan_cache = set()
+        self.flatbuffer_scan_cache = set()
+        self.compiler_scan_cache = set()
+        self.linker_scan_cache = set()
+        self.tablegen_scan_cache = set()
+        self.aidl_scan_cache = set()
+        self.aidl_package_scan_cache = {}
+        self.aidl_package_dirs_cache = {}
+        self.aidl_source_roots_cache = {}
+        self.aidl_declared_package_cache = {}
+        self.aidl_type_source_cache = {}
+        self.aidl_frontend_inputs = set()
+        # Preserve first-seen fallback order without repeated linear Path
+        # comparisons when recursive AIDL scans register the same roots.
+        self.aidl_search_paths = {}
+        self.rust_scan_cache = set()
+        self.r8_source_texts = {}
+        self.compiler_search_paths = []
+        self.command_temporaries = None
+        self.cpp_reader = False
+        self.cpp_binding = False
+        self.generated_include_contract = manifest.get("generated_include_contract")
+        self.generated_include_roots = set()
+        self.generated_required_headers = set()
+        self.generated_processed_roots = set()
+        self.compiler_commands = set()
+        if self.generated_include_contract is not None:
+            contract = self.generated_include_contract
+            if contract.get("schema_version") != 1:
+                raise CapsuleError("Unsupported generated_include_contract schema")
+            self.generated_include_roots = {self.path(value) for value in contract.get("search_roots", [])}
+            self.generated_required_headers = {self.path(value) for value in contract.get("required_headers", [])}
+            if any(not beneath(path, self.out_root) for path in self.generated_include_roots | self.generated_required_headers):
+                raise CapsuleError("Generated compiler include contracts must stay under OUT")
+            for path in self.generated_required_headers:
+                if not self.produced(path):
+                    raise CapsuleError("Generated header contract has no selected producer or receipt import: %s" % path)
+            for value in contract.get("owned_dirs", []):
+                if self.path(value) not in self.output_dirs | self.external_dirs:
+                    raise CapsuleError("Generated include owned directory is not declared for transport: %s" % value)
+            for context in contract.get("compiler_contexts", []):
+                index = context.get("edge_index")
+                edges = manifest.get("edges", [])
+                if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                        or context.get("reader") != "c_cpp_frontend"
+                        or self.path(context.get("primary_output", "")) not in {self.path(path) for path in edges[index].get("outputs", [])}):
+                    raise CapsuleError("Invalid compiler_contexts edge binding")
+                if any(self.path(root) not in self.generated_include_roots for root in context.get("search_roots", [])):
+                    raise CapsuleError("Compiler context contains an unlisted generated include root")
+                if not cpp_frontend(edges[index]["command"]):
+                    raise CapsuleError("Compiler context is not a supported C/C++ frontend")
+                self.compiler_commands.add(edges[index]["command"])
+        self.abi_reader = self.abi_binding = False
+        self.abi_commands = set()
+        self.abi_roots = set()
+        self.abi_files = set()
+        self.abi_processed_roots = set()
+        contract = manifest.get("abi_header_namespace_contract")
+        if contract is not None:
+            if contract.get("schema_version") != 1:
+                raise CapsuleError("Unsupported ABI header namespace contract schema")
+            self.abi_roots = {self.path(value) for value in contract.get("exported_roots", [])}
+            self.abi_files = {self.path(value) for value in contract.get("required_files", [])}
+            if any(not beneath(path, self.out_root) for path in self.abi_roots | self.abi_files):
+                raise CapsuleError("ABI generated header namespaces must stay under OUT")
+            for path in self.abi_files:
+                if not self.produced(path):
+                    raise CapsuleError("ABI namespace file has no selected producer or receipt import: %s" % path)
+            for value in contract.get("owned_dirs", []):
+                if self.path(value) not in self.output_dirs | self.external_dirs:
+                    raise CapsuleError("ABI namespace owned directory is not declared for transport")
+            for context in contract.get("contexts", []):
+                index = context.get("edge_index")
+                edges = manifest.get("edges", [])
+                if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                        or context.get("reader") != "header_abi_linker_namespace"
+                        or self.path(context.get("primary_output", "")) not in {self.path(path) for path in edges[index].get("outputs", [])}):
+                    raise CapsuleError("Invalid ABI namespace consumer edge binding")
+                if (any(self.path(root) not in self.abi_roots for root in context.get("exported_roots", []))
+                        or any(self.path(path) not in self.abi_files for path in context.get("required_files", []))):
+                    raise CapsuleError("ABI namespace context contains an unlisted root or file")
+                if not abi_namespace_frontend(edges[index].get("command", "")):
+                    raise CapsuleError("ABI namespace consumer is not header-abi-linker")
+                self.abi_commands.add(edges[index]["command"])
+        self.scan_cache = scan_cache if scan_cache is not None else set()
+        self.digester = digester or digest
+        self.selection_roots = None
+        if selection_roots is not None:
+            self.selection_roots = {self.path(path) for path in selection_roots}
+            self.selection_roots.update(path.resolve() for path in tuple(self.selection_roots))
+
+    def selected(self, path):
+        return self.selection_roots is None or any(beneath(path, root) for root in self.selection_roots)
+
+    def path(self, value):
+        if isinstance(value, dict):
+            value = value["path"]
+        path = Path(value)
+        if not path.is_absolute():
+            path = self.source_root / path
+        return Path(os.path.normpath(str(path)))
+
+    def excluded(self, path):
+        return any(part in FORBIDDEN_PARTS for part in path.parts)
+
+    def produced(self, path):
+        return ((self.command_temporaries is not None and path in self.command_temporaries)
+                or path in self.outputs or path in self.external or path in self.aux_outputs
+                or any(beneath(path, root) for root in self.output_dirs | self.external_dirs))
+
+    def register(self, path, reason):
+        self.entries.setdefault(path, set()).add(reason)
+
+    def symlink_ancestors(self, path, reason):
+        # Archive the link and the actual target, never entries below a link.
+        current, pending = Path(path.anchor), list(path.parts[1:])
+        while pending:
+            part = pending.pop(0)
+            if part == ".":
+                continue
+            if part == "..":
+                current = current.parent
+                continue
+            candidate = current / part
+            if candidate.is_symlink():
+                target = candidate.resolve()
+                if self.excluded(target):
+                    raise CapsuleError("Excluded symlink target: %s" % candidate)
+                if beneath(candidate, self.source_root) and target.exists():
+                    self.external_roots.add(target if target.is_dir() else target.parent)
+                if self.allowed_path(candidate):
+                    self.register(candidate, reason + ":symlink")
+                link = Path(os.readlink(candidate))
+                if link.is_absolute():
+                    current = Path(link.anchor)
+                    pending = list(link.parts[1:]) + pending
+                else:
+                    pending = list(link.parts) + pending
+            else:
+                current = candidate
+        return current
+
+    def allowed_path(self, path):
+        return (beneath(path, self.source_root) or beneath(path, self.out_root)
+                or any(beneath(path, root) for root in self.external_roots))
+
+    def compiled(self, path):
+        if path.suffix.lower() in COMPILED_SUFFIXES or re.search(r"\.so\.\d", path.name):
+            return True
+        with path.open("rb") as stream:
+            start = stream.read(16)
+        return (start.startswith(b"\x7fELF") or start.startswith(b"dex\n")
+                or start.startswith(b"dey\n") or start.startswith(b"!<arch>\n")
+                or start.startswith(b"\xca\xfe\xba\xbe") or start.startswith(b"PK\x03\x04")
+                or start.startswith(b"ANDROID!") or start.startswith(b"VNDRBOOT"))
+
+    def binary_header_candidate(self, path):
+        if self.compiled(path):
+            return True
+        with path.open("rb") as stream:
+            prefix = stream.read(4096)
+        # Extensionless C/C++ headers are text. Binary containers (including
+        # jimage, Mach-O and ARM64 Image) contain NULs in their format header.
+        return b"\0" in prefix
+
+    def add(self, value, reason, required=True):
+        path = self.path(value)
+        if beneath(path, self.sandbox_root):
+            return
+        if not self.selected(path) or self.excluded(path) or self.produced(path):
+            return
+        if not path.exists() and not path.is_symlink():
+            if required:
+                self.errors.add("Missing input: %s (%s)" % (path, reason))
+            return
+        resolved = self.symlink_ancestors(path, reason)
+        if path.is_symlink() and not resolved.exists() and not required:
+            return
+        if self.produced(resolved):
+            return
+        if not self.allowed_path(resolved):
+            if beneath(resolved, Path("/usr")) or beneath(resolved, Path("/bin")):
+                self.system_tools.add(str(resolved))
+                return
+            self.errors.add("Input outside source/OUT and source symlink targets: %s" % resolved)
+            return
+        if resolved.is_dir():
+            self.scan_directory(resolved, reason)
+            return
+        if not resolved.is_file():
+            self.errors.add("Unsupported input type: %s" % resolved)
+            return
+        if beneath(resolved, self.out_root):
+            if self.compiled(resolved):
+                self.errors.add("Compiled OUT input has no selected producer: %s" % resolved)
+                return
+            if resolved not in self.allowed_generated:
+                self.errors.add("Generated OUT input needs explicit metadata approval: %s" % resolved)
+                return
+            self.used_generated.add(resolved)
+        self.register(resolved, reason)
+        if resolved.suffix in {".py", ".sh"} or reason in {"graph-leaf", "command-file"}:
+            with resolved.open("rb") as stream:
+                first_line = stream.readline(512)
+            if first_line.startswith(b"#!"):
+                names = [Path(token).name for token in command_tokens(first_line[2:].decode(errors="replace").strip())]
+                if "python2" in names or "python2.7" in names:
+                    self.require_python2(resolved)
+                elif "python" in names:
+                    self.require_python2(resolved, native_default=True)
+
+    def source_input_file(self, value, require_selected=True):
+        path = self.path(value)
+        if not beneath(path, self.source_root) or beneath(path, self.out_root) or self.produced(path):
+            raise CapsuleError("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
+        resolved = path.resolve()
+        if beneath(resolved, self.out_root) or self.produced(resolved):
+            raise CapsuleError("Additional SOURCE input must not be generated, OUT or unrooted: %s" % path)
+        if self.excluded(path) or self.excluded(resolved) or (require_selected and not self.selected(path)):
+            raise CapsuleError("Additional SOURCE input is excluded: %s" % path)
+        if not path.exists():
+            raise CapsuleError("Missing additional SOURCE input: %s" % path)
+        if not path.is_file():
+            raise CapsuleError("Additional SOURCE input must be a file or symlink to a file: %s" % path)
+        return path
+
+    def add_source_input(self, value):
+        """Admit a required explicit SOURCE file without widening input roots."""
+        try:
+            path = self.source_input_file(value)
+        except CapsuleError as error:
+            self.errors.add(str(error))
+            return
+        self.add(path, "notice-license-source")
+
+    def read_r8_source(self, value):
+        if value not in self.r8_source_texts:
+            path = self.source_input_file(value, require_selected=False)
+            if self.selected(path):
+                self.add(path, "r8-proguard-source")
+            try:
+                self.r8_source_texts[value] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise CapsuleError("Cannot read R8 SOURCE configuration: %s" % path) from error
+        return self.r8_source_texts[value]
+
+    def collect_r8_sources(self, edge):
+        if "r8" not in (edge.get("command") or "") and "r8" not in (edge.get("rspfile_content") or ""):
+            return
+        source_reads = source_reads_module()
+        try:
+            source_reads.r8_source_reads(edge, self.source_root, self.out_root, self.read_r8_source)
+        except source_reads.SourceReadError as error:
+            raise CapsuleError("R8 source input audit failed: " + str(error)) from error
+
+    def require_python2(self, source_script=None, native_default=False):
+        executable = self.source_root / "prebuilts/build-tools/linux-x86/bin/py2-cmd"
+        if "python2" not in self.required_interpreters:
+            self.required_interpreters["python2"] = {"name": "python2", "aliases": ["python2", "python2.7"],
+                                                     "executable": str(executable), "source_scripts": set()}
+            self.add(executable, "hermetic-python2-interpreter")
+        if source_script:
+            self.required_interpreters["python2"]["source_scripts"].add(str(source_script))
+        if native_default:
+            wrapper = self.source_root / "prebuilts/build-tools/path/linux-x86/python"
+            if not wrapper.is_symlink() or wrapper.resolve() != executable:
+                raise CapsuleError("Native python wrapper does not bind the frozen Python 2 runtime: %s" % wrapper)
+            item = self.required_interpreters["python2"]
+            item["aliases"] = ["python", "python2", "python2.7"]
+            item["native_default_wrapper"] = str(wrapper)
+
+    def scan_directory(self, directory, reason, headers_only=False):
+        if self.produced(directory):
+            return
+        key = (directory, headers_only)
+        if key in self.scan_cache:
+            return
+        self.scan_cache.add(key)
+        self.register(directory, reason)
+        # os.walk deliberately does not descend through directory symlinks.
+        for root, directories, names in os.walk(directory, followlinks=False):
+            root = Path(root)
+            if self.produced(root):
+                directories[:] = []
+                continue
+            self.register(root, reason)
+            directories[:] = sorted(item for item in directories
+                                     if item not in FORBIDDEN_PARTS and not self.produced(root / item))
+            for name in list(directories):
+                child = root / name
+                if child.is_symlink():
+                    directories.remove(name)
+                    target = self.symlink_ancestors(child, reason)
+                    if target.is_dir() and self.allowed_path(target):
+                        self.scan_directory(target, reason, headers_only=headers_only)
+            for name in sorted(names):
+                path = root / name
+                if self.excluded(path):
+                    continue
+                if headers_only and path.suffix not in HEADER_SUFFIXES and path.suffix:
+                    continue
+                if headers_only and not path.suffix:
+                    if path.name.startswith(".") or (path.is_file() and self.binary_header_candidate(path)):
+                        continue
+                self.add(path, reason, required=False)
+
+    def include_directory(self, value, reason):
+        path = self.path(value)
+        if self.abi_reader and beneath(path, self.out_root):
+            if path not in self.abi_roots:
+                self.errors.add("ABI generated header namespace is absent from its contract: %s" % path)
+            elif path not in self.abi_processed_roots:
+                self.abi_processed_roots.add(path)
+                for header in self.abi_files:
+                    if beneath(header, path):
+                        self.add(header, "abi-header-namespace-contract")
+            return
+        if self.generated_include_contract is not None and self.cpp_reader and beneath(path, self.out_root):
+            if path not in self.generated_include_roots:
+                self.errors.add("Compiler generated include root is absent from its contract: %s" % path)
+            elif path not in self.generated_processed_roots:
+                self.generated_processed_roots.add(path)
+                for header in self.generated_required_headers:
+                    if beneath(header, path):
+                        self.add(header, "compiler-generated-header-contract")
+            return
+        if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
+            return
+        resolved = self.symlink_ancestors(path, reason)
+        if resolved in {self.source_root, self.out_root}:
+            # `-I .` resolves explicit imports against the whole tree; walking it
+            # for every suffix would carry the entire repository.
+            return
+        if self.allowed_path(resolved):
+            self.scan_directory(resolved, reason, headers_only=True)
+
+    def linker_script(self, value):
+        """Carry a linker script and the scripts it includes.
+
+        Link actions name version scripts and linker scripts through -Wl, and
+        -T options (`-Wl,--version-script,build/soong/cc/config/cfi_exports.map`),
+        which are inputs like any source file; those scripts can INCLUDE others.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        if path.resolve() in self.linker_scan_cache:
+            return
+        self.linker_scan_cache.add(path.resolve())
+        self.add(path, "linker-script", required=False)
+        if path.suffix not in {".map", ".lds", ".ld", ".script", ".ver"}:
+            return
+        for name in re.findall(r'^[ \t]*(?:INCLUDE|include)[ \t]+(\S+)', path.read_text(errors="replace"), re.MULTILINE):
+            candidates = [path.parent / name, self.source_root / name]
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is not None:
+                self.linker_script(dependency)
+
+    def package_directory(self, value, reason):
+        """Scan a HIDL package root completely.
+
+        hidl-gen decides whether an interface is frozen from the package's
+        ``current.txt`` hash list, which a header-only scan would drop, so these
+        roots take every file they hold (.hal interfaces, hash lists, Android.bp).
+        """
+        path = self.path(value)
+        if not self.selected(path) or not path.is_dir() or self.excluded(path) or self.produced(path):
+            return
+        resolved = self.symlink_ancestors(path, reason)
+        if resolved in {self.source_root, self.out_root}:
+            return
+        if self.allowed_path(resolved):
+            self.scan_directory(resolved, reason)
+
+    def tool_package(self, value):
+        path = self.path(value)
+        if not self.selected(path) or not beneath(path, self.source_root):
+            return
+        relative = path.relative_to(self.source_root).parts
+        if not relative or relative[0] != "prebuilts" or not path.exists():
+            return
+        package = None
+        if relative[:4] == ("prebuilts", "clang", "host", "linux-x86") and len(relative) > 5:
+            package = self.source_root.joinpath(*relative[:5])
+        elif relative[:2] == ("prebuilts", "jdk") and len(relative) > 4:
+            package = self.source_root.joinpath(*relative[:4])
+        elif relative[:3] == ("prebuilts", "build-tools", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
+        elif relative[:2] == ("prebuilts", "gcc") and "bin" in relative:
+            package = self.source_root.joinpath(*relative[:relative.index("bin")])
+        elif relative[:3] == ("prebuilts", "rust", "linux-x86") and len(relative) > 4:
+            package = self.source_root.joinpath(*relative[:4])
+        elif relative[:3] == ("prebuilts", "clang-tools", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
+        elif relative[:3] == ("prebuilts", "kernel-build-tools", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
+        elif relative[:3] == ("prebuilts", "tools-custom", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
+        elif relative[:3] == ("prebuilts", "go", "linux-x86"):
+            package = self.source_root.joinpath(*relative[:3])
+        elif relative[:2] == ("prebuilts", "python") and "bin" in relative:
+            package = self.source_root.joinpath(*relative[:relative.index("bin")])
+        elif relative[:3] == ("prebuilts", "sdk", "tools") and len(relative) > 3:
+            package = self.source_root.joinpath(*relative[:4])
+            self.add(self.source_root / "prebuilts/sdk/tools/lib", "sdk-common-runtime", required=False)
+        elif relative[:2] == ("prebuilts", "ndk") and "bin" in relative:
+            package = self.source_root.joinpath(*relative[:relative.index("bin")])
+        if package:
+            self.add(package, "runtime-package:" + str(path.relative_to(self.source_root)))
+
+    def python_package(self, path):
+        if self.selected(path) and path.suffix == ".py" and path.is_file() and beneath(path, self.source_root):
+            self.add(path.parent, "python-siblings:" + str(path.relative_to(self.source_root)))
+            if path.resolve().parent != path.parent:
+                self.add(path.resolve().parent, "python-target-siblings:" + str(path.relative_to(self.source_root)))
+
+    def environment(self, token):
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", token, re.DOTALL)
+        if not match:
+            return False
+        name, value = match.groups()
+        if name in {"PWD", "OLDPWD", "TMPDIR", "TMP", "TEMP"}:
+            return True  # Working and scratch locations do not carry source inputs.
+        if name in {"PATH", "PERL5LIB", "PYTHONPATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "CLASSPATH",
+                    "BISON_PKGDATADIR", "PYTHONHOME"}:
+            for item in value.split(":"):
+                if not item or "$" in item:
+                    continue
+                path = self.path(item)
+                if not self.selected(path):
+                    continue
+                if not optional_probe(path, "exists"):
+                    continue
+                if name == "PATH":
+                    # Package the referenced toolchain, never the host /usr tree.
+                    self.tool_package(path)
+                else:
+                    self.add(path, "command-environment:" + name, required=False)
+        elif name in {"CC", "CXX", "LD", "AR", "NM", "STRIP", "OBJCOPY", "OBJDUMP", "AS",
+                      "HOSTCC", "HOSTCXX", "HOSTLD", "RUSTC", "CLANG"}:
+            self.command(value, evaluated_shell=False)
+        elif name.startswith("CROSS_COMPILE"):
+            self.tool_package(self.path(value).parent)
+        else:
+            path = self.path(value)
+            if value and self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):
+                self.add(path, "command-environment:" + name, required=False)
+                self.tool_package(path)
+                self.python_package(path)
+        return True
+
+    def go_test_package(self, value):
+        directory = self.path(value)
+        if not self.selected(directory) or not beneath(directory, self.source_root):
+            return
+        self.add(directory, "go-test-runtime-package")
+        ancestor = directory
+        while beneath(ancestor, self.source_root):
+            self.add(ancestor / "testdata", "go-test-ancestor-fixtures", required=False)
+            if ancestor == self.source_root or (ancestor / ".git").exists():
+                break
+            ancestor = ancestor.parent
+
+    def runtime_directory(self, value, reason):
+        directory = self.path(value)
+        if not self.selected(directory) or beneath(directory, self.out_root):
+            return
+        if beneath(directory, self.source_root) or any(beneath(directory, root) for root in self.external_roots):
+            self.add(directory, reason, required=False)
+
+    def assembler_inputs(self, value, include_paths):
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.assembler_scan_cache:
+            return
+        self.assembler_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for directive, name in re.findall(r'^\s*\.(include|incbin)\s+"([^"\n]+)"', text, re.MULTILINE):
+            candidates = [self.path(name)]
+            if not Path(name).is_absolute():
+                candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), candidates[0])
+            self.add(dependency, "assembler-" + directive + ":" + str(path))
+            if directive == "include":
+                self.assembler_inputs(dependency, include_paths)
+
+    def graph_support(self):
+        """Load the frozen graph helpers that decode original action payloads."""
+        if self.graph_module is None:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "crux_graph_index", Path(__file__).with_name("graph.py"))
+            self.graph_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.graph_module)
+        return self.graph_module
+
+    def writefile_payload(self, path):
+        """Recover the literal payload Soong's writeFile rule wrote to a path.
+
+        The graph index retains the original action, so its evaluated command
+        still carries the literal the runner writes into OUT.
+        """
+        if self.graph_index is None or not self.graph_index.is_file():
+            return None
+        module = self.graph_support()
+        if self.graph_database is None:
+            self.graph_database = module.Graph(self.graph_index)
+        rows = list(self.graph_database.db.execute(
+            "SELECT edge FROM outputs WHERE path=?", (str(path),)))
+        for row in rows:
+            try:
+                records, _ = self.graph_database.edge_records([row["edge"]])
+                metadata = self.graph_database.native_metadata(records)
+                command = metadata[row["edge"]]["command"]
+                _, payload = module.soong_writefile_literal(command, str(path))
+            except Exception:
+                continue
+            if payload:
+                return payload
+        return None
+
+    def scrub_sandbox_paths(self, command):
+        """Drop sandbox-internal paths the runner substitutes at execution.
+
+        Sbox rewrites ``__SBOX_SANDBOX_DIR__`` to a temporary OUT directory for
+        outputs, copied tools and depfiles. Those tokens say nothing about
+        source inputs, and treating them as frozen paths makes packing fail.
+        """
+        if "__SBOX_SANDBOX_DIR__" not in command:
+            return command
+        return command.replace("__SBOX_SANDBOX_DIR__", str(self.sandbox_root))
+
+    def insertkeys_certificates(self, value, root):
+        """Add the certificates a keys.conf maps for an insertkeys run.
+
+        `insertkeys` replaces alias tags in mac_permissions.xml with the signing
+        certificates named by a keys.conf. The configuration is generated, but
+        the same directory layout keeps the source keys.conf beside the policy
+        XML it describes.
+        """
+        path = self.path(value)
+        directory = path.parent
+        candidates = [directory / "keys.conf"]
+        if self.produced(path):
+            # A generated key list (m4 output) still descends from source config.
+            candidates.append(directory.parent / "keys.conf")
+        for config in candidates:
+            if not self.selected(config) or self.produced(config) or not optional_probe(config):
+                continue
+            text = config.read_text(errors="replace")
+            for line in text.splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line or line.startswith("["):
+                    continue
+                key, separator, certificate = line.partition(":")
+                if not separator or not certificate.strip():
+                    continue
+                self.add(root / certificate.strip(), "insertkeys-certificate:" + str(config),
+                         required=False)
+
+    def sandbox_inner_commands(self, command):
+        """Recover the native commands an Sbox action actually executes.
+
+        Soong hides the tool invocation inside a writeFile-generated sandbox
+        manifest, so the recorded action alone cannot describe its inputs.
+        """
+        manifests = []
+        tokens = command_tokens(command)
+        for program, end in command_invocations(tokens):
+            if Path(tokens[program]).name != "sbox":
+                continue
+            for position in range(program + 1, end):
+                flag, separator, value = tokens[position].partition("=")
+                if flag != "--manifest":
+                    continue
+                value = value if separator else (tokens[position + 1] if position + 1 < end else "")
+                if value:
+                    manifests.append(self.path(value))
+        commands = []
+        for manifest in manifests:
+            payload = self.writefile_payload(manifest)
+            if payload is None:
+                continue
+            try:
+                parsed = self.graph_support().sbox_textproto(payload)
+            except Exception:
+                continue
+            for block in parsed.get("commands", []):
+                inner = block.get("command")
+                # The sandbox records one or more command lines per block.
+                values = inner if isinstance(inner, list) else [inner]
+                values = [value for value in values if isinstance(value, str) and value and "\x00" not in value]
+                values = [self.scrub_sandbox_paths(value) for value in values]
+                commands.extend(values)
+                if len(values) > 1:
+                    commands.append(self.scrub_sandbox_paths(" && ".join(values)))
+        return commands
+
+    def compiler_defines(self, tokens):
+        """Map command-line string defines a macro include can name."""
+        defines = {}
+        for token in tokens:
+            if not isinstance(token, str) or not token.startswith("-D"):
+                continue
+            name, separator, value = token[2:].partition("=")
+            value = value.strip()
+            if separator and len(value) >= 2 and value[0] in "\"'\"" and value[-1] == value[0]:
+                defines.setdefault(name, value[1:-1])
+        return defines
+
+    def compiler_input(self, value, include_paths, defines=None):
+        """Follow the same preprocessor search a compiler performs.
+
+        Ninja names a compile command, not the bodies its ``#include``
+        directives pull in, and a cold source tree has no retained depfile to
+        observe them. A quoted name is resolved against the includer's own
+        directory first and then every declared search directory in command
+        order; an angled name only uses the search directories. Recursion keeps
+        nested includes under the same contract.
+        """
+        path = self.path(value)
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or not self.selected(path) \
+                or not optional_probe(path):
+            return
+        key = (resolved, tuple(include_paths))
+        if key in self.compiler_scan_cache:
+            return
+        self.compiler_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        includes = re.findall(r'^[ \t]*#[ \t]*include[ \t]*([<"])([^">\n]+)[">]', text, re.MULTILINE)
+        # `#include NAME` takes the string literal a -D option supplied.
+        for name in re.findall(r'^[ \t]*#[ \t]*include[ \t]+([A-Za-z_][A-Za-z_0-9]*)[ \t]*$',
+                               text, re.MULTILINE):
+            literal = (defines or {}).get(name)
+            if literal:
+                includes.append(('"', literal))
+        for quote, name in includes:
+            candidates = [path.parent / name] if quote == '"' else []
+            candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "compiler-include:" + str(path), required=False)
+            # Once included, a file is preprocessor input regardless of its
+            # suffix (for example Eigen/Core or a generated-name fragment).
+            self.compiler_input(dependency, include_paths, defines)
+
+    def tablegen_input(self, value, include_paths):
+        """Follow the TableGen include search llvm-tblgen performs.
+
+        A .td description names further records through ``include "path"``, and
+        the tool resolves those against its declared -I directories. A cold
+        capsule has to walk them the same way.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.tablegen_scan_cache:
+            return
+        self.tablegen_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        for name in re.findall(r'^[ \t]*include[ \t]+"([^"\n]+)"', text, re.MULTILINE):
+            candidates = [path.parent / name]
+            candidates.extend(directory / name for directory in include_paths)
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "tablegen-include:" + str(path), required=False)
+            if dependency.suffix in TABLEGEN_SUFFIXES:
+                self.tablegen_input(dependency, include_paths)
+
+    def aidl_source_roots(self, include_paths):
+        """Memoize only declared SOURCE roots, excluding OUT and OUT symlinks."""
+        key = tuple(include_paths)
+        if key not in self.aidl_source_roots_cache:
+            roots = []
+            for value in include_paths:
+                root = self.path(value)
+                resolved = root.resolve()
+                if (beneath(root, self.out_root) or beneath(resolved, self.out_root)
+                        or not (beneath(root, self.source_root)
+                                or any(beneath(root, external) for external in self.external_roots))
+                        or not optional_probe(root, "is_dir")):
+                    continue
+                roots.append(root)
+            self.aidl_source_roots_cache[key] = tuple(dict.fromkeys(roots))
+        return self.aidl_source_roots_cache[key]
+
+    def aidl_declared_package(self, path, text=None):
+        resolved = Path(path).resolve()
+        if resolved not in self.aidl_declared_package_cache:
+            if text is None:
+                text = Path(path).read_text(errors="replace")
+            self.aidl_declared_package_cache[resolved] = aidl_package_name(text)
+        return self.aidl_declared_package_cache[resolved]
+
+    def aidl_package_directories(self, path, package, include_paths):
+        key = (Path(path).parent.resolve(), package, tuple(include_paths))
+        if key not in self.aidl_package_dirs_cache:
+            package_parts = Path(*package.split('.'))
+            directories = []
+            for root in self.aidl_source_roots(include_paths):
+                package_dir = root / package_parts
+                if (optional_probe(package_dir, "is_dir")
+                        and package_dir.resolve() == Path(path).parent.resolve()):
+                    directories.append(package_dir)
+            self.aidl_package_dirs_cache[key] = tuple(dict.fromkeys(directories))
+        return self.aidl_package_dirs_cache[key]
+
+    def aidl_qualified_type(self, name, include_paths):
+        """Resolve a qualified AIDL type once per declared source-root set."""
+        key = (name, tuple(include_paths))
+        if key in self.aidl_type_source_cache:
+            return self.aidl_type_source_cache[key]
+        components = name.split('.')
+        dependency = None
+        for length in range(len(components), 1, -1):
+            relative = Path(*components[:length]).with_suffix('.aidl')
+            for root in self.aidl_source_roots(include_paths):
+                candidate = root / relative
+                # Most FQN/root pairs are absent. Check cheaply before resolving
+                # every ancestor on large mounted source filesystems.
+                if not optional_probe(candidate):
+                    continue
+                if beneath(candidate.resolve(), self.out_root):
+                    continue
+                expected_package = '.'.join(components[:length - 1])
+                if self.aidl_declared_package(candidate) == expected_package:
+                    dependency = candidate
+                    break
+            if dependency is not None:
+                break
+        self.aidl_type_source_cache[key] = dependency
+        return dependency
+
+    def aidl_input(self, value, include_paths, actual_frontend=False):
+        """Follow imported types and same-package siblings through source roots.
+
+        Soong names only the interface being generated. AIDL also resolves
+        unqualified types from the declared package, without an import, so the
+        cold capsule needs the direct SOURCE siblings of that package as well.
+        """
+        path = self.path(value)
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        if actual_frontend:
+            self.aidl_frontend_inputs.add(path.resolve())
+            for directory in include_paths:
+                self.aidl_search_paths.setdefault(directory, None)
+        key = (path.resolve(), tuple(include_paths))
+        if key in self.aidl_scan_cache:
+            return
+        self.aidl_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+
+        # The compiler searches sibling declarations for same-package names.
+        # Restrict this closure to one package directory under a declared SOURCE
+        # -I root; never recursively scan an include root or an OUT directory.
+        package = self.aidl_declared_package(path, text)
+        if package and beneath(path, self.source_root) and not beneath(path, self.out_root):
+            for package_dir in self.aidl_package_directories(path, package, include_paths):
+                package_key = (package_dir.resolve(), package)
+                siblings = self.aidl_package_scan_cache.get(package_key)
+                if siblings is None:
+                    siblings = []
+                    for sibling in sorted(package_dir.iterdir()):
+                        if (sibling.suffix != ".aidl" or not optional_probe(sibling)
+                                or beneath(sibling.resolve(), self.out_root)
+                                or not self.selected(sibling)):
+                            continue
+                        sibling_text = sibling.read_text(errors="replace")
+                        if self.aidl_declared_package(sibling, sibling_text) == package:
+                            siblings.append(sibling)
+                    self.aidl_package_scan_cache[package_key] = tuple(siblings)
+                for sibling in siblings:
+                    self.add(sibling, "aidl-package-sibling:" + str(path))
+                    if sibling != path:
+                        self.aidl_input(sibling, include_paths, actual_frontend)
+
+        # Fully-qualified references may also omit import statements. Try
+        # progressively shorter source paths so nested AIDL types resolve to
+        # their outer declaration (for example Outer.Inner -> Outer.aidl).
+        scan_text = re.sub(r'/\*.*?\*/', ' ', text, flags=re.DOTALL)
+        scan_text = re.sub(r'//[^\n]*', ' ', scan_text)
+        for name in sorted(set(re.findall(r'(?<![\w.])([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)(?![\w.])', scan_text))):
+            dependency = self.aidl_qualified_type(name, include_paths)
+            if dependency is not None:
+                self.add(dependency, "aidl-qualified-type:" + str(path), required=False)
+                if dependency.suffix == ".aidl":
+                    self.aidl_input(dependency, include_paths, actual_frontend)
+
+        for name in re.findall(r'^[ \t]*import[ \t]+([A-Za-z_][\w.]*)[ \t]*;', text, re.MULTILINE):
+            # A nested type (android.app.ActivityManager.RunningTaskInfo) lives
+            # in its outer class file, so try progressively shorter prefixes.
+            components = name.split(".")
+            candidates = []
+            for length in range(len(components), 1, -1):
+                relative = "/".join(components[:length]) + ".aidl"
+                candidates.extend(directory / relative for directory in include_paths)
+                candidates.append(path.parent / (components[length - 1] + ".aidl"))
+            dependency = next((candidate for candidate in candidates
+                               if self.produced(candidate) or optional_probe(candidate)), None)
+            if dependency is None:
+                continue
+            self.add(dependency, "aidl-import:" + str(path), required=False)
+            if dependency.suffix in AIDL_SUFFIXES:
+                self.aidl_input(dependency, include_paths, actual_frontend)
+
+    def rust_module_inputs(self, value):
+        """Follow the Rust module tree a crate root declares.
+
+        Soong names only the crate root on a rustc edge; ``mod`` members,
+        ``#[path]`` overrides and inline ``include!`` files are found by the
+        compiler. A cold tree without retained dep-info has to walk them here,
+        resolving each member beside its declaring file the way rustc does.
+        """
+        path = self.path(value)
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or not self.selected(path) \
+                or not optional_probe(path):
+            return
+        if resolved in self.rust_scan_cache:
+            return
+        self.rust_scan_cache.add(resolved)
+        directory = path.parent
+        # rustc resolves a plain `mod name;` inside a non-mod-rs file under a
+        # directory named after that file, while `#[path]` and inline includes
+        # stay relative to the declaring file itself.
+        module_directory = directory if path.name in {"mod.rs", "lib.rs", "main.rs"} else directory / path.stem
+        pending_paths = []
+        inline = []
+        for line in path.read_text(errors="replace").splitlines():
+            statement = line.strip()
+            attribute = re.match(r'#\[path\s*=\s*"([^"\n]+)"\s*\]\s*', statement)
+            if attribute:
+                pending_paths = [attribute.group(1)]
+                statement = statement[attribute.end():]
+            elif re.match(r'#\[cfg_attr\s*\(', statement):
+                # cfg_attr(condition, path = "...") selects the file too, and a
+                # module can carry one conditional path per configuration.
+                conditional = re.findall(r'\bpath\s*=\s*"([^"\n]+)"', statement)
+                if conditional:
+                    pending_paths.extend(conditional)
+                continue
+            statement = strip_attributes(statement)
+            if not statement:
+                # Another attribute does not consume a recorded path override.
+                continue
+            # A declaration can carry a trailing line comment (`pub mod mock; // ...`).
+            statement = re.sub(r"\s+//.*$", "", statement)
+            if not statement or statement.startswith("//"):
+                continue
+            inline_module = re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z_0-9]*\s*\{',
+                                     statement)
+            if inline_module:
+                # An inline block that closes on its own line adds no nesting.
+                if statement.count("{") > statement.count("}"):
+                    inline.append(re.match(r'[^{]*\bmod\s+([A-Za-z_][A-Za-z_0-9]*)', statement).group(1))
+                pending_paths = []
+                continue
+            if statement.startswith("}"):
+                if inline:
+                    inline.pop()
+                continue
+            module = re.fullmatch(r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;', statement)
+            if module:
+                base = module_directory
+                for name in inline:
+                    base = base / name
+                candidates = []
+                overrides = pending_paths or [None]
+                for override in overrides:
+                    if override:
+                        # An inline module extends the directory a path override
+                        # is relative to; the declaring file's own directory
+                        # stays a fallback for the flat layout.
+                        candidates.append(base / override)
+                    else:
+                        candidates.append(base / (module.group(1) + ".rs"))
+                        candidates.append(base / module.group(1) / "mod.rs")
+                    # The same base directories remain valid fallbacks when an
+                    # inline block closed somewhere this line scan did not track.
+                    fallback = (directory / override,) if override else (
+                        directory / (module.group(1) + ".rs"),
+                        directory / module.group(1) / "mod.rs")
+                    for candidate in fallback:
+                        if candidate not in candidates:
+                            candidates.append(candidate)
+                pending_paths = []
+            else:
+                names = re.findall(r'\b(?:include|include_str|include_bytes)!\s*\(\s*"([^"\n]+)"\s*\)',
+                                   statement)
+                pending_paths = []
+                if not names:
+                    continue
+                base = module_directory
+                for name in inline:
+                    base = base / name
+                candidates = [directory / name for name in names]
+                candidates.extend(base / name for name in names if base / name not in candidates)
+            for dependency in candidates:
+                if not (self.produced(dependency) or optional_probe(dependency)):
+                    continue
+                self.add(dependency, "rust-module:" + str(path), required=False)
+                if dependency.suffix == ".rs":
+                    self.rust_module_inputs(dependency)
+
+    def proto_input(self, value, search_paths):
+        path = self.path(value)
+        self.add(path, "protobuf-schema")
+        if self.produced(path) or not self.selected(path) or not optional_probe(path):
+            return
+        key = (path.resolve(), tuple(search_paths))
+        if key in self.proto_scan_cache:
+            return
+        self.proto_scan_cache.add(key)
+        text = path.read_text(errors="replace")
+        # Protobuf accepts adjacent quoted import strings. Tokenize comments and
+        # strings together so examples inside either do not become dependencies.
+        lexemes = r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_][A-Za-z_0-9]*|[^\s]'
+        tokens = [token for token in re.findall(lexemes, text, flags=re.DOTALL)
+                  if not token.startswith(("//", "/*"))]
+        for index, token in enumerate(tokens):
+            if token != "import":
+                continue
+            index += 1
+            if index < len(tokens) and tokens[index] in {"public", "weak"}:
+                index += 1
+            parts = []
+            while index < len(tokens) and tokens[index].startswith(('"', "'")):
+                parts.append(ast.literal_eval(tokens[index]))
+                index += 1
+            if not parts or index >= len(tokens) or tokens[index] != ";":
+                continue
+            name = "".join(parts)
+            candidates = self.proto_candidates(name, search_paths)
+            dependency = next((item for item in candidates if self.produced(item) or optional_probe(item)),
+                              candidates[0] if candidates else self.path(name))
+            self.proto_input(dependency, search_paths)
+
+    def proto_candidates(self, value, search_paths):
+        candidates = []
+        for virtual, directory in search_paths:
+            if not virtual:
+                candidates.append(directory / value)
+            elif value.startswith(virtual + "/"):
+                candidates.append(directory / value[len(virtual) + 1:])
+        return candidates
+
+    def flatbuffer_input(self, value, search_paths):
+        path = self.path(value)
+        self.add(path, "flatbuffers-schema")
+        resolved = path.resolve()
+        if self.produced(path) or self.produced(resolved) or resolved not in self.entries or not optional_probe(resolved):
+            return
+        key = (resolved, tuple(search_paths))
+        if key in self.flatbuffer_scan_cache:
+            return
+        self.flatbuffer_scan_cache.add(key)
+        text = resolved.read_text(errors="replace")
+        lexemes = r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z_0-9]*|[^\s]'
+        tokens = [token for token in re.findall(lexemes, text, flags=re.DOTALL)
+                  if not token.startswith(("//", "/*"))]
+        for index, token in enumerate(tokens[:-2]):
+            if token != "include" or not tokens[index + 1].startswith('"') or tokens[index + 2] != ";":
+                continue
+            name = ast.literal_eval(tokens[index + 1])
+            candidates = [directory / name for directory in search_paths]
+            dependency = next((item for item in candidates
+                               if self.produced(item) or self.produced(item.resolve()) or optional_probe(item)), candidates[0])
+            self.flatbuffer_input(dependency, search_paths)
+
+    def flatbuffer_operands(self, tokens, program, end):
+        ignored, roots, inputs = set(), [], []
+        # A substitution is one operand of the parent invocation, even though
+        # its inner commands have their own shell scopes. In particular -o
+        # $(dirname output.h) must not hide the following source schema.
+        end = program + 1
+        while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "&", "(", ")"}:
+            if tokens[end] == "$" and end + 1 < len(tokens) and tokens[end + 1] == "(":
+                start, depth = end, 1
+                end += 2
+                while end < len(tokens) and depth:
+                    depth += (tokens[end] == "(") - (tokens[end] == ")")
+                    end += 1
+                if depth:
+                    raise CapsuleError("Unclosed Flatc command substitution")
+                ignored.update(range(start, end))
+            else:
+                end += 1
+        index = program + 1
+        while index < end:
+            token = tokens[index]
+            if index in ignored:
+                index += 1
+                continue
+            ignored.add(index)
+            if token.isdigit() and index + 1 < end and tokens[index + 1] in {"<", ">", ">>"}:
+                index += 1
+                continue
+            if token in {"<", ">", ">>", ">|", "<>", "<<", "<<<", "<&", ">&"} and index + 1 < end:
+                index += 1
+                ignored.add(index)
+                if token in {"<", "<>", ">>"}:
+                    self.add(tokens[index], "command-redirection-input", required=token != ">>")
+            elif token == "-I" and index + 1 < end:
+                index += 1
+                ignored.add(index)
+                roots.append(self.path(tokens[index]))
+            elif token.startswith("-I") and len(token) > 2:
+                roots.append(self.path(token[2:]))
+            elif token in {"-o", "--include-prefix", "--filename-suffix", "--filename-ext", "--bfbs-filenames"}:
+                if index + 1 < end:
+                    index += 1
+                    ignored.add(index)
+            elif not token.startswith("-"):
+                inputs.append(token)
+            index += 1
+        for value in inputs:
+            # Flatc retains this vector while parsing recursive children; a
+            # nested include's parent never becomes an additional search root.
+            self.flatbuffer_input(value, roots + [self.path(value).parent])
+        return ignored
+
+    def embedded_commands(self):
+        commands = []
+        for context in self.manifest.get("embedded_tool_contexts", []):
+            edges = self.manifest.get("edges", [])
+            index = context.get("edge_index")
+            if (not isinstance(index, int) or index < 0 or index >= len(edges)
+                    or self.path(context.get("primary_output", "")) not in
+                    {self.path(value) for value in edges[index].get("outputs", [])}):
+                raise CapsuleError("Invalid embedded tool consumer edge binding")
+            generated = self.path(context.get("generated_manifest", ""))
+            if (not self.produced(generated) or self.path(context.get("producer_primary_output", "")) != generated
+                    or not isinstance(context.get("producer_original_edge"), int)
+                    or context["producer_original_edge"] < 0
+                    or context.get("provenance", {}).get("producer_rule") != "g.android.writeFile"):
+                raise CapsuleError("Embedded tool manifest has no original writeFile producer binding")
+            if not context.get("cwd") or self.path(context["cwd"]) != self.source_root or context.get("chdir") is not False:
+                raise CapsuleError("Unsupported embedded tool working directory")
+            if any(not item.get("to", "").startswith("tools/") for item in context.get("copy_before", [])):
+                raise CapsuleError("Unsupported embedded tool source copy mapping")
+            def binds(command):
+                tokens = command_tokens(command)
+                for program, end in command_invocations(tokens):
+                    name = Path(tokens[program]).name
+                    if name == "sbox":
+                        for position in range(program + 1, end):
+                            flag, separator, value = tokens[position].partition("=")
+                            if flag == "--manifest":
+                                value = value if separator else (tokens[position + 1] if position + 1 < end else "")
+                                if value and self.path(value) == generated:
+                                    return True
+                    if name in {"bash", "sh", "dash"}:
+                        for position in range(program + 1, end - 1):
+                            if tokens[position].startswith("-") and "c" in tokens[position][1:] and binds(tokens[position + 1]):
+                                return True
+                return False
+            command = context.get("command", "")
+            if not binds(edges[index].get("command", "")) or not any(
+                    Path(tokens[program]).name == "flatc"
+                    for tokens in [command_tokens(command)] for program, _ in command_invocations(tokens)):
+                raise CapsuleError("Embedded tool command is not bound to an actual Flatc Sbox consumer")
+            commands.append(command)
+        return commands
+
+    def semantic_operands(self, tokens, response_literals=()):
+        """Handle tools whose path-looking arguments are schemas or metadata."""
+        ignored = set()
+        for program, end in command_invocations(tokens):
+            if self.command_temporaries is not None:
+                self.command_temporaries.position = program
+            name = Path(tokens[program]).name
+            if name == "flatc":
+                ignored.update(self.flatbuffer_operands(tokens, program, end))
+            elif name in {"protoc", "aprotoc"}:
+                search_paths, inputs = [], []
+                index = program + 1
+                while index < end:
+                    token = tokens[index]
+                    if token.isdigit() and index + 1 < end and tokens[index + 1] in {"<", ">", ">>", ">|"}:
+                        ignored.add(index)
+                        index += 1
+                        continue
+                    if token.startswith("@") and index not in response_literals:
+                        index += 1
+                        continue
+                    ignored.add(index)
+                    if token in {"<", ">", ">>", ">|", "<>", "<<", "<<<", "<&", ">&"} and index + 1 < end:
+                        index += 1
+                        ignored.add(index)
+                        if token in {"<", "<>", ">>"}:
+                            self.add(tokens[index], "command-redirection-input", required=token != ">>")
+                        index += 1
+                        continue
+                    if token in {"-I", "--proto_path"} and index + 1 < end:
+                        index += 1
+                        ignored.add(index)
+                        mapping = tokens[index]
+                    elif token.startswith("--proto_path="):
+                        mapping = token.split("=", 1)[1]
+                    elif token.startswith("-I") and len(token) > 2:
+                        mapping = token[2:]
+                    else:
+                        if token in {"-o", "--descriptor_set_in", "--descriptor_set_out", "--dependency_out",
+                                     "--plugin", "--encode", "--decode"} or (token.startswith("--")
+                                                                             and token.endswith("_out")):
+                            if index + 1 < end:
+                                index += 1
+                                ignored.add(index)
+                                self.proto_option_input(token, tokens[index])
+                        elif token.startswith(("--descriptor_set_in=", "--plugin=")):
+                            self.proto_option_input(*token.split("=", 1))
+                        elif not token.startswith("-"):
+                            if not token:
+                                raise CapsuleError("Empty protobuf schema argument")
+                            inputs.append(token)
+                        index += 1
+                        continue
+                    for item in mapping.split(":"):
+                        virtual, separator, directory = item.partition("=")
+                        search_paths.append((virtual.rstrip("/"), self.path(directory)) if separator
+                                            else ("", self.path(item)))
+                    index += 1
+                if not search_paths:
+                    search_paths = [("", self.source_root)]
+                for value in inputs:
+                    direct = self.path(value)
+                    candidates = [direct] + self.proto_candidates(value, search_paths)
+                    dependency = next((item for item in candidates if self.produced(item) or optional_probe(item)), direct)
+                    self.proto_input(dependency, search_paths)
+            elif name == "build_license_metadata":
+                # The native tool stores these fields as protobuf strings. Only
+                # @response files are opened; graph dependencies are collected
+                # separately even when the same path is also metadata text.
+                index = program + 1
+                ignored.update(position for position in response_literals if program < position < end)
+                metadata_flags = {"-s", "-t", "-i", "-d", "-m", "-n", "-mt", "-mc", "-k", "-c", "-p", "-o", "-r"}
+                while index < end:
+                    token = tokens[index]
+                    flag, separator, value = token.partition("=")
+                    if flag in metadata_flags:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            index += 1
+                            ignored.add(index)
+                            value = tokens[index]
+                        if flag == "-r":
+                            path = self.path(value)
+                            if self.selected(path) and not self.produced(path) and optional_probe(path, "is_dir"):
+                                resolved = self.symlink_ancestors(path, "license-git-probe-root")
+                                if self.allowed_path(resolved) and not beneath(resolved, self.out_root):
+                                    self.register(resolved, "license-git-probe-root")
+                    elif flag == "-is_container":
+                        ignored.add(index)
+                    index += 1
+            elif name == "xmlnotice":
+                for index in range(program + 1, end):
+                    flag, separator, _ = tokens[index].partition("=")
+                    if flag in {"-strip_prefix", "-product", "-title"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            ignored.add(index + 1)
+            elif name == "rsync":
+                index = program + 1
+                operands = []
+                while index < end:
+                    flag, separator, value = tokens[index].partition("=")
+                    if flag in {"--exclude", "--include", "--exclude-from", "--include-from", "--files-from"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            index += 1
+                            ignored.add(index)
+                            value = tokens[index]
+                        if flag.endswith("-from") and value != "-":
+                            self.add(value, "rsync-pattern-file")
+                    elif not tokens[index].startswith("-"):
+                        operands.append(tokens[index])
+                    index += 1
+                for value in operands[:-1]:
+                    self.add(value, "rsync-source")
+            elif name in {"java", "javac", "jmod", "jlink", "kotlinc", "kapt", "soong_javac_wrapper"}:
+                for index in range(program + 1, end):
+                    flag, separator, value = tokens[index].partition("=")
+                    if flag in {"-classpath", "--class-path", "-cp"}:
+                        ignored.add(index)
+                        if not separator and index + 1 < end:
+                            ignored.add(index + 1)
+                            value = tokens[index + 1]
+                        for path in value.split(":"):
+                            if path:
+                                self.add(path, "java-classpath", required=False)
+        return ignored
+
+    def proto_option_input(self, flag, value):
+        if flag == "--descriptor_set_in":
+            for path in value.split(":"):
+                self.add(path, "protobuf-descriptor-input")
+        elif flag == "--plugin":
+            path = value.partition("=")[2] or value
+            self.add(path, "protobuf-plugin")
+            self.tool_package(path)
+
+    def expand_semantic_responses(self, tokens, temporary_outputs):
+        """Inspect response operands in their caller's exact argument order."""
+        def expand(arguments, program, start):
+            result = []
+            for index, token in enumerate(arguments, start):
+                if not token.startswith("@"):
+                    result.append((token, False))
+                    continue
+                path = self.path(token[1:])
+                temporary_outputs.position = index
+                if path in temporary_outputs:
+                    result.append((token, False))
+                    continue
+                self.add(path, "command-response")
+                if path in self.response_contents:
+                    content = self.response_contents[path]
+                elif not self.produced(path) and optional_probe(path):
+                    content = path.read_text()
+                else:
+                    result.append((token, False))
+                    continue
+                # Native protoc reads one argument per line. The license tool
+                # uses the Soong quoted response parser. Neither re-expands @
+                # tokens from inside response content.
+                if program in {"protoc", "aprotoc"}:
+                    arguments = content.split("\n")
+                    if arguments and arguments[-1] == "":
+                        arguments.pop()
+                else:
+                    arguments = shlex.split(content, posix=True)
+                result.extend((argument, argument.startswith("@")) for argument in arguments)
+            return result
+
+        marked = [(token, False) for token in tokens]
+        for program, end in reversed(list(command_invocations(tokens))):
+            name = Path(tokens[program]).name
+            if name in {"protoc", "aprotoc", "build_license_metadata", "soong_zip"}:
+                marked[program + 1:end] = expand(tokens[program + 1:end], name, program + 1)
+        return [token for token, _ in marked], {index for index, (_, literal) in enumerate(marked) if literal}
+
+    def literal_path(self, value):
+        if getattr(value, "shell_children", ()):
+            return None  # Substitution output is not a resolved literal path.
+        if not value or value.startswith("-") or any(character in value for character in "$*?[\n"):
+            return None
+        return self.path(value)
+
+    def move_destination(self, tokens, program, end):
+        """Recognize only a two-file, unconditional-overwrite mv protocol."""
+        if not getattr(self, "evaluated_shell", True):
+            return None
+        operands, options = [], True
+        for index in range(program + 1, end):
+            value = tokens[index]
+            if options and value == "--":
+                options = False
+            elif options and value.startswith("-"):
+                if value in {"--force", "--no-target-directory"}:
+                    continue
+                if not value.startswith("--") and value != "-" and set(value[1:]) <= {"f", "T"}:
+                    continue
+                return None  # n/u/i, target directories, backups and unknown modes.
+            else:
+                operands.append(index)
+        if len(operands) != 2:
+            return None
+        source, destination = (self.literal_path(tokens[index]) for index in operands)
+        if (source is None or destination is None or not optional_probe(source, "is_file")
+                or optional_probe(source, "is_symlink")):
+            return None  # Moving a directory or relocated link is not a file-byte overwrite.
+        declared_dirs = self.output_dirs | self.external_dirs
+        if (any(tokens[index].endswith("/") for index in operands)
+                or source in declared_dirs or destination in declared_dirs
+                or optional_probe(source, "is_dir") or optional_probe(destination, "is_dir")):
+            return None
+        return operands[-1], destination
+
+    def tool_output_operands(self, tokens):
+        """Return verified truncating file outputs, with completion positions."""
+        files, ignored = {}, set()
+        for program, end in command_invocations(tokens):
+            name = Path(tokens[program]).name
+            flags = set()
+            attached = set()
+            if getattr(self, "evaluated_shell", True):
+                for index in range(program + 1, end - 1):
+                    if tokens[index] in {">", ">|"}:
+                        ignored.add(index + 1)  # Truncation targets do not read old bytes.
+            if name == "mv":
+                destination = self.move_destination(tokens, program, end)
+                if destination is not None:
+                    position, path = destination
+                    ignored.add(position)
+                    files.setdefault(path, end)
+            if name in {"dirname", "basename"}:
+                ignored.update(range(program + 1, end))
+            if name in {"rm", "mkdir", "touch"}:
+                reference = set()
+                if name == "touch":
+                    for index in range(program + 1, end):
+                        if tokens[index] in {"-r", "--reference"}:
+                            reference.add(index + 1)
+                        elif tokens[index].startswith("--reference="):
+                            reference.add(index)
+                ignored.update(index for index in range(program + 1, end)
+                               if not tokens[index].startswith("-") and index not in reference)
+            if name == "aidl":
+                flags, attached = {"-d", "--dep"}, {"-d"}
+            elif name in {"protoc", "aprotoc"}:
+                flags = {"--dependency_out", "--descriptor_set_out", "-o"}
+            elif name in {"soong_zip", "zip2zip", "clang", "clang++", "llvm-link", "bcc_strip_attr"}:
+                flags = {"-o"}
+            script = next((index for index in range(program, min(program + 3, end))
+                           if Path(tokens[index]).name == "gen-kotlin-build-file.py"
+                           and (index == program or name.startswith("python") or name in {"py2-cmd", "py3-cmd"})), None)
+            if script is not None:
+                flags = {"--out"}
+            for index in range(program + 1, end):
+                token = tokens[index]
+                flag, separator, value = token.partition("=")
+                operand_position = index
+                if flag in flags:
+                    if not separator and index + 1 < end:
+                        operand_position = index + 1
+                        value = tokens[operand_position]
+                    ignored.update({index, operand_position})
+                else:
+                    prefix = next((prefix for prefix in attached if token.startswith(prefix) and token != prefix), None)
+                    if prefix is None:
+                        continue
+                    value = token[len(prefix):]
+                    ignored.add(index)
+                path = self.literal_path(value)
+                if path is not None:
+                    files.setdefault(path, end)
+            if name in {"rustc", "clippy-driver"}:
+                for index in range(program + 1, end):
+                    token = tokens[index]
+                    if token == "--emit" and index + 1 < end:
+                        value = tokens[index + 1]
+                        ignored.update({index, index + 1})
+                    elif token.startswith("--emit="):
+                        value = token.partition("=")[2]
+                        ignored.add(index)
+                    else:
+                        continue
+                    for item in value.split(","):
+                        kind, separator, destination = item.partition("=")
+                        if separator and kind in {"dep-info", "link", "metadata", "asm", "llvm-ir", "llvm-bc", "obj"}:
+                            path = self.literal_path(destination)
+                            if path is not None:
+                                files.setdefault(path, end)
+        return files, ignored
+
+    def action_temporaries(self, tokens, inherited=None):
+        """Find guarded fresh writes of unconditional simple commands."""
+        eligible = unconditional_command_positions(tokens)
+        files = {}
+        for program, end in command_invocations(tokens):
+            if program not in eligible:
+                continue
+            candidates, _ = self.tool_output_operands(tokens[program:end])
+            for path, position in candidates.items():
+                files.setdefault(path, []).append(position + program)
+        substitutions = substitution_positions(tokens)
+        completed = {}
+        for path, positions in files.items():
+            for position in positions:
+                if position > 0 and position - 1 in substitutions:
+                    continue
+                position = command_completion(tokens, position)
+                if position < len(tokens) and tokens[position] == "&&":
+                    completed.setdefault(path, []).append(position)
+        files = completed
+        directories, removed = {}, {}
+        for program, end in command_invocations(tokens):
+            if program not in eligible or program in substitutions:
+                continue
+            name = Path(tokens[program]).name
+            operands = [self.literal_path(token) for token in tokens[program + 1:end] if not token.startswith("-")]
+            operands = [path for path in operands if path is not None]
+            if name == "rm":
+                recursive = any(token == "--recursive" or (token.startswith("-") and not token.startswith("--")
+                                                           and "r" in token[1:]) for token in tokens[program + 1:end])
+                for path in operands:
+                    removed[path] = (end, recursive)
+            elif name in {"mkdir", "touch"}:
+                for path in operands:
+                    for root, (position, recursive) in removed.items():
+                        # A successful && chain establishes that the old file
+                        # or namespace was removed before its replacement.
+                        between = [token for token in tokens[position:program] if token not in {"(", ")"}]
+                        if not between or between[0] != "&&" or any(token in {";", "||", "|", "&"} for token in between):
+                            continue
+                        if name == "touch" and path == root:
+                            files.setdefault(path, []).append(end)
+                        elif name == "mkdir" and recursive and beneath(path, root):
+                            directories.setdefault(root, []).append(end)
+            for index in range(program + 1, end - 1):
+                if end < len(tokens) and tokens[end] in {"||", "|", "&"}:
+                    continue
+                if tokens[index] in {">", ">|", ">>"}:
+                    path = self.literal_path(tokens[index + 1])
+                    prior = removed.get(path)
+                    between = ([token for token in tokens[prior[0]:program] if token not in {"(", ")"}]
+                               if prior else [])
+                    removed_before = bool(between and between[0] == "&&"
+                                          and not any(token in {";", "||", "|", "&"} for token in between))
+                    if path is not None and (tokens[index] != ">>" or removed_before):
+                        files.setdefault(path, []).append(index + 1)
+        barriers = [index for index, token in enumerate(tokens) if token in {";", "||"} and index not in substitutions]
+        return ActionTemporaries(files, directories, inherited, barriers, guarded_for_body_barriers(tokens))
+
+    def command(self, command, context=None, cpp_reader=None, evaluated_shell=None, abi_reader=None):
+        if evaluated_shell is None:
+            evaluated_shell = context is None or context == "shell-source"
+        if context == "r8":
+            analyzed, tokens, children = command, ["r8", *source_reads_module().r8_flagfile_arguments(command)], {}
+        else:
+            command = expand_shell_variables(command, shell_assignment_values(command))
+            analyzed, tokens, children = shell_analysis_words(command, evaluated_shell)
+            if context and not evaluated_shell:
+                tokens = command_tokens(context) + tokens
+        previous = self.command_temporaries
+        previous_reader = self.cpp_reader
+        previous_binding = self.cpp_binding
+        previous_abi_reader, previous_abi_binding = self.abi_reader, self.abi_binding
+        previous_children = getattr(self, "active_shell_children", {})
+        previous_evaluation = getattr(self, "evaluated_shell", False)
+        self.active_shell_children = children
+        self.evaluated_shell = evaluated_shell
+        self.cpp_binding = previous_binding if cpp_reader is None else cpp_reader
+        self.abi_binding = previous_abi_binding if abi_reader is None else abi_reader
+        temporary_outputs = self.action_temporaries(tokens, previous.snapshot() if previous else None)
+        self.command_temporaries = temporary_outputs
+        try:
+            self.inspect_command(analyzed, tokens, temporary_outputs, r8_flagfile=context == "r8")
+        finally:
+            self.command_temporaries = previous
+            self.cpp_reader = previous_reader
+            self.cpp_binding = previous_binding
+            self.abi_reader, self.abi_binding = previous_abi_reader, previous_abi_binding
+            self.active_shell_children = previous_children
+            self.evaluated_shell = previous_evaluation
+
+    def inspect_shell_child(self, marker, tokens, position, temporaries):
+        child = self.active_shell_children[marker]
+        snapshot = shell_child_snapshot(temporaries, tokens, position, command_invocations)
+        previous = self.command_temporaries
+        inherited = ActionTemporaries(inherited=snapshot)
+        inherited.position = 0
+        self.command_temporaries = inherited
+        try:
+            self.command(child["native_body"], evaluated_shell=True)
+        finally:
+            self.command_temporaries = previous
+
+    def inspect_command(self, command, tokens, temporary_outputs, r8_flagfile=False):
+        # `bash -c '<script>'` bodies carry real tool invocations (Sbox wraps
+        # commands this way); analyze each body like the shell would run it.
+        for program, end in command_invocations(tokens):
+            if Path(tokens[program]).name == "insertkeys":
+                root = self.source_root
+                position = program + 1
+                while position < end:
+                    token = tokens[position]
+                    if token in {"-c", "--cwd"} and position + 1 < end:
+                        root = self.path(tokens[position + 1])
+                        position += 2
+                        continue
+                    if token in {"-t", "--target-build-variant", "-d", "--key-directory",
+                                 "-o", "--output"} and position + 1 < end:
+                        position += 2
+                        continue
+                    if not isinstance(token, str) or token.startswith("-"):
+                        position += 1
+                        continue
+                    if token.endswith(".xml"):
+                        self.insertkeys_certificates(token, root)
+                    position += 1
+            if Path(tokens[program]).name not in {"bash", "sh", "dash", "zsh"}:
+                continue
+            for position in range(program + 1, end - 1):
+                token = tokens[position]
+                if not isinstance(token, str) or not token.startswith("-") or "c" not in token[1:]:
+                    continue
+                script = tokens[position + 1]
+                if isinstance(script, str) and script.strip():
+                    self.command(script, evaluated_shell=True)
+                break
+        tokens, response_literals = self.expand_semantic_responses(tokens, temporary_outputs)
+        # Expanded response arguments have native caller order; recompute their
+        # output positions before inspecting any subsequent readers.
+        inherited = (temporary_outputs.inherited_files, temporary_outputs.inherited_directories)
+        temporary_outputs = self.action_temporaries(tokens, inherited)
+        self.command_temporaries = temporary_outputs
+        _, literal_tokens = self.tool_output_operands(tokens)
+        literal_tokens.update(self.semantic_operands(tokens, response_literals))
+        if "r8" in command or r8_flagfile:
+            r8_config_indices = source_reads_module().r8_config_argument_indices
+            for program, end in command_invocations(tokens):
+                literal_tokens.update(program + index for index in r8_config_indices(tokens[program:end]))
+            if r8_flagfile:
+                literal_tokens.update(index for index, token in enumerate(tokens) if token.startswith("@"))
+        source_invocations = {position for position, _ in command_invocations(tokens)
+                              if self.evaluated_shell and tokens[position] in {".", "source"}}
+        compiler_positions = set()
+        for program, end in cpp_invocations(tokens):
+            start = program
+            tool = program + 1 if Path(tokens[program]).name == "ccache" else program
+            if Path(tokens[tool]).name in {"header-abi-dumper", "clang-tidy"}:
+                start = next((index + 1 for index in range(program + 1, end) if tokens[index] == "--"), end)
+            compiler_positions.update(range(start, end))
+        abi_positions = {index for program, end in command_invocations(tokens)
+                         if Path(tokens[program]).name == "header-abi-linker" for index in range(program, end)}
+        for position, token in enumerate(tokens):
+            if Path(token).name == "ln":
+                end = position + 1
+                while end < len(tokens) and tokens[end] not in {";", "&&", "||", "|", "(", ")"}:
+                    end += 1
+                arguments = tokens[position + 1:end]
+                if any(item == "--symbolic" or (item.startswith("-") and not item.startswith("--")
+                                                and "s" in item[1:]) for item in arguments):
+                    literal_tokens.update(range(position + 1, end))
+        for position, token in enumerate(tokens):
+            if Path(token).name in {"python2", "python2.7"}:
+                self.require_python2()
+            elif token == "python":
+                self.require_python2(native_default=True)
+        for position, end in command_invocations(tokens):
+            name = Path(tokens[position]).name
+            if name == "bpglob":
+                for option in range(position + 1, end - 1):
+                    if tokens[option] == "-p":
+                        pattern = tokens[option + 1]
+                        parts = Path(pattern).parts
+                        fixed = []
+                        for part in parts:
+                            if any(character in part for character in "*?["):
+                                break
+                            fixed.append(part)
+                        if fixed:
+                            self.add(Path(*fixed), "source-glob-runtime-files", required=False)
+            if name == "gotestrunner":
+                for option in range(position + 1, end):
+                    if tokens[option] == "--":
+                        break
+                    if tokens[option] == "-p" and option + 1 < end:
+                        self.go_test_package(tokens[option + 1])
+                        break
+                    if tokens[option].startswith("-p="):
+                        self.go_test_package(tokens[option][3:])
+                        break
+        include_flags = {"-I", "-isystem", "-iquote", "-idirafter", "--sysroot", "-isysroot"}
+        runtime_flags = {"-B", "-L", "--gcc-toolchain", "-gcc-toolchain", "-resource-dir", "--resource-dir"}
+        file_flags = {"-include", "-imacros"}
+        include_paths = []
+        assembler_paths = []
+        for index, token in enumerate(tokens):
+            if index in literal_tokens:
+                continue
+            if token in include_flags and index + 1 < len(tokens):
+                directory = self.path(tokens[index + 1])
+                include_paths.append(directory)
+                if token == "-I":
+                    assembler_paths.append(directory)
+                if token in {"--sysroot", "-isysroot"}:
+                    include_paths.extend([directory / "usr/include", directory / "include"])
+            elif token.startswith("-Wl,") or token in {"-T", "--version-script", "--dynamic-list"} \
+                    or re.match(r"^--(?:version-script|dynamic-list|script|retain-symbols-file|just-symbols)=", token):
+                values = []
+                if token.startswith("-Wl,"):
+                    parts = token[4:].split(",")
+                    position = 0
+                    while position < len(parts):
+                        part = parts[position]
+                        match = re.match(r"^--(?:version-script|dynamic-list|script|retain-symbols-file|just-symbols)=(.*)$",
+                                         part)
+                        if match:
+                            values.append(match.group(1))
+                        elif part in {"-T", "--version-script", "--dynamic-list", "--script"} \
+                                and position + 1 < len(parts):
+                            position += 1
+                            values.append(parts[position])
+                        position += 1
+                elif token in {"-T", "--version-script", "--dynamic-list"} and index + 1 < len(tokens):
+                    index += 1
+                    values.append(str(tokens[index]))
+                else:
+                    values.append(token.split("=", 1)[1])
+                for value in values:
+                    if value:
+                        self.linker_script(value)
+            elif token == "-r" and index + 1 < len(tokens):
+                # hidl-gen package roots are `-r<package>:<root>` mappings; the
+                # tool scans that root for the .hal files it imports.
+                root = tokens[index + 1].split(":", 1)[-1]
+                index += 1
+                if root:
+                    self.package_directory(root, "command-package:-r")
+            elif token.startswith("-r") and ":" in token:
+                root = token.split(":", 1)[1]
+                if root:
+                    self.package_directory(root, "command-package:-r")
+            elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
+                match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
+                if match:
+                    directory = self.path(match[1])
+                    include_paths.append(directory)
+                    if token.startswith("-I"):
+                        assembler_paths.append(directory)
+                    if token.startswith(("--sysroot=", "-isysroot")):
+                        include_paths.extend([directory / "usr/include", directory / "include"])
+        for directory in include_paths:
+            if directory not in self.compiler_search_paths:
+                self.compiler_search_paths.append(directory)
+        aidl_invocations = [(program, end) for program, end in command_invocations(tokens)
+                            if Path(str(tokens[program])).name in {"aidl", "aidl-cpp"}]
+        index = 0
+        while index < len(tokens):
+            temporary_outputs.position = index
+            self.cpp_reader = self.cpp_binding and index in compiler_positions
+            self.abi_reader = self.abi_binding and index in abi_positions
+            token = tokens[index]
+            children = getattr(token, "shell_children", ())
+            for marker in children:
+                self.inspect_shell_child(marker, tokens, index, temporary_outputs)
+            if children:
+                index += 1
+                continue
+            operand = command_operand(token)
+            if operand and not operand.startswith("-") and self.path(operand) in temporary_outputs:
+                index += 1
+                continue
+            if index in literal_tokens:
+                index += 1
+                continue
+            if self.environment(token):
+                pass
+            elif index in source_invocations and index + 1 < len(tokens):
+                index += 1
+                path = self.path(tokens[index])
+                self.add(path, "shell-source")
+                content = self.response_contents.get(path)
+                if content is None and not self.produced(path) and optional_probe(path):
+                    content = path.read_text()
+                if content is not None:
+                    self.command(content, evaluated_shell=True)
+            elif token == "-C" and index + 1 < len(tokens):
+                index += 1
+                option = tokens[index]
+                if option.startswith("link-args="):
+                    self.command(option.partition("=")[2], evaluated_shell=False)
+                elif option.startswith("linker="):
+                    self.command(option.partition("=")[2], evaluated_shell=False)
+                else:
+                    path = self.path(option)
+                    if optional_probe(path, "is_dir") and (beneath(path, self.source_root) or self.produced(path)):
+                        self.add(path, "command-directory:-C", required=False)
+            elif token in runtime_flags and index + 1 < len(tokens):
+                index += 1
+                self.runtime_directory(tokens[index], "command-runtime:" + token)
+            elif re.match(r"^(?:--?gcc-toolchain|--?resource-dir)=", token):
+                self.runtime_directory(token.split("=", 1)[1], "command-runtime")
+            elif token.startswith(("-B", "-L")) and len(token) > 2:
+                self.runtime_directory(token[2:], "command-runtime:" + token[:2])
+            elif token in include_flags | file_flags and index + 1 < len(tokens):
+                index += 1
+                value = tokens[index]
+                if token in include_flags:
+                    if token in {"--sysroot", "-isysroot"}:
+                        self.runtime_directory(value, "command-sysroot")
+                    else:
+                        self.include_directory(value, "command-include:" + token)
+                else:
+                    candidates = [self.path(value)]
+                    if not Path(value).is_absolute():
+                        candidates.extend(directory / value for directory in include_paths)
+                    found = next((path for path in candidates if path.is_file() or self.produced(path)), candidates[0])
+                    self.add(found, "command-input:" + token)
+                    self.compiler_input(found, include_paths, self.compiler_defines(tokens))
+            elif token.startswith(("-I", "-isystem", "-iquote", "-idirafter", "--sysroot=", "-isysroot")):
+                match = re.match(r"^(?:-isystem|-iquote|-idirafter|-isysroot|-I|--sysroot=)(.+)$", token)
+                if match:
+                    if token.startswith(("--sysroot=", "-isysroot")):
+                        self.runtime_directory(match[1], "command-sysroot")
+                    else:
+                        self.include_directory(match[1], "command-include")
+            elif token.startswith("@"):
+                # Ninja writes declared rspfiles; their content is inspected
+                # separately. Tools also use @name@ placeholders (config
+                # templates, sed scripts), which are never input paths.
+                value = token[1:]
+                path = self.path(value)
+                declared = path in self.aux_outputs or path in self.response_contents
+                if value and "@" not in value and not beneath(path, self.out_root) \
+                        and (declared or path.is_file() or self.produced(path)):
+                    self.add(path, "command-response", required=False)
+                    if not self.produced(path) and path.is_file():
+                        self.command(path.read_text(), response_context(command, value))
+            elif token not in {"&&", "||", ";", "|", "(", ")", ">", "<"}:
+                value = command_operand(token)
+                if value and not value.startswith("-"):
+                    path = self.path(value)
+                    if self.selected(path) and (optional_probe(path) or optional_probe(path, "is_symlink")):
+                        self.add(path, "command-file", required=False)
+                        if path.suffix in {".s", ".S", ".asm"}:
+                            self.assembler_inputs(path, assembler_paths)
+                        if path.suffix in COMPILER_SCAN_SUFFIXES:
+                            self.compiler_input(path, include_paths, self.compiler_defines(tokens))
+                        if path.suffix in TABLEGEN_SUFFIXES:
+                            self.tablegen_input(path, include_paths)
+                        if path.suffix in AIDL_SUFFIXES:
+                            actual_aidl = any(program < index < end for program, end in aidl_invocations)
+                            self.aidl_input(path, include_paths, actual_aidl)
+                        if path.suffix == '.rs':
+                            self.rust_module_inputs(path)
+                        self.tool_package(path)
+                        self.python_package(path)
+            index += 1
+
+    def collect(self, slice_dir, include_task=True):
+        for value in self.additional_source_inputs:
+            self.add_source_input(value)
+        for value in self.manifest.get("leaf_inputs", []):
+            self.add(value, "graph-leaf")
+            path = self.path(value)
+            if path.suffix in SOURCE_SUFFIXES:
+                self.include_directory(path.parent, "source-local-headers")
+            self.python_package(path)
+            self.tool_package(path)
+        commands = [(command, None, command in self.compiler_commands, True, command in self.abi_commands) for command in self.manifest.get("commands", [])]
+        commands.extend((command, None, False, True, False) for command in self.embedded_commands())
+        edge_commands = {edge.get("command") for edge in self.manifest.get("edges", [])}
+        for command in dict.fromkeys(entry[0] for entry in commands):
+            if command not in edge_commands:
+                self.collect_r8_sources({"command": command})
+        for edge in self.manifest.get("edges", []):
+            self.collect_r8_sources(edge)
+            if edge.get("command"):
+                commands.append((edge["command"], None, edge["command"] in self.compiler_commands, True, edge["command"] in self.abi_commands))
+            if edge.get("rspfile_content"):
+                context = response_context(edge.get("command", ""), edge.get("rspfile"))
+                callers = rsp_callers(edge.get("command", ""), edge.get("rspfile", ""))
+                if not callers and not context:
+                    callers = [(None, False)]
+                for reader, cpp_rsp in callers:
+                    # These callers expand their arguments inline. Another
+                    # reader of the same file still needs its own tool context.
+                    if reader in {"protoc", "aprotoc", "build_license_metadata", "soong_zip", "r8-compat-proguard"}:
+                        continue
+                    commands.append((edge["rspfile_content"], reader,
+                                     cpp_rsp and edge.get("command") in self.compiler_commands,
+                                     reader == "shell-source", reader == "header-abi-linker" and edge.get("command") in self.abi_commands))
+        for command, context, cpp_reader, evaluated_shell, abi_reader in dict.fromkeys(commands):
+            self.command(command, context, cpp_reader, evaluated_shell, abi_reader)
+        for command in dict.fromkeys(entry[0] for entry in commands):
+            if not command or "sbox" not in command:
+                continue
+            for inner in self.sandbox_inner_commands(command):
+                self.collect_r8_sources({"command": inner})
+                self.command(inner, evaluated_shell=True)
+        # A leaf source can be declared by an edge without appearing in a command
+        # line. Follow its own includes with the shard's declared search paths.
+        for value in self.manifest.get("leaf_inputs", []):
+            path = self.path(value)
+            if path.suffix in COMPILER_SCAN_SUFFIXES:
+                self.compiler_input(path, self.compiler_search_paths)
+            elif path.suffix == ".rs":
+                self.rust_module_inputs(path)
+            elif path.suffix in TABLEGEN_SUFFIXES:
+                self.tablegen_input(path, self.compiler_search_paths)
+            elif path.suffix in AIDL_SUFFIXES:
+                # Actual AIDL invocations already traversed their exact -I
+                # roots. The fallback is only for leaf files not seen there;
+                # never feed it the unrelated shard-wide C/C++ root union.
+                if path.resolve() not in self.aidl_frontend_inputs:
+                    self.aidl_input(path, self.aidl_search_paths)
+        depfiles = list(self.manifest.get("depfiles", []))
+        depfiles.extend(edge["depfile"] for edge in self.manifest.get("edges", []) if edge.get("depfile"))
+        depfile_owners = {}
+        for edge in self.manifest.get("edges", []):
+            if edge.get("depfile") and edge.get("command"):
+                _, tokens, _ = shell_analysis_words(edge["command"], True)
+                temporaries = self.action_temporaries(tokens)
+                temporaries.position = len(tokens)
+                depfile_owners.setdefault(self.path(edge["depfile"]), []).append(temporaries)
+        for value in dict.fromkeys(depfiles):
+            path = self.path(value)
+            if path.is_file():
+                for dependency in make_dependencies(path.read_text(errors="replace")):
+                    owners = depfile_owners.get(path, [])
+                    # A compiler depfile can name its own action's transient
+                    # inputs. Other actions' observations remain real inputs.
+                    if owners and all(self.path(dependency) in owner for owner in owners):
+                        continue
+                    self.add(dependency, "observed-depfile:" + str(path))
+        runner_ninja = self.source_root / "prebuilts/build-tools/linux-x86/bin/ninja"
+        self.add(runner_ninja, "runner-ninja")
+        self.tool_package(runner_ninja)
+        if not include_task:
+            if self.errors:
+                raise CapsuleError("Shared source input audit failed:\n" + "\n".join(sorted(self.errors)))
+            return None
+        runtime_dir = Path(self.manifest.get("runtime_dir", ".crux-task/graph"))
+        if runtime_dir.is_absolute() or ".." in runtime_dir.parts:
+            raise CapsuleError("runtime_dir must be a safe relative path")
+        task_path = self.source_root / runtime_dir
+        for root, directories, files in os.walk(slice_dir):
+            directories[:] = sorted(name for name in directories if name not in FORBIDDEN_PARTS)
+            for name in sorted(files):
+                path = Path(root) / name
+                if path.is_symlink():
+                    raise CapsuleError("Slice files must be regular files: %s" % path)
+                archive_path = task_path / path.relative_to(slice_dir)
+                self.virtual_files[archive_path] = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+        if self.errors:
+            raise CapsuleError("Capsule input audit failed:\n" + "\n".join(sorted(self.errors)))
+        return task_path
+
+    def file_specs(self):
+        files = []
+        for path, reasons in sorted(self.entries.items()):
+            info = path.lstat()
+            item = {"path": str(path), "mode": stat.S_IMODE(info.st_mode), "reasons": sorted(reasons)}
+            if stat.S_ISLNK(info.st_mode):
+                item.update(type="symlink", target=os.readlink(path), size=0)
+            elif stat.S_ISDIR(info.st_mode):
+                item.update(type="directory", size=0)
+            else:
+                item.update(type="file", size=info.st_size, sha256=self.digester(path))
+            files.append(item)
+        return files
+
+    def metadata(self, manifest_path, task_path):
+        files = self.file_specs()
+        for path, (data, mode) in sorted(self.virtual_files.items()):
+            files.append({"path": str(path), "mode": mode, "type": "file", "size": len(data),
+                          "sha256": hashlib.sha256(data).hexdigest(), "reasons": ["task-graph"]})
+        graph_inputs = []
+        for value in self.manifest.get("graph_inputs", []):
+            path = self.path(value)
+            if path.is_file():
+                graph_inputs.append({"path": str(path), "sha256": self.digester(path), "size": path.stat().st_size})
+        return {"schema_version": 1, "source_root": str(self.source_root), "out_root": str(self.out_root),
+                "slice_path": str(task_path), "manifest_sha256": self.digester(manifest_path),
+                "files": files, "file_count": len(files),
+                "input_bytes": sum(item["size"] for item in files),
+                "external_inputs": [{"path": str(path)} for path in sorted(self.external)],
+                "output_dirs": [str(path) for path in sorted(self.output_dirs)],
+                "external_input_dirs": [str(path) for path in sorted(self.external_dirs)],
+                "allowed_generated_inputs": [{"path": str(path), "reason": self.allowed_generated[path]}
+                                             for path in sorted(self.used_generated)],
+                "required_interpreters": [{**item, "source_scripts": sorted(item["source_scripts"])}
+                                          for _, item in sorted(self.required_interpreters.items())],
+                "graph_inputs": graph_inputs, "system_tools": sorted(self.system_tools)}
+
+    def archive(self, stream, metadata, task_path, omitted=()):
+        with tarfile.open(fileobj=stream, mode="w|") as archive:
+            for path in sorted(self.entries):
+                if str(path) in omitted:
+                    continue
+                archive.add(path, arcname=str(path).lstrip("/"), recursive=False)
+            for path, (data, mode) in sorted(self.virtual_files.items()):
+                info = tarfile.TarInfo(str(path).lstrip("/"))
+                info.size, info.mode = len(data), mode
+                info.uid = info.gid = 0
+                archive.addfile(info, io.BytesIO(data))
+            data = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode()
+            metadata_destination = (task_path / "bundle.json" if task_path else
+                                    self.source_root / ".crux-task/shared-layers" / (metadata["layer_id"] + ".json"))
+            info = tarfile.TarInfo(str(metadata_destination).lstrip("/"))
+            info.size, info.mode = len(data), 0o644
+            archive.addfile(info, io.BytesIO(data))
+
+
+def write_archive(collector, metadata, task_path, output, digester, omitted=()):
+    output = Path(output).absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not str(output).endswith(".tar.zst"):
+        raise CapsuleError("--output must end in .tar.zst")
+    if not shutil.which("zstd"):
+        raise CapsuleError("zstd is required to create the runner capsule")
+    temporary = tempfile.NamedTemporaryFile(prefix=output.name + ".", dir=output.parent, delete=False)
+    temporary.close()
+    try:
+        with open(temporary.name, "wb") as destination:
+            compressor = subprocess.Popen(["zstd", "-q", "-T0", "-3", "-c"], stdin=subprocess.PIPE, stdout=destination)
+            try:
+                collector.archive(compressor.stdin, metadata, task_path, omitted)
+            finally:
+                compressor.stdin.close()
+            if compressor.wait() != 0:
+                raise CapsuleError("zstd compression failed")
+        os.replace(temporary.name, output)
+    finally:
+        if os.path.exists(temporary.name):
+            os.unlink(temporary.name)
+    metadata["archive"] = {"name": output.name, "size": output.stat().st_size, "sha256": digest(output)}
+    metadata_path = output.with_name(output.name.removesuffix(".tar.zst") + ".json")
+    metadata["digest_cache"] = {"computed": digester.computed, "reused": digester.reused}
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    digester.save()
+    return metadata_path, metadata
+
+
+def identity_spec(spec):
+    keys = ["path", "type", "mode"]
+    if spec["type"] == "file":
+        keys.extend(["size", "sha256"])
+    elif spec["type"] == "symlink":
+        keys.append("target")
+    return {key: spec[key] for key in keys}
+
+
+def layer_identity(files):
+    data = [identity_spec(spec) for spec in sorted(files, key=lambda spec: spec["path"])]
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def shared_inputs(metadata, shared_manifest, digester=digest):
+    if not shared_manifest:
+        return set()
+    layer_path = Path(shared_manifest).resolve()
+    layer = json.loads(layer_path.read_text())
+    if layer.get("schema_version") != 1 or layer.get("kind") != "shared-source-layer":
+        raise CapsuleError("Unsupported shared source layer schema")
+    if layer["source_root"] != metadata["source_root"]:
+        raise CapsuleError("Shared source layer uses a different source_root")
+    if layer_identity(layer["files"]) != layer["layer_id"]:
+        raise CapsuleError("Shared source layer file identity mismatch")
+    available = {spec["path"]: spec for spec in layer["files"]}
+    if len(available) != len(layer["files"]):
+        raise CapsuleError("Shared source layer has duplicate file paths")
+    omitted = set()
+    for spec in metadata["files"]:
+        prior = available.get(spec["path"])
+        if prior:
+            if beneath(Path(spec["path"]), Path(metadata["out_root"])):
+                raise CapsuleError("Shared source layers must not contain OUT inputs")
+            if identity_spec(spec) != identity_spec(prior):
+                raise CapsuleError("Input differs from frozen shared source layer: %s" % spec["path"])
+            omitted.add(spec["path"])
+    metadata["shared_layers"] = [{"layer_id": layer["layer_id"], "manifest_sha256": digester(layer_path),
+                                  "required_files": sorted(omitted)}]
+    metadata["task_archive_input_bytes"] = sum(spec["size"] for spec in metadata["files"]
+                                              if spec["path"] not in omitted)
+    return omitted
+
+
+def audit(manifest_path, source_root, out_root=DEFAULT_OUT, allowed_generated=(),
+          graph_index=None, additional_source_inputs=()):
+    """Audit the same cold input closure as pack, without producing an archive."""
+    manifest_path = Path(manifest_path).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("schema_version") != 1 or Path(manifest.get("source_root", source_root)) != Path(source_root):
+        raise CapsuleError("Slice schema/source_root mismatch")
+    collector = Collector(manifest, source_root, out_root, allowed_generated,
+                          graph_index=graph_index, additional_source_inputs=additional_source_inputs)
+    task_path = collector.collect(manifest_path.parent)
+    return collector.metadata(manifest_path, task_path)
+
+
+def pack(manifest_path, source_root, output, out_root=DEFAULT_OUT, allowed_generated=(), digest_cache=None,
+         shared_manifest=None, graph_index=None, additional_source_inputs=()):
+    manifest_path = Path(manifest_path).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("schema_version") != 1:
+        raise CapsuleError("Unsupported slice schema_version")
+    if Path(manifest.get("source_root", source_root)) != Path(source_root):
+        raise CapsuleError("--source-root differs from manifest source_root")
+    digester = DigestCache(digest_cache)
+    collector = Collector(manifest, source_root, out_root, allowed_generated, digester,
+                          graph_index=graph_index, additional_source_inputs=additional_source_inputs)
+    task_path = collector.collect(manifest_path.parent)
+    metadata = collector.metadata(manifest_path, task_path)
+    omitted = shared_inputs(metadata, shared_manifest, digester)
+    return write_archive(collector, metadata, task_path, output, digester, omitted)
+
+
+def manifest_paths(values):
+    result = set()
+    for value in values:
+        path = Path(value).resolve()
+        if path.is_file():
+            result.add(path)
+        else:
+            result.update(path.rglob("manifest.json"))
+    if not result:
+        raise CapsuleError("No slice manifest.json files found")
+    return sorted(result)
+
+
+def build_layer(manifests, source_root, output, out_root=DEFAULT_OUT, shared_roots=None, digest_cache=None,
+                metadata_only=False):
+    source_root, out_root = Path(source_root).resolve(), Path(out_root).resolve()
+    roots = shared_roots or ["prebuilts"]
+    roots = [Path(root) if Path(root).is_absolute() else source_root / root for root in roots]
+    for root in roots:
+        if not beneath(root, source_root) or beneath(root, out_root):
+            raise CapsuleError("Shared roots must belong to the frozen source tree: %s" % root)
+    digester = DigestCache(digest_cache)
+    entries, scan_cache, provenance = {}, set(), []
+    aggregate = None
+    for path in manifest_paths(manifests):
+        manifest = json.loads(path.read_text())
+        if manifest.get("schema_version") != 1 or Path(manifest["source_root"]) != source_root:
+            raise CapsuleError("Shared source slice schema/source_root mismatch: %s" % path)
+        collector = Collector(manifest, source_root, out_root, digester=digester,
+                              selection_roots=roots, scan_cache=scan_cache)
+        collector.entries = entries
+        collector.collect(path.parent, include_task=False)
+        provenance.append({"path": str(path), "sha256": digester(path)})
+        aggregate = collector
+    files = aggregate.file_specs()
+    metadata = {"schema_version": 1, "kind": "shared-source-layer", "source_root": str(source_root),
+                "out_root": str(out_root), "layer_id": layer_identity(files), "files": files,
+                "file_count": len(files), "input_bytes": sum(spec["size"] for spec in files),
+                "shared_roots": [str(root) for root in roots], "manifests": provenance}
+    if metadata_only:
+        metadata["digest_cache"] = {"computed": digester.computed, "reused": digester.reused}
+        metadata_path = Path(output).resolve()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+        digester.save()
+        return metadata_path, metadata
+    return write_archive(aggregate, metadata, None, output, digester)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    pack_parser = commands.add_parser("pack")
+    pack_parser.add_argument("--manifest", required=True)
+    pack_parser.add_argument("--source-root", default=DEFAULT_SOURCE)
+    pack_parser.add_argument("--out-root", default=DEFAULT_OUT)
+    pack_parser.add_argument("--output", required=True)
+    pack_parser.add_argument("--allow-generated", action="append", default=[], metavar="PATH=REASON")
+    pack_parser.add_argument("--digest-cache", help="local digest cache; source paths and stat identity only")
+    pack_parser.add_argument("--shared-manifest", help="frozen shared source layer JSON restored by the worker")
+    pack_parser.add_argument("--graph-index", help="frozen Ninja graph index used to recover Sbox command payloads")
+    layer_parser = commands.add_parser("build-layer")
+    layer_parser.add_argument("--manifests", nargs="+", required=True, help="slice manifest paths or directories")
+    layer_parser.add_argument("--source-root", default=DEFAULT_SOURCE)
+    layer_parser.add_argument("--out-root", default=DEFAULT_OUT)
+    layer_parser.add_argument("--output", required=True)
+    layer_parser.add_argument("--digest-cache")
+    layer_parser.add_argument("--shared-root", action="append", help="relative source root; default: prebuilts")
+    layer_parser.add_argument("--metadata-only", action="store_true", help="write layer JSON without compression")
+    arguments = parser.parse_args()
+    try:
+        if arguments.command == "pack":
+            metadata_path, metadata = pack(arguments.manifest, arguments.source_root, arguments.output,
+                                           arguments.out_root, arguments.allow_generated, arguments.digest_cache,
+                                           arguments.shared_manifest, arguments.graph_index)
+        else:
+            metadata_path, metadata = build_layer(arguments.manifests, arguments.source_root, arguments.output,
+                                                  arguments.out_root, arguments.shared_root, arguments.digest_cache,
+                                                  arguments.metadata_only)
+    except (CapsuleError, OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print(json.dumps({"archive": arguments.output, "metadata": str(metadata_path),
+                      "file_count": metadata["file_count"], "input_bytes": metadata["input_bytes"]}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

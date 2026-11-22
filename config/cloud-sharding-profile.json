@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "version": "w10-1",
+  "wave_capacity": 8,
+  "max_actions": 4000,
+  "max_parallel": 20,
+  "isolate_categories": ["identity", "kernel", "image"],
+  "category_order": ["identity", "kernel", "other", "native", "java", "image"],
+  "identity_output_patterns": [
+    "${OUT}/soong/build_number.txt",
+    "${OUT}/build_date.txt",
+    "${OUT}/target/product/crux/build_fingerprint.txt",
+    "${OUT}/target/product/crux/build_thumbprint.txt",
+    "${OUT}/target/product/crux/obj/PACKAGING/system_build_prop_intermediates/buildinfo.prop",
+    "${OUT}/target/product/crux/**/build.prop",
+    "${OUT}/target/product/crux/**/prop.default",
+    "${OUT}/target/product/crux/system/etc/crux-delivery-verification.txt"
+  ],
+  "kernel_output_roots": ["${OUT}/target/product/crux/obj/KERNEL_OBJ"],
+  "image_outputs": [
+    "${OUT}/target/product/crux/boot.img",
+    "${OUT}/target/product/crux/recovery.img",
+    "${OUT}/target/product/crux/system.img",
+    "${OUT}/target/product/crux/vendor.img",
+    "${OUT}/target/product/crux/ramdisk.img",
+    "${OUT}/target/product/crux/ramdisk-recovery.img",
+    "${OUT}/target/product/crux/dtbo.img",
+    "${OUT}/target/product/crux/vendor/etc/recovery-resource.dat",
+    "${OUT}/target/product/crux/installed-files-vendor.txt",
+    "${OUT}/target/product/crux/obj/PACKAGING/recovery_patch_intermediates/recovery_from_boot.p",
+    "${OUT}/target/product/crux/obj/PACKAGING/recovery_intermediates/ramdisk_files-timestamp",
+    "${OUT}/target/product/crux/ramdisk-recovery.cpio",
+    "${OUT}/target/product/crux/obj/PACKAGING/systemimage_intermediates/system.img",
+    "${OUT}/target/product/crux/installed-files.txt",
+    "${OUT}/target/product/crux/installed-files-root.txt",
+    "${OUT}/target/product/crux/installed-files-ramdisk.txt"
+  ],
+  "java_tools": ["java", "javac", "soong_javac_wrapper", "d8", "r8", "turbine", "metalava"],
+  "native_tools": ["clang", "clang++", "gcc", "g++", "cc", "c++", "rustc"]
+}

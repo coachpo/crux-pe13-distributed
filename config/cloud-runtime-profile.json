@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "path_consumers": [
+    {
+      "output": "${OUT}/target/product/crux/obj/KERNEL_OBJ/.config",
+      "kind": "kernel config",
+      "source_evidence": "vendor/aosp/build/tasks/kernel.mk make-kernel-target"
+    },
+    {
+      "output": "${OUT}/target/product/crux/obj/KERNEL_OBJ/arch/arm64/boot/Image-dtb",
+      "kind": "kernel image",
+      "source_evidence": "vendor/aosp/build/tasks/kernel.mk Image producer"
+    },
+    {
+      "output": "${OUT}/target/product/crux/obj/DTBO_OBJ/arch/arm64/boot/dtbo.img",
+      "kind": "DTBO",
+      "source_evidence": "vendor/aosp/build/tasks/kernel.mk DTBO producer"
+    },
+    {
+      "output": "${OUT}/soong/.intermediates/vendor/aosp/build/soong/generated_kernel_includes/gen/.dummy_dep",
+      "kind": "headers_install sbox",
+      "source_evidence": "vendor/aosp/build/soong/Android.bp generated_kernel_includes"
+    }
+  ],
+  "kernel_source_leaves": [
+    "prebuilts/tools-custom/linux-x86",
+    "prebuilts/tools-custom/common/perl-base",
+    "prebuilts/build-tools/linux-x86/bin/toybox",
+    "prebuilts/build-tools/path/linux-x86",
+    "prebuilts/build-tools/common/bison"
+  ],
+  "build_environment": {
+    "PKG_CONFIG_LIBDIR": "",
+    "PKG_CONFIG_PATH": ""
+  }
+}

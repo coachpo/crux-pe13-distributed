@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Reconnecting U-Boot console daemon for the Crux phone.
+
+Survives USB re-enumeration (reset / reboot / fastboot round-trips): if
+the CDC-ACM port goes away it closes the old handle and opens the port again
+when the phone's U-Boot console reappears.
+
+The port is chosen by USB identity, not by device-node name: other CDC-ACM
+devices (a USB camera, for example) also appear as /dev/cu.usbmodem*.  The
+default identity is the U-Boot gadget of both Crux U-Boot variants
+(CONFIG_USB_GADGET_VENDOR_NUM/PRODUCT_NUM = 18d1:4ee0); --usb-id overrides it,
+--port names one device node instead.
+
+Commands are read from /tmp/crux-m0/cmd.txt (a CR is appended), all
+console output is appended to /tmp/crux-m0/console.log.
+The host-only token @menu-redraw sends two raw Ctrl-N bytes, without CR,
+to a verified waiting U-Boot menu so a late console can see its choices.
+
+Usage:
+    python3 -m venv ~/.venvs/crux-local
+    ~/.venvs/crux-local/bin/pip install -r crux-pe13-distributed/local/requirements.txt
+    ~/.venvs/crux-local/bin/python crux-pe13-distributed/local/uconsole_watch.py \
+        [--usb-id 18d1:4ee0 | --port /dev/cu.usbmodemNNNN]
+
+Start it before triggering a reboot so the menu output is captured
+immediately.
+"""
+import argparse
+import os
+import threading
+import time
+
+import serial
+from serial.tools import list_ports
+
+UBOOT_USB_ID = '18d1:4ee0'
+CMD = '/tmp/crux-m0/cmd.txt'
+LOG = '/tmp/crux-m0/console.log'
+MENU_REDRAW = '@menu-redraw'
+MENU_FEATURE = b'[watch] feature menu-redraw-v1\n'
+
+
+def usb_id(text):
+    vid, pid = (int(part, 16) for part in text.split(':'))
+    return vid, pid
+
+
+parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+choice = parser.add_mutually_exclusive_group()
+choice.add_argument('--usb-id', type=usb_id, default=usb_id(UBOOT_USB_ID),
+                    help=f'VID:PID of the console (default {UBOOT_USB_ID}, the Crux U-Boot gadget)')
+choice.add_argument('--port', help='open exactly this device node instead of matching the USB identity')
+args = parser.parse_args()
+
+s = None
+log = open(LOG, 'ab', buffering=0)
+lock = threading.Lock()
+
+
+def candidates():
+    if args.port:
+        return [args.port] if os.path.exists(args.port) else []
+    return sorted(p.device for p in list_ports.comports()
+                  if (p.vid, p.pid) == args.usb_id and p.device.startswith('/dev/cu.'))
+
+
+def port_present():
+    return bool(candidates())
+
+
+def reopen(reason, expected):
+    """Drop the current handle and wait for a fresh ACM port.
+
+    macOS can keep an old fd alive after the USB device is re-enumerated:
+    reads then return EOF forever and writes fail quietly, so neither side
+    notices on its own.  Callers must therefore also treat a disappearing
+    /dev node and a failed write as "reopen"."
+    """
+    global s
+    with lock:
+        # Read and write failures can race on the same old handle. Only its
+        # first recovery may replace it; a delayed failure must leave the new
+        # live connection open so its initial console output is preserved.
+        if s is not expected:
+            return
+        try:
+            if expected is not None:
+                expected.close()
+        except Exception:
+            pass
+        s = None
+        log.write(f'[watch] reopening ({reason})\n'.encode())
+        while s is None:
+            s = try_open()
+            if s is None:
+                time.sleep(0.5)
+        log.write(b'[watch] port reopened\n' + MENU_FEATURE)
+
+
+def try_open():
+    for p in candidates():
+        try:
+            ser = serial.Serial(port=p, baudrate=115200, timeout=0.2, write_timeout=1.0)
+            ser.dtr = True
+            ser.rts = True
+            log.write(f'[watch] using {p}\n'.encode())
+            return ser
+        except Exception:
+            pass
+    return None
+
+
+while s is None:
+    s = try_open()
+    if s is None:
+        time.sleep(0.5)
+log.write(b'[watch] port open\n' + MENU_FEATURE)
+
+
+def reader():
+    global s
+    while True:
+        current = s
+        if current is None:
+            time.sleep(0.2)
+            continue
+        try:
+            d = current.read(4096)
+            if d:
+                log.write(d)
+        except Exception as e:
+            log.write(f'\n[watch] read error {e}\n'.encode())
+            time.sleep(0.5)
+            reopen('read error', current)
+
+
+threading.Thread(target=reader, daemon=True).start()
+
+last = 0
+if os.path.exists(CMD):
+    last = os.path.getmtime(CMD)
+
+pending = None
+
+while True:
+    time.sleep(0.2)
+    # macOS leaves stale handles behind across USB re-enumeration
+    current = s
+    if current is not None and not port_present():
+        reopen('port disappeared', current)
+    try:
+        mt = os.path.getmtime(CMD) if os.path.exists(CMD) else 0
+    except OSError:
+        continue
+    if mt != last:
+        last = mt
+        try:
+            cmd = open(CMD).read().strip()
+        except OSError:
+            continue
+        if cmd:
+            pending = cmd
+    if pending:
+        current = s
+        if current is None:
+            continue
+        try:
+            # No CR: Enter would boot the highlighted entry. The first
+            # Ctrl-N stops the countdown and the second redraws via Down.
+            payload = b'\x0e\x0e' if pending == MENU_REDRAW else (pending + '\r').encode()
+            current.write(payload)
+            current.flush()
+            log.write(f'\n[watch] >>> {pending}\n'.encode())
+            pending = None
+        except Exception as e:
+            log.write(f'[watch] write failed ({e})\n'.encode())
+            time.sleep(0.5)
+            reopen('write failed', current)

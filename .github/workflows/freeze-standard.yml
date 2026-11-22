@@ -1,0 +1,277 @@
+name: Freeze PE13 on standard Linux runners
+run-name: PE13 standard freeze ${{ inputs.mode }} ${{ inputs.build_number }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Full graph validation or a source-layer checkpoint only
+        required: true
+        default: full
+        type: choice
+        options: [full, source-only]
+      source_layers:
+        description: Space-separated layer IDs for source-only mode; empty selects all
+        required: false
+        default: ''
+        type: string
+      build_number:
+        description: New development build identity
+        required: true
+        type: string
+      build_datetime:
+        description: Unix epoch; empty selects this run's start
+        required: false
+        default: ''
+        type: string
+      source_run:
+        description: Reuse source-layer artifacts from this run ID, or empty to fetch fresh
+        required: false
+        default: ''
+        type: string
+      reuse_sources_from:
+        description: Comma-separated runs with verified reusable source layers
+        required: false
+        default: ''
+        type: string
+      wait_for_sources:
+        description: Wait for matching active source jobs instead of starting duplicate downloads
+        required: true
+        default: false
+        type: boolean
+      gogc:
+        description: Soong Go GC percentage
+        default: '50'
+        required: true
+        type: string
+      force_cold:
+        description: Disable matching incremental cache reuse in the compilation
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: standard-freeze-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      layers: ${{ steps.plan.outputs.layers }}
+      snapshot_layers: ${{ steps.plan.outputs.snapshot_layers }}
+      datetime: ${{ steps.plan.outputs.datetime }}
+      source_run: ${{ steps.plan.outputs.source_run }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: plan
+        env:
+          BUILD_DATETIME: ${{ inputs.build_datetime }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          MODE: ${{ inputs.mode }}
+          SOURCE_LAYERS: ${{ inputs.source_layers }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          manifest = json.loads(Path('config/cloud-source-manifest.json').read_text())
+          all_layers = [layer['id'] for layer in manifest['layers']]
+          selected = os.environ['SOURCE_LAYERS'].split() or all_layers
+          if len(selected) != len(set(selected)) or set(selected) - set(all_layers):
+              raise SystemExit('Source layer selection is unknown or duplicated')
+          if os.environ['MODE'] != 'source-only' and set(selected) != set(all_layers):
+              raise SystemExit('Full graph validation requires all source layers')
+          if os.environ['MODE'] == 'source-only' and os.environ['SOURCE_RUN']:
+              raise SystemExit('Source-only mode must build or verify its selected source layers')
+          snapshots = {project['path'] for project in manifest['projects']
+                       if project.get('archive_type') == 'github-release-snapshot'}
+          snapshot_layers = [layer['id'] for layer in manifest['layers']
+                             if snapshots.intersection(layer['projects'])]
+          if set(selected).intersection(snapshot_layers) and not os.environ['SOURCE_RUN'] and (
+              os.environ['GITHUB_REPOSITORY'] != 'coachpo/crux-pe13-distributed'
+              or os.environ['GITHUB_REF'] != 'refs/heads/main'
+          ):
+              raise SystemExit('Private Release snapshots may only be fetched by the trusted main workflow')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('layers=' + json.dumps(selected), file=output)
+              print('snapshot_layers=' + json.dumps(snapshot_layers), file=output)
+              print('datetime=' + str(int(os.environ['BUILD_DATETIME'] or time.time())), file=output)
+              print('source_run=' + (os.environ['SOURCE_RUN'] or os.environ['GITHUB_RUN_ID']), file=output)
+          PY
+
+  sources:
+    needs: plan
+    if: inputs.source_run == ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: ${{ fromJSON(needs.plan.outputs.layers) }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install source image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools git curl
+          df -B1
+          free -b
+      - name: Fetch complete pinned projects and build compressed layer
+        if: ${{ !contains(fromJSON(needs.plan.outputs.snapshot_layers), matrix.layer) }}
+        env:
+          LAYER: ${{ matrix.layer }}
+          REUSE_SOURCE_RUN: ${{ inputs.reuse_sources_from }}
+          WAIT_FOR_SOURCES: ${{ inputs.wait_for_sources }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$REUSE_SOURCE_RUN" ]; then
+            reuse_args=(--manifest config/cloud-source-manifest.json --layer "$LAYER"
+              --source-runs "$REUSE_SOURCE_RUN" --repository "$GITHUB_REPOSITORY"
+              --output "$RUNNER_TEMP/layer")
+            if [ "$WAIT_FOR_SOURCES" = true ]; then
+              reuse_args+=(--wait-active)
+            fi
+            if python3 scripts/cloud_source_reuse.py "${reuse_args[@]}"; then
+              exit 0
+            fi
+          fi
+          python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
+            --layer "$LAYER" --output "$RUNNER_TEMP/layer"
+      - name: Fetch locked private Release snapshot and build fresh compressed layer
+        if: contains(fromJSON(needs.plan.outputs.snapshot_layers), matrix.layer)
+        env:
+          LAYER: ${{ matrix.layer }}
+          CRUX_SOURCE_SNAPSHOTS_TOKEN: ${{ secrets.CRUX_SOURCE_SNAPSHOTS_TOKEN }}
+        run: |
+          python3 scripts/cloud_source.py build --manifest config/cloud-source-manifest.json \
+            --layer "$LAYER" --output "$RUNNER_TEMP/layer"
+      - name: Retain complete source layer
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: cloud-${{ matrix.layer }}
+          path: ${{ runner.temp }}/layer
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Retain source failure evidence
+        if: failure()
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: failure-${{ matrix.layer }}
+          path: ${{ runner.temp }}/layer/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  graph:
+    needs: [plan, sources]
+    if: always() && inputs.mode != 'source-only' && needs.plan.result == 'success' && (needs.sources.result == 'success' || needs.sources.result == 'skipped')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN: ${{ needs.plan.outputs.source_run }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      BUILD_DATETIME: ${{ needs.plan.outputs.datetime }}
+      GOGC_PERCENT: ${{ inputs.gogc }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install native Linux build dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools zstd build-essential git curl flex bison gperf \
+            libssl-dev libxml2-utils xsltproc zip unzip rsync python-is-python3 \
+            lib32z1 lib32stdc++6 libncurses5 libtinfo5 bc lz4
+          sudo fallocate -l 16G "$RUNNER_TEMP/soong.swap"
+          sudo chmod 600 "$RUNNER_TEMP/soong.swap"
+          sudo mkswap "$RUNNER_TEMP/soong.swap"
+          sudo swapon "$RUNNER_TEMP/soong.swap"
+          df -B1 > "$RUNNER_TEMP/evidence/disk-before.txt"
+          free -b > "$RUNNER_TEMP/evidence/memory-before.txt"
+          uname -a > "$RUNNER_TEMP/evidence/runner.txt"
+          nproc >> "$RUNNER_TEMP/evidence/runner.txt"
+          java -version 2>> "$RUNNER_TEMP/evidence/runner.txt"
+      - name: Verify and mount complete compressed source layers
+        run: |
+          python3 scripts/cloud_layers.py --manifest config/cloud-source-manifest.json \
+            --source-run "$SOURCE_RUN" --repository "$GITHUB_REPOSITORY" \
+            --staging "$RUNNER_TEMP/source-layers" --evidence "$RUNNER_TEMP/evidence/source"
+      - name: Generate fresh Soong and Kati graphs
+        run: |
+          python3 scripts/cloud_freeze.py --source-manifest config/cloud-source-manifest.json \
+            --source-root /srv/crux/crux-pe13-offline-2026-09-25/pe13 \
+            --out-root "$RUNNER_TEMP/android-out" --build-number "$BUILD_NUMBER" \
+            --build-datetime "$BUILD_DATETIME" --gogc "$GOGC_PERCENT" \
+            --source-receipts "$RUNNER_TEMP/evidence/source" --evidence "$RUNNER_TEMP/evidence/graph" \
+            --require-dexpreopt
+      - name: Archive fresh graph and frontend metadata
+        run: |
+          tar --zstd -cf "$RUNNER_TEMP/evidence/graph-out.tar.zst" -C "$RUNNER_TEMP" android-out
+      - name: Record final resources
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          df -B1 > "$RUNNER_TEMP/evidence/disk-after.txt"
+          free -b > "$RUNNER_TEMP/evidence/memory-after.txt"
+          if [ -f "$RUNNER_TEMP/evidence/graph/cloud-freeze.log" ]; then
+            tail -100 "$RUNNER_TEMP/evidence/graph/cloud-freeze.log"
+          fi
+      - name: Retain graph and resource evidence
+        if: always()
+        uses: ./.github/actions/retain-artifact
+        with:
+          name: cloud-graph-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/evidence
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+  next:
+    needs: graph
+    if: ${{ !cancelled() && inputs.mode == 'full' && needs.graph.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      FORCE_COLD: ${{ inputs.force_cold }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare this graph
+        id: dispatch
+        continue-on-error: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          gh workflow run prepare-standard.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f stage=full -f graph_run="$GITHUB_RUN_ID" -f build_number="$BUILD_NUMBER" \
+            -f force_cold="$FORCE_COLD"
+      - name: Report the failed dispatch
+        if: github.ref == 'refs/heads/main' && steps.dispatch.outcome == 'failure'
+        run: python3 scripts/pipeline_report.py --stage freeze --detail 'The preparation could not be dispatched.'
+
+  report:
+    needs: [plan, sources, graph, next]
+    if: ${{ always() && github.ref == 'refs/heads/main' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report the failed freeze
+        run: python3 scripts/pipeline_report.py --stage freeze
