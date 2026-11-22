@@ -139,6 +139,9 @@ class CruxZipTest(unittest.TestCase):
         leaky.write_bytes(bytes(body))
         self.assertEqual(self.prepare("--any-serial", "--forbid-text", "/home/someone", rec=leaky, name="p6")[0], 1)
         self.assertEqual(self.prepare("--any-serial", "--forbid-text", "/home/nobody", rec=leaky, name="p7")[0], 0)
+        record = (self.work / "p7" / "payload.json").read_text()
+        self.assertNotIn("/home/nobody", record)
+        self.assertEqual(json.loads(record)["forbidden_text_checked"], 1)
         big = self.work / "big.itb"
         big.write_bytes(fit(crux_zip.WINDOWS["recovery"] + 4096))
         self.assertEqual(self.prepare(rec=big, name="p5")[0], 1)

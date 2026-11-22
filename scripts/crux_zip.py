@@ -281,7 +281,8 @@ def prepare(args):
         "schema_version": 1, "created_utc": datetime.now(timezone.utc).isoformat(), "zip_name": zip_name,
         "manifest_sha256": hashlib.sha256(text).hexdigest(), "identity": identity, "raw": raw, "stored": stored,
         "fits": fits, "installer_sha256": hashlib.sha256(installer).hexdigest(),
-        "forbidden_text_absent": args.forbid_text,
+        # Only the count: the forbidden strings are the owner's host paths and must not be published.
+        "forbidden_text_checked": len(args.forbid_text),
         "zstd": {"version": zstd_version(), "level": args.zstd_level, "long": 27},
         "inputs": {name: str(getattr(args, name).resolve())
                    for name in ("system", "vendor", "recovery_fit", "rom_fit", "installer")},
