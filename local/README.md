@@ -105,15 +105,21 @@ absence of zygote failures.
 ## LUN0 GPT
 
 `lun0-gpt.py --head H --tail T --out D` derives the current LUN0 table from a
-read-only capture of LBA 0–7 and of the last six blocks of the verified 38-entry
-PE-only layout: MIUI's `cust` (entry 31) is removed, `vendor` becomes a 16 MiB
-name stub, and the `vendor`/`system`/`userdata` stubs and the PE partitions move
-down to `0x60000`: `pemetadata` `0x63000`, `pesystem` `0x64000`, `pevendor`
+read-only capture of LBA 0–7 and of the last six blocks. It accepts the official
+table the MIUI EDL package leaves (`gpt_main0.bin` with `patch0.xml`: 34 entries,
+`userdata` up to the last usable LBA), so an EDL restore needs no earlier layout,
+and the former 38-entry PE-only table. MIUI's `cust` (entry 31) is removed,
+`vendor`, `system` and `userdata` become 16 MiB name stubs at `0x60000`/`0x61000`/
+`0x62000` (ABL and the PE guard look them up by name), and the PE partitions are
+entries 35–38: `pemetadata` `0x63000`, `pesystem` `0x64000`, `pevendor`
 `0x164000`, and `peuserdata` (`0x1d4000`, `0x3982e00` blocks) up to the end of the
-disk. The stubs stay because ABL and the PE guard look them up by name. These
-extents are the installer's `volumes[]` and the U-Boot `CRUX_PESYSTEM_LBA`. Entry
-numbers of the remaining partitions do not change. It writes head/tail images of the capture's shape and
-`layout.json` with the changed blocks and their digests; no device access.
+disk. These extents are the installer's `volumes[]` and the U-Boot
+`CRUX_PESYSTEM_LBA`. Existing entries keep their type, unique GUID and attributes;
+PE entries created from the official table get GUIDs derived from their names.
+Entry numbers of the remaining partitions do not change. It writes head/tail
+images of the capture's shape and `layout.json` with the source kind, the changed
+blocks and their digests; no device access. From the official table the changed
+blocks are `0x1`–`0x3` and the backup's entry array and header.
 
 ## Keyless entry to the U-Boot console
 
@@ -182,7 +188,7 @@ The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 
 ## Tests
 
-`test-ram-boot-pe13.py` and `test-b-host-profile.py` run on the Mac.
+`test-ram-boot-pe13.py`, `test-lun0-gpt.py` and `test-b-host-profile.py` run on the Mac.
 `test-local-build-state.py` needs the VM's Btrfs filesystem and non-interactive
 mount-namespace sudo:
 
