@@ -124,25 +124,30 @@ def check_raw(path, part):
 
 
 def forbidden_text(paths, texts):
-    """Count each forbidden byte string (host paths, device identity) in each file."""
+    """Count each forbidden byte string (host paths, device identity) in each file.
+
+    Hits are keyed by file name and the string's 1-based position among `texts`, never by the
+    string itself: the strings are private, and the error that reports them reaches public logs.
+    """
     needles = [text.encode() for text in texts]
     overlap = max((len(needle) for needle in needles), default=1) - 1
     found = {}
     for path in paths:
-        counts = dict.fromkeys(texts, 0)
+        counts = [0] * len(texts)
         tail = b""
         with path.open("rb") as handle:
             for block in iter(lambda: handle.read(8 << 20), b""):
                 window = tail + block
-                for text, needle in zip(texts, needles):
+                for number, needle in enumerate(needles):
                     # count matches that end inside the new block only
                     start = 0
                     while (index := window.find(needle, start)) >= 0:
                         if index + len(needle) > len(tail):
-                            counts[text] += 1
+                            counts[number] += 1
                         start = index + 1
                 tail = window[-overlap:] if overlap else b""
-        found.update({f"{path.name}:{text}": count for text, count in counts.items() if count})
+        found.update({f"{path.name}:forbid-text #{number + 1}": count
+                      for number, count in enumerate(counts) if count})
     return found
 
 

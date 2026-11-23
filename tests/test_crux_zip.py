@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -137,7 +139,13 @@ class CruxZipTest(unittest.TestCase):
         body = bytearray(fit(4096))
         body[128:128 + 26] = b"/home/someone/src/entry.S\0"
         leaky.write_bytes(bytes(body))
-        self.assertEqual(self.prepare("--any-serial", "--forbid-text", "/home/someone", rec=leaky, name="p6")[0], 1)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = self.prepare("--any-serial", "--forbid-text", "/home/x", "--forbid-text", "/home/someone",
+                                  rec=leaky, name="p6")[0]
+        self.assertEqual(status, 1)
+        self.assertIn("leaky.itb:forbid-text #2", stderr.getvalue())
+        self.assertNotIn("/home/someone", stderr.getvalue())
         self.assertEqual(self.prepare("--any-serial", "--forbid-text", "/home/nobody", rec=leaky, name="p7")[0], 0)
         record = (self.work / "p7" / "payload.json").read_text()
         self.assertNotIn("/home/nobody", record)
