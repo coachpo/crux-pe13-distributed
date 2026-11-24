@@ -115,12 +115,13 @@ def artifact_inventory(run_id, repository, token, opener=_API_OPENER,
     if not str(run_id).isdecimal() or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
         raise ValueError('Invalid GitHub source run or repository')
     # Offset pages are not an atomic snapshot while peer jobs upload. A new
-    # artifact can shift the same ID onto two pages; that is not two artifacts.
-    # Relist instead of accepting an incomplete/overlapping view or picking a
-    # newest name. Distinct IDs sharing a name still fail closed immediately.
+    # artifact can shift the same ID onto two pages, and total_count can count
+    # artifacts the pages do not list yet. Relist instead of accepting an
+    # incomplete/overlapping view or picking a newest name. Distinct IDs sharing
+    # a name still fail closed immediately.
     for attempt in range(_TRANSIENT_RETRIES + 1):
         records, identities, names = [], {}, {}
-        page, total, changed = 1, None, False
+        page, total, changed, truncated = 1, None, False, False
         while total is None or len(records) < total:
             query = urllib.parse.urlencode({'per_page': 100, 'page': page})
             url = f'{API}/repos/{repository}/actions/runs/{run_id}/artifacts?{query}'
@@ -149,12 +150,13 @@ def artifact_inventory(run_id, repository, token, opener=_API_OPENER,
                 records.append(artifact)
             page += 1
             if not response['artifacts'] and len(records) < total:
-                if changed:
-                    break
-                raise ValueError('GitHub artifact inventory ended before total_count')
+                changed = truncated = True
+                break
         if not changed:
             break
         if attempt == _TRANSIENT_RETRIES:
+            if truncated:
+                raise ValueError('GitHub artifact inventory ended before total_count after pagination retries')
             raise ValueError('GitHub artifact inventory did not stabilize after pagination retries')
         sleep(min(2 ** attempt, _TRANSIENT_BACKOFF_MAX))
     result = {}

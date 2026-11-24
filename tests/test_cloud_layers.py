@@ -344,11 +344,30 @@ class CloudLayersTests(unittest.TestCase):
                                      opener=lambda _: self.response(json.dumps(
                                          {'total_count': 2, 'artifacts': [same, same]}).encode()))
         self.assertEqual(waits, [1, 2, 4, 8, 16])
-        replies = [{'total_count': 2, 'artifacts': [same]}, {'total_count': 2, 'artifacts': []}]
-        with self.assertRaisesRegex(ValueError, 'ended before total_count'):
-            layers.artifact_inventory('123', 'owner/repo', 'token',
-                                     opener=lambda _: self.response(json.dumps(replies.pop(0)).encode()),
-                                     sleep=lambda _: self.fail('truncation is not a valid inventory'))
+        waits.clear()
+        def truncated(request):
+            page = [same] if request.full_url.endswith('&page=1') else []
+            return self.response(json.dumps({'total_count': 2, 'artifacts': page}).encode())
+        with self.assertRaisesRegex(ValueError, 'ended before total_count after pagination retries'):
+            layers.artifact_inventory('123', 'owner/repo', 'token', sleep=waits.append, opener=truncated)
+        self.assertEqual(waits, [1, 2, 4, 8, 16])
+
+    def test_inventory_relists_when_total_count_runs_ahead_of_the_pages(self):
+        first = {'id': 1, 'name': 'first', 'expired': False}
+        second = {'id': 2, 'name': 'second', 'expired': False}
+        replies = [
+            {'total_count': 2, 'artifacts': [first]},
+            {'total_count': 2, 'artifacts': []},
+            {'total_count': 2, 'artifacts': [second, first]},
+        ]
+        requests, waits = [], []
+        def opener(request):
+            requests.append(request.full_url)
+            return self.response(json.dumps(replies.pop(0)).encode())
+        found = layers.artifact_inventory('123', 'owner/repo', 'token', opener=opener, sleep=waits.append)
+        self.assertEqual(sorted(found), ['first', 'second'])
+        self.assertEqual(waits, [1])
+        self.assertEqual([url.split('page=')[-1] for url in requests], ['1', '2', '1'])
 
     def test_non_rate_limit_api_error_is_not_retried(self):
         for status, message in ((403, 'Resource not accessible by integration'), (404, 'Not Found')):
