@@ -10,8 +10,8 @@ kernel handoff must arm and check the U-Boot watchdog.
 Paths below are relative to the workspace root, and the commands run from there.
 `M=/mnt/mac$PWD` is the same directory as the VM sees it, and
 `H=$(orb -m cruxbuild printenv HOME)` is the VM build user's home.
-Host inputs outside the repositories live in `~/Crux-Inputs/` (RAM TWRP v2 FIT,
-deployed U-Boot images) and `~/Crux-Rescue/` (rescue material); the B install
+Host inputs outside the repositories live in `~/Crux-Inputs/` (deployed U-Boot
+images) and `~/Crux-Rescue/` (rescue material); the B install
 private key is `~/.crux-keys/crux-b-install-2026-11-07.pem`.
 
 Device helpers need pyserial:
@@ -158,37 +158,42 @@ needs a unique executed marker, not command echo.
 
 ## RAM-only install TWRP
 
-`build-b-twrp.py` derives the install TWRP from the RAM TWRP v2 FIT
-(`~/Crux-Inputs/twrp/ram-twrp-v2/twrp-ram-install-only.itb`, `3dab88d5…`; its DT
-bootargs carry the device identity, so it stays outside the public
-repositories) with the B public key (raw 64-byte form in `keys/`), the in-RAM
-BCB sink and a new profile ID; `--without-identity` drops the ten ABL identity
-tokens and `--preinit` replaces v2's PID 1 storage guard with a static build of
-`ram_twrp_preinit.c`, which binds all writable PE targets to one known LUN0
-layout: the former PE-only table or the current table of `lun0-gpt.py` (the
-installer's `volumes[]`). On either it starts and its adb can restore the other;
-on any other extent it restarts before Android init. `ram_twrp_pack.py` holds its FIT and CPIO helpers. Rerun it only when
-the B key, TWRP or the PE extents change and publish the result as a new tool Release, then
-update `config/install-twrp.json`:
+`build-b-twrp.py` derives the install TWRP from the public twrp-crux FIT
+`twrp-crux-3.7.1_12.itb` (`2df4c8d6…`, twrp-crux `e9a39b6` with kernel
+`2900b2cc1af5`; its VM cold build and Actions run 45329517224 give the same
+bytes). Its DT carries no device identity; the script refuses a source whose
+bootargs hold an ABL identity token. Kernel and DT are kept; the ramdisk gets
+the static build of `ram_twrp_preinit.c` as `/init` (the PID 1 storage guard,
+which binds all writable PE targets to one known LUN0 layout: the former PE-only
+table or the current table of `lun0-gpt.py`, the installer's `volumes[]`; on
+either it starts and its adb can restore the other, on any other extent it
+restarts before Android init), no mount routes except the in-RAM BCB sink, the
+bounded recovery capabilities, no Qualcomm decryption services, TWRP's default
+RAM folder, the zip-flash slider settings, the B public key (raw 64-byte form in
+`keys/`) and a new profile ID. `ram_twrp_pack.py` holds its FIT and CPIO
+helpers; `test-build-b-twrp.py` covers the ramdisk and DT checks. Rerun it only
+when the B key, TWRP or the PE extents change and publish the result as a new
+tool Release, then update `config/install-twrp.json`:
 
 ```sh
 aarch64-unknown-linux-gnu-gcc -Os -static -s -o <dir>/preinit.elf \
   crux-pe13-distributed/local/ram_twrp_preinit.c
-python3 crux-pe13-distributed/local/build-b-twrp.py --without-identity --preinit <dir>/preinit.elf \
-  --v2-fit ~/Crux-Inputs/twrp/ram-twrp-v2/twrp-ram-install-only.itb \
+python3 crux-pe13-distributed/local/build-b-twrp.py --preinit <dir>/preinit.elf \
+  --source-fit <twrp-crux dist>/twrp-crux-3.7.1_12.itb \
   --public-key crux-pe13-distributed/keys/crux-b-install-2026-11-07.p256.pub \
   --mkimage crux-uboot/.output-crux/xiaomi-crux/tools/mkimage --out <new dir>
 ```
 
-The profile ID and the kernel, DT and ramdisk components are deterministic
-(`f058a265…` for the pinned v6, preinit `5ea73cb8…`); the FIT bytes carry the
-mkimage timestamp. With GCC 15.2.0 the v2 guard source reproduces v2's `/init`
-(`88ce3ba4…`).
+The profile ID and the kernel, DT and ramdisk components are deterministic; the
+FIT bytes carry the mkimage timestamp. With GCC 15.2.0 the guard source gives
+preinit `5ea73cb8…`. The pinned v6 (`f058a265…`) was derived from an earlier
+RAM TWRP that is not public; this script no longer reproduces it.
 The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 
 ## Tests
 
-`test-ram-boot-pe13.py`, `test-lun0-gpt.py` and `test-b-host-profile.py` run on the Mac.
+`test-ram-boot-pe13.py`, `test-lun0-gpt.py`, `test-b-host-profile.py` and
+`test-build-b-twrp.py` run on the Mac.
 `test-local-build-state.py` needs the VM's Btrfs filesystem and non-interactive
 mount-namespace sudo:
 
