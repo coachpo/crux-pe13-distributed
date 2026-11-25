@@ -121,6 +121,14 @@ images of the capture's shape and `layout.json` with the source kind, the change
 blocks and their digests; no device access. From the official table the changed
 blocks are `0x1`–`0x3` and the backup's entry array and header.
 
+`write-lun0-gpt.py --head H --tail T --gpt D --work W [--run]` writes that table
+through the Recovery container U-Boot's fastboot (menu *Enable fastboot mode*),
+using only `fastboot stage` and `fastboot oem run:`. It first compares the live
+head and tail with the captures `lun0-gpt.py` read (`scsi read` and `cmp.l`), so
+it never overwrites a table that changed since, then stages and writes each run
+of changed blocks with `scsi write` and compares each run read back. Without
+`--run` it only prints the plan. This is a device write.
+
 ## Keyless entry to the U-Boot console
 
 1. Confirm the assigned serial and running fingerprint over USB ADB, check that
@@ -202,8 +210,8 @@ The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 
 ## Tests
 
-`test-ram-boot-pe13.py`, `test-lun0-gpt.py`, `test-b-host-profile.py` and
-`test-build-b-twrp.py` run on the Mac. `test-ram-twrp-preinit.py` builds the
+`test-ram-boot-pe13.py`, `test-lun0-gpt.py`, `test-write-lun0-gpt.py`,
+`test-b-host-profile.py` and `test-build-b-twrp.py` run on the Mac. `test-ram-twrp-preinit.py` builds the
 guard with `-DCRUX_GUARD_TEST` against a synthetic sysfs and needs Linux, so run
 it in the VM (`orb -m cruxbuild bash -lc "cd /tmp && python3
 $M/crux-pe13-distributed/local/test-ram-twrp-preinit.py"`).
