@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -97,6 +98,21 @@ def _open_retry(request, opener=_API_OPENER, sleep=time.sleep, now=time.time):
                 sleep(delay)
                 continue
             raise RuntimeError(f'GitHub API request failed ({error.code}): {message or body.decode(errors="replace")[:1000]}') from error
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+            # Every caller sends an idempotent GET, so a connection dropped or
+            # refused before any response shares the 5xx retry budget.
+            reason = getattr(error, 'reason', error)
+            if not isinstance(reason, (ConnectionError, TimeoutError, socket.gaierror)):
+                raise
+            if transient_retries >= _TRANSIENT_RETRIES:
+                raise RuntimeError(f'GitHub API connection failed ({type(reason).__name__}) '
+                                   f'after {_TRANSIENT_RETRIES} transient retries') from error
+            delay = min(2 ** transient_retries, _TRANSIENT_BACKOFF_MAX)
+            transient_retries += 1
+            print(f'GitHub API connection failed ({type(reason).__name__}); retry {transient_retries}/'
+                  f'{_TRANSIENT_RETRIES} in {delay:g}s', flush=True)
+            sleep(delay)
+            continue
 
 
 def _request(url, token, opener=_API_OPENER, sleep=time.sleep, now=time.time):

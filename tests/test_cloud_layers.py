@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import socket
 from pathlib import Path
 import sys
 import tempfile
@@ -283,6 +284,36 @@ class CloudLayersTests(unittest.TestCase):
                             sleep=waits.append, now=lambda: 100)
         self.assertEqual(waits, [1, 2, 4, 8, 16])
         self.assertEqual(len(calls), 6)
+
+    def test_connection_dropped_before_response_is_retried(self):
+        waits = []
+        failures = [http.client.RemoteDisconnected('Remote end closed connection without response'),
+                    urllib.error.URLError(ConnectionRefusedError(111, 'refused')),
+                    urllib.error.URLError(socket.gaierror(-3, 'Temporary failure in name resolution')),
+                    TimeoutError('timed out')]
+        opener = mock.Mock(side_effect=[*failures, self.response(b'{}')])
+        result, _ = layers._request('https://api.github.com/test', 'token', opener=opener,
+                                    sleep=waits.append, now=lambda: 100)
+        self.assertEqual(result, b'{}')
+        self.assertEqual(waits, [1, 2, 4, 8])
+
+    def test_connection_failures_exhaust_then_fail(self):
+        waits = []
+        opener = mock.Mock(side_effect=http.client.RemoteDisconnected('closed'))
+        with self.assertRaisesRegex(RuntimeError, 'RemoteDisconnected.*after 5 transient retries'):
+            layers._request('https://api.github.com/test', 'token', opener=opener,
+                            sleep=waits.append, now=lambda: 100)
+        self.assertEqual(waits, [1, 2, 4, 8, 16])
+        self.assertEqual(opener.call_count, 6)
+
+    def test_non_network_url_error_is_not_retried(self):
+        waits = []
+        opener = mock.Mock(side_effect=urllib.error.URLError('unknown url type: ftp'))
+        with self.assertRaises(urllib.error.URLError):
+            layers._request('https://api.github.com/test', 'token', opener=opener,
+                            sleep=waits.append, now=lambda: 100)
+        self.assertEqual(waits, [])
+        opener.assert_called_once()
 
     def test_inventory_paginates_without_relisting_for_each_layer(self):
         records = [{'id': index + 1, 'name': 'artifact-' + str(index), 'expired': False}
