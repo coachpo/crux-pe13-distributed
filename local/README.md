@@ -11,12 +11,11 @@ A native x86_64 Ubuntu host is neither supported nor tested. The commands below
 drive the VM with `orb -m cruxbuild` and read the workspace through OrbStack's
 `/mnt/mac` view; `cruxbuild` is just the VM name. `build-pe13-local.sh` always
 applies the Rosetta host profile (dexpreopt/profile off, nsjail hidden), which a
-native host would not need. Packaging runs on the Mac, so it needs a Mac
-(Mach-O) `mkimage`: the Linux one that the U-Boot VM and CI builds produce does
-not execute on macOS. On a new VM, create the source checkout with
+native host would not need. Packaging runs on the Mac with the
+[Mac packaging tools](#mac-packaging-tools), including a Mac (Mach-O) `mkimage`
+built from `crux-uboot`. On a new VM, create the source checkout with
 `checkout-from-lock.py` (below); `build-pe13-local.sh` without `--resume` starts a
-cold managed cache. How to build the Mac-native `mkimage` is not documented yet; see
-the [guide](../docs/guide.md#path-b-on-a-mac).
+cold managed cache.
 
 No workflow uses this directory, and LOCAL outputs are never A build
 or publication inputs. Every device step needs an exclusive window from the
@@ -36,6 +35,41 @@ Device helpers need pyserial:
 python3 -m venv ~/.venvs/crux-local
 ~/.venvs/crux-local/bin/pip install -r crux-pe13-distributed/local/requirements.txt
 ```
+
+## Mac packaging tools
+
+Packaging and the install TWRP derivation run on the Mac and call `mkimage`,
+`fdtoverlay` and `dtc`, `zstd`, and the `aarch64-unknown-linux-gnu-` cross compiler
+(installer, install TWRP guard). Install them with Homebrew:
+
+```sh
+brew install make openssl@3 pkgconf dtc zstd
+brew install messense/macos-cross-toolchains/aarch64-unknown-linux-gnu
+```
+
+Build `mkimage` from the `crux-uboot` checkout in the workspace root
+(`git clone https://github.com/coachpo/crux-uboot.git`); the Linux one that
+`tools/crux/build-images.sh` and its CI produce does not run on macOS. This is the
+U-Boot tools-only configuration without `mkeficapsule` (it needs GnuTLS) and
+pylibfdt, against Homebrew's keg-only `openssl@3`:
+
+```sh
+cd crux-uboot
+ssl=$(brew --prefix openssl@3)
+gmake O=.output-mac-tools tools-only_defconfig
+scripts/config --file .output-mac-tools/.config --disable TOOLS_MKEFICAPSULE
+gmake O=.output-mac-tools olddefconfig
+PKG_CONFIG_PATH=$ssl/lib/pkgconfig gmake O=.output-mac-tools NO_PYTHON=1 \
+  HOSTCFLAGS="-I$ssl/include" HOSTLDFLAGS="-L$ssl/lib" -j"$(sysctl -n hw.ncpu)" tools-only
+.output-mac-tools/tools/mkimage -V
+cd ..
+```
+
+`prepare-pe13-local-payload.sh` uses `crux-uboot/.output-mac-tools/tools/mkimage`
+unless `MKIMAGE` names another. A FIT depends only on its ITS, its inputs and the
+timestamp, which `mkimage` takes from `SOURCE_DATE_EPOCH` when set. Built this way
+from `crux-uboot` d383cb7 (macOS 26, Apple clang 21), it reproduces the install
+TWRP v7 FIT byte for byte with `SOURCE_DATE_EPOCH=1795607012`, its timestamp.
 
 ## B build
 
@@ -99,10 +133,8 @@ python3 -m venv ~/.venvs/crux-local
    packages the identity-free FITs with `references/pe13-boot-contracts/package-pe13.py`
    (its boot contract carries no device identity), validates the images (PE fstab routing, native guard,
    development ADB properties) and writes the unsigned payload with
-   `scripts/crux_zip.py prepare`. Keep the Mac-native Crux `mkimage` at
-   `crux-uboot/.output-crux/xiaomi-crux/tools/mkimage`, or select it with
-   `MKIMAGE`. The U-Boot candidate builder now runs on Linux and its host
-   tool is not a replacement for the Mac executable.
+   `scripts/crux_zip.py prepare`. It uses the Mac `mkimage` of the
+   [Mac packaging tools](#mac-packaging-tools); `MKIMAGE` selects another.
 
 4. Sign with the B install private key and finalize:
 
@@ -227,7 +259,7 @@ aarch64-unknown-linux-gnu-gcc -Os -static -s -o <dir>/preinit.elf \
 python3 crux-pe13-distributed/local/build-b-twrp.py --preinit <dir>/preinit.elf \
   --source-fit <twrp-crux dist>/twrp-crux-3.7.1_12.itb \
   --public-key crux-pe13-distributed/keys/crux-b-install-2026-11-07.p256.pub \
-  --mkimage crux-uboot/.output-crux/xiaomi-crux/tools/mkimage --out <new dir>
+  --mkimage crux-uboot/.output-mac-tools/tools/mkimage --out <new dir>
 ```
 
 The profile ID and the kernel, DT and ramdisk components are deterministic; the

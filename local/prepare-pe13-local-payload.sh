@@ -22,7 +22,7 @@ build=${1:?BUILD_NUMBER}
 state=${2:?STATE_DIR}
 evidence=$(cd -- "${3:?EVIDENCE_DIR}" && pwd -P)
 marker=${4:-crux-pe13-local-$build}
-mkimage=${MKIMAGE:-$workspace/crux-uboot/.output-crux/xiaomi-crux/tools/mkimage}
+mkimage=${MKIMAGE:-$workspace/crux-uboot/.output-mac-tools/tools/mkimage}
 test -x "$mkimage"
 [[ $build =~ ^[0-9]{10}$ ]]
 

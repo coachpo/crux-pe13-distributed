@@ -294,8 +294,10 @@ as its own checkout linked into the tree, the lock's layout, and the two snapsho
 projects from the Git bundles or repositories you pass with `--snapshot`. Then
 `build-pe13-local.sh` without `--resume` builds a cold managed cache.
 
-**Known gap:** packaging needs a Mac-native `mkimage`, and the steps to build one
-are not documented yet.
+Packaging on the Mac needs Homebrew's `dtc` and `zstd`, the macOS
+`aarch64-unknown-linux-gnu` cross toolchain and a Mac-native `mkimage` that you
+build from a `crux-uboot` checkout next to this repository; the
+[Mac packaging tools](../local/README.md#mac-packaging-tools) list the commands.
 
 ## Pins in one place
 

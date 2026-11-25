@@ -805,7 +805,6 @@ def validate_fit(path, mode, expected, loads):
 
 
 def main():
-    workspace = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--base-dir", type=Path, required=True)
@@ -822,8 +821,7 @@ def main():
     parser.add_argument("--development-adb", action="store_true",
                         help="Permit source-built ROM/Recovery RSA-disabled development ADB; retain ro.secure and storage checks")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--mkimage", default=shutil.which("mkimage") or
-                        str(workspace / "crux-uboot/.output-crux/xiaomi-crux/tools/mkimage"))
+    parser.add_argument("--mkimage", default=shutil.which("mkimage") or "mkimage")
     parser.add_argument("--fdtoverlay", default=shutil.which("fdtoverlay") or "fdtoverlay")
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()
