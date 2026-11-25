@@ -112,7 +112,7 @@ def _validate_manifest(manifest):
         project = dict(item)
         project["path"], project["revision"] = path, revision
         archive_type = project.get("archive_type", "tar.gz")
-        if path in cloud_release_snapshot.PROJECT_REPOSITORIES and archive_type != cloud_release_snapshot.ARCHIVE_TYPE:
+        if path in cloud_release_snapshot.SNAPSHOT_PATHS and archive_type != cloud_release_snapshot.ARCHIVE_TYPE:
             raise SourceError(f"project {path}: a locked private Release snapshot is required")
         if archive_type not in {"tar.gz", "git-bundle", cloud_release_snapshot.ARCHIVE_TYPE}:
             raise SourceError(f"project {path}: unsupported archive_type")

@@ -13,7 +13,6 @@ import cloud_reuse
 import release_source
 
 
-REPOSITORY = "coachpo/crux-pe13-distributed"
 BUILD_WORKFLOW = ".github/workflows/build-standard.yml"
 
 
@@ -199,8 +198,8 @@ def find(context: dict, task_id: str, basis: dict, staging: Path, token: str):
     Network/API failures and malformed matching records propagate as errors; they are
     never silently converted into cache misses.
     """
-    if not isinstance(context, dict) or context.get("repository") != REPOSITORY:
-        raise ValueError("Native shard cache is restricted to the maintained repository")
+    if not isinstance(context, dict) or context.get("repository") != release_source.repository():
+        raise ValueError("Native shard cache is restricted to the running repository")
     if not isinstance(task_id, str) or not task_id:
         raise ValueError("Invalid current task ID")
     if not isinstance(basis, dict) or not token:
@@ -214,7 +213,7 @@ def find(context: dict, task_id: str, basis: dict, staging: Path, token: str):
     staging = Path(staging)
     staging.mkdir(parents=True, exist_ok=True)
 
-    for run in _run_inventory(REPOSITORY, token):
+    for run in _run_inventory(release_source.repository(), token):
         if not _eligible_run(run):
             continue
         run_id = str(run.get("id", ""))
@@ -225,7 +224,7 @@ def find(context: dict, task_id: str, basis: dict, staging: Path, token: str):
         if run_id == str(context.get("execution_id")):
             continue
 
-        inventory = cloud_layers.artifact_inventory(run_id, REPOSITORY, token)
+        inventory = cloud_layers.artifact_inventory(run_id, release_source.repository(), token)
         summary_artifact = _trusted_artifact(inventory, "cloud-fresh-build-summary")
         if summary_artifact is None:
             continue
@@ -262,7 +261,7 @@ def find(context: dict, task_id: str, basis: dict, staging: Path, token: str):
             cached_policy = cache_context.get("reuse_policy")
             if (cache_context.get("execution_id") != run_id
                     or cache_context.get("worker_commit") != worker_commit
-                    or cache_context.get("repository") != REPOSITORY
+                    or cache_context.get("repository") != release_source.repository()
                     or not isinstance(cached_policy, dict)
                     or cached_policy.get("execution_digest") != execution_digest
                     or candidate_task not in cache_context.get("tasks", {})):
@@ -306,7 +305,7 @@ def find(context: dict, task_id: str, basis: dict, staging: Path, token: str):
             if verified_archive != output_archive:
                 raise CacheIntegrityError("Native output verifier returned a different archive path")
 
-            origin = {"repository": REPOSITORY, "run_id": run_id, "worker_commit": worker_commit,
+            origin = {"repository": release_source.repository(), "run_id": run_id, "worker_commit": worker_commit,
                       "task_id": candidate_task, "artifact_id": shard_artifact["id"],
                       "artifact_digest": shard_artifact["digest"],
                       "receipt_sha256": cloud_reuse.digest(receipt)}

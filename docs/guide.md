@@ -252,9 +252,13 @@ No tool here fetches them for you.
 Path A runs unattended on free standard `ubuntu-22.04` runners of a public
 repository; a cold chain takes about 5–6.5 hours. To run it in a fork:
 
-- Provide the snapshot sources (above) in repositories your fork's token can
-  read. Change their `release_snapshot` pins in the lock, and set the secret
-  `CRUX_SOURCE_SNAPSHOTS_TOKEN` to a token with read access to them.
+- Put the two snapshot sources (above) in **private** repositories of yours,
+  each as a Release asset made with `git archive` of the locked commit (the
+  fetcher refuses a public snapshot repository). In the lock, point each
+  project's `url` at `https://github.com/<owner>/<repository>` and its
+  `release_snapshot` at that repository, Release and asset (IDs, tag, name, size,
+  SHA-256); the commit and tree stay as they are. Set the secret
+  `CRUX_SOURCE_SNAPSHOTS_TOKEN` to a token that can read those repositories.
 - Make your own install key: a P-256 key in PEM form, for example
   `openssl ecparam -name prime256v1 -genkey -noout -out install.pem`. Its public
   half goes into `keys/` as PEM and as raw 64-byte X‖Y
@@ -266,15 +270,10 @@ repository; a cold chain takes about 5–6.5 hours. To run it in a fork:
   and the public-key paths (`PUBLIC_KEY` in `scripts/release_sign.py` and
   `scripts/release_zip.py`) at your files. ZIPs signed with your key install only with that
   install TWRP.
-- Enable Actions in the fork.
-
-**Known gap:** the workflows still refuse to run outside this repository.
-`nightly.yml` and the sign/release jobs of `release.yml` check
-`github.repository`. `freeze-standard.yml` refuses the snapshot layers elsewhere.
-`scripts/cloud_reuse_cache.py`, `scripts/release_source.py` and
-`scripts/cloud_release_snapshot.py` name this repository and its snapshot
-repositories as constants. A fork has to change these until they read the
-running repository.
+- Enable Actions in the fork. The workflows and scripts take the repository
+  from the running workflow (`GITHUB_REPOSITORY`), so the chain, its native
+  reuse cache and its Releases stay inside the fork. Signing, publishing and the
+  snapshot layers still run only on `main`.
 
 ### Path B on a Mac
 

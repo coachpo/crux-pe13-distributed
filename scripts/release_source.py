@@ -16,10 +16,14 @@ import cloud_schedule
 
 
 API = cloud_layers.API
-REPOSITORY = "coachpo/crux-pe13-distributed"
 PRODUCT = "aosp_crux-userdebug"
 COMPILE_WORKFLOW = ".github/workflows/build-standard.yml"
 ASSEMBLY_WORKFLOW = ".github/workflows/assemble-standard.yml"
+
+
+def repository():
+    """The repository this workflow runs in (owner/name), which holds its runs and releases."""
+    return os.environ["GITHUB_REPOSITORY"]
 COMPILE_TITLE_RE = re.compile(r"Fresh PE13 compile ([0-9]{10})(?: cold retry of ([1-9][0-9]*))?")
 ZIP_MANIFEST_ARTIFACT = "zip-manifest"
 TAG_RE = re.compile(r"crux-pe13-([0-9]{10})-v([1-9][0-9]*)")
@@ -108,7 +112,7 @@ def _token() -> str:
 
 
 def _json_api(path: str, token: str) -> dict:
-    url = API + "/repos/" + REPOSITORY + "/" + path.lstrip("/")
+    url = API + "/repos/" + repository() + "/" + path.lstrip("/")
     try:
         payload, _ = cloud_layers._request(url, token)
         value = json.loads(payload)
@@ -135,7 +139,7 @@ def _run(run_id: str, workflow_path: str, token: str) -> dict:
 
 def _inventory(run_id: str, token: str) -> dict:
     try:
-        return cloud_layers.artifact_inventory(run_id, REPOSITORY, token)
+        return cloud_layers.artifact_inventory(run_id, repository(), token)
     except Exception as error:
         raise SourceTransportError("Actions artifact inventory failed: " + str(error)) from error
 
@@ -152,7 +156,7 @@ def _artifact(inventory: dict, name: str) -> dict:
 
 
 def _download_zip(artifact: dict, destination: Path, token: str) -> tuple[Path, str]:
-    url = f"{API}/repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"
+    url = f"{API}/repos/{repository()}/actions/artifacts/{artifact['id']}/zip"
     request = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json", "Authorization": "Bearer " + token,
         "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "crux-release-source",
@@ -317,7 +321,7 @@ def _assembly_producer_bindings(context: dict, summary: dict, compile_run: str,
     _require(isinstance(context, dict) and context.get("schema_version") == 1,
              "compile build context is malformed")
     _require(context.get("execution_id") == compile_run
-             and context.get("repository") == REPOSITORY
+             and context.get("repository") == repository()
              and context.get("build_number") == build
              and context.get("worker_commit") == compile.get("head_sha"),
              "compile build context identity differs from the successful compile run")

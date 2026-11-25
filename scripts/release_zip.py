@@ -24,7 +24,7 @@ import urllib.request
 from urllib.parse import urlencode
 
 import crux_zip
-from release_source import (REPOSITORY, ReuseContentError, SourceError, assembly_build, parse_tag,
+from release_source import (ReuseContentError, SourceError, assembly_build, parse_tag, repository,
                             sha256, verify_source)
 
 
@@ -46,7 +46,7 @@ def require(condition, message):
 class Releases:
     def api(self, endpoint, *, pages=False, method="GET", payload=None):
         argv = ["gh", "api", "--hostname", "github.com", "--method", method,
-                f"repos/{REPOSITORY}/{endpoint}"]
+                f"repos/{repository()}/{endpoint}"]
         if pages:
             argv += ["--paginate", "--slurp"]
         if payload is not None:
@@ -62,7 +62,7 @@ class Releases:
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         require(token, "GH_TOKEN is required for release asset upload")
         query = urlencode({"name": path.name})
-        url = f"https://uploads.github.com/repos/{REPOSITORY}/releases/{release_id}/assets?{query}"
+        url = f"https://uploads.github.com/repos/{repository()}/releases/{release_id}/assets?{query}"
         result = subprocess.run(
             ["curl", "--disable", "--silent", "--show-error", "--fail-with-body",
              "--connect-timeout", "30", "--request", "POST", "--upload-file", str(path),
@@ -85,7 +85,7 @@ def fetch_twrp(directory, pin=None):
     if token:
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{REPOSITORY}/releases/assets/{pin['asset_id']}", headers=headers)
+        f"https://api.github.com/repos/{repository()}/releases/assets/{pin['asset_id']}", headers=headers)
     with urllib.request.urlopen(request, timeout=300) as response, path.open("xb") as output:
         while True:
             block = response.read(1 << 22)
@@ -127,8 +127,8 @@ def release_body(source):
     reuse_json = json.dumps(reuse, indent=2, sort_keys=True)
     return (
         "Crux PE13 flashable ZIP (aosp_crux-userdebug / test-keys), built by GitHub Actions.\n\n"
-        f"[Verified assembly](https://github.com/{REPOSITORY}/actions/runs/{source.assembly_run}) · "
-        f"[Compile and verified shard origins](https://github.com/{REPOSITORY}/actions/runs/{source.compile_run}).\n\n"
+        f"[Verified assembly](https://github.com/{repository()}/actions/runs/{source.assembly_run}) · "
+        f"[Compile and verified shard origins](https://github.com/{repository()}/actions/runs/{source.compile_run}).\n\n"
         "Install it with the RAM-only install TWRP attached here, following README.txt. "
         "It is a clean install: PE user data and metadata are erased. Host validation only; "
         "device acceptance is recorded separately.\n\n"
@@ -282,8 +282,9 @@ def main():
     if not re.fullmatch(r"[0-9a-f]{128}", args.signature):
         parser.error("--signature must be 128 lowercase hex digits")
     if args.operation != "preflight" and not (
-            os.environ.get("GITHUB_WORKFLOW_REF")
-            == f"{REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
+            os.environ.get("GITHUB_REPOSITORY")
+            and os.environ.get("GITHUB_WORKFLOW_REF")
+            == f"{os.environ['GITHUB_REPOSITORY']}/.github/workflows/release.yml@refs/heads/main"
             and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
             and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"):
         parser.error("draft, publish and release must be dispatched through release.yml on main")

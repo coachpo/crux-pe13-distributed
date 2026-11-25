@@ -14,6 +14,19 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import release_zip
 from release_source import ReuseContentError, SourceError, sha256
 
+# These scripts take the repository they serve from the Actions runtime; a fork's name
+# proves nothing here is tied to the maintained repository.
+FORK = "owner/fork"
+_environment = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": FORK})
+
+
+def setUpModule():
+    _environment.start()
+
+
+def tearDownModule():
+    _environment.stop()
+
 
 class FakeReleases:
     def __init__(self):
@@ -203,7 +216,7 @@ class ReleaseZipTests(unittest.TestCase):
     def test_release_operation_drafts_and_publishes_the_selected_tag(self):
         argv = ["release_zip.py", "--operation", "release", "--assembly-run", self.source.assembly_run,
                 "--signature", "a" * 128]
-        environment = {"GITHUB_WORKFLOW_REF": f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+        environment = {"GITHUB_REPOSITORY": FORK, "GITHUB_WORKFLOW_REF": f"{FORK}/.github/workflows/release.yml@refs/heads/main",
                        "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
         with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
                 mock.patch.object(release_zip, "Releases", return_value=self.api), \
@@ -249,8 +262,8 @@ class ReleaseZipTests(unittest.TestCase):
             argv = ["release_zip.py", "--operation", "release", "--assembly-run", self.source.assembly_run,
                     "--tag", self.source.tag, "--signature", "a" * 128,
                     "--retry-evidence", str(path)]
-            environment = {"GITHUB_WORKFLOW_REF":
-                           f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+            environment = {"GITHUB_REPOSITORY": FORK, "GITHUB_WORKFLOW_REF":
+                           f"{FORK}/.github/workflows/release.yml@refs/heads/main",
                            "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
             with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
                     mock.patch.object(release_zip, "Releases", return_value=self.api), \
@@ -267,8 +280,8 @@ class ReleaseZipTests(unittest.TestCase):
             path = Path(directory) / "preflight-validation-failure.json"
             argv = ["release_zip.py", "--operation", "publish", "--assembly-run", self.source.assembly_run,
                     "--tag", self.source.tag, "--signature", "a" * 128]
-            environment = {"GITHUB_WORKFLOW_REF":
-                           f"{release_zip.REPOSITORY}/.github/workflows/release.yml@refs/heads/main",
+            environment = {"GITHUB_REPOSITORY": FORK, "GITHUB_WORKFLOW_REF":
+                           f"{FORK}/.github/workflows/release.yml@refs/heads/main",
                            "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_ENVIRONMENT": "github-hosted"}
             with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, environment, clear=True), \
                     mock.patch.object(release_zip, "Releases", return_value=self.api), \

@@ -1,6 +1,7 @@
 import hashlib
 from io import BytesIO
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,19 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import cloud_assemble
 import cloud_reuse
 import release_source as source
+
+# These scripts take the repository they serve from the Actions runtime; a fork's name
+# proves nothing here is tied to the maintained repository.
+FORK = "owner/fork"
+_environment = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": FORK})
+
+
+def setUpModule():
+    _environment.start()
+
+
+def tearDownModule():
+    _environment.stop()
 
 
 BUILD = "2026110303"
@@ -123,7 +137,7 @@ def valid_context(summary, owner_count=8):
         "schema_version": 1,
         "execution_id": COMPILE_RUN,
         "worker_commit": WORKER,
-        "repository": source.REPOSITORY,
+        "repository": FORK,
         "build_number": BUILD,
         "pack_run": summary["fresh_build"]["pack_run"],
         "shard_run": summary["fresh_build"]["shard_run"],

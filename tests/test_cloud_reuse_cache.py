@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +16,19 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import cloud_reuse
 import cloud_reuse_cache
+
+# These scripts take the repository they serve from the Actions runtime; a fork's name
+# proves nothing here is tied to the maintained repository.
+FORK = "owner/fork"
+_environment = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": FORK})
+
+
+def setUpModule():
+    _environment.start()
+
+
+def tearDownModule():
+    _environment.stop()
 import cloud_layers
 import release_source
 
@@ -43,11 +57,11 @@ class CloudReuseCacheTests(unittest.TestCase):
                       "runtime": {"CCACHE_DISABLE": "1"}, "dependencies": [],
                       "additional_exports": [], "prebuild_targets": [],
                       "kernel_source_alias": None}
-        self.current_context = {"repository": cloud_reuse_cache.REPOSITORY,
+        self.current_context = {"repository": FORK,
                                 "execution_id": "999", "reuse_policy": {
                                     "version": 1, "execution_digest": self.execution_digest}}
         self.candidate_context = {
-            "schema_version": 1, "repository": cloud_reuse_cache.REPOSITORY,
+            "schema_version": 1, "repository": FORK,
             "execution_id": "555", "worker_commit": "1" * 40,
             "pack_run": "500", "shard_run": "501", "plan_sha256": "2" * 64,
             "source_manifest_sha256": "3" * 64,

@@ -12,10 +12,9 @@ import urllib.request
 ARCHIVE_TYPE = "github-release-snapshot"
 TOKEN_ENV = "CRUX_SOURCE_SNAPSHOTS_TOKEN"
 API = "https://api.github.com"
-PROJECT_REPOSITORIES = {
-    "external/faceunlock": "coachpo/crux-pe13-faceunlock-snapshot",
-    "vendor/gms": "coachpo/crux-pe13-vendor-gms-snapshot",
-}
+# The only projects read from private snapshot Releases. Their repositories come from the
+# lock (release_snapshot.repository, matching the project URL), so a fork can pin its own.
+SNAPSHOT_PATHS = ("external/faceunlock", "vendor/gms")
 LOCK_FIELDS = {"repository", "repository_id", "release_id", "tag", "asset_id", "asset_name",
                "size_bytes", "sha256"}
 
@@ -26,10 +25,10 @@ class SnapshotError(ValueError):
 
 def validate(project):
     lock = project.get("release_snapshot")
-    repository = PROJECT_REPOSITORIES.get(project.get("path"))
+    repository = lock.get("repository") if isinstance(lock, dict) else None
     revision, tree = project.get("revision"), project.get("expected_tree")
-    if (repository is None or not isinstance(lock, dict) or set(lock) != LOCK_FIELDS
-            or lock.get("repository") != repository
+    if (project.get("path") not in SNAPSHOT_PATHS or not isinstance(lock, dict) or set(lock) != LOCK_FIELDS
+            or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository)
             or project.get("url") != f"https://github.com/{repository}"):
         raise SnapshotError("Invalid private snapshot project or repository")
     if any(not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{40}", pin)

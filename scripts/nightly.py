@@ -213,7 +213,7 @@ def run(repository, snapshot_token, today, dispatch=True, root=ROOT, force=False
         if head != projects[path]["revision"]:
             changes[path] = {"revision": head}
             notes.append(f"- {path}: {projects[path]['revision'][:12]} -> {head[:12]}")
-    for path in cloud_release_snapshot.PROJECT_REPOSITORIES:
+    for path in cloud_release_snapshot.SNAPSHOT_PATHS:
         fields = snapshot_update(projects[path], snapshot_token)
         if fields:
             changes[path] = fields

@@ -39,7 +39,7 @@ class SnapshotTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        repository = snapshot.PROJECT_REPOSITORIES["vendor/gms"]
+        repository = "owner/vendor-gms-snapshot"  # any repository the lock names
         self.lock = {
             "repository": repository, "repository_id": 1, "release_id": 2, "asset_id": 3,
             "tag": f"snapshot-{self.revision}", "asset_name": f"vendor-gms-{self.revision}.tar.gz",
@@ -89,6 +89,18 @@ class SnapshotTests(unittest.TestCase):
             snapshot.asset_url(self.lock),
         ])
         self.assertEqual(requests[-1].get_header("Accept"), "application/octet-stream")
+
+    def test_repository_comes_from_the_lock_and_must_match_the_url(self):
+        self.assertEqual(snapshot.validate(self.project)["repository"], "owner/vendor-gms-snapshot")
+        cases = {
+            "url names another repository": {**self.project, "url": "https://github.com/other/vendor-gms-snapshot"},
+            "not a snapshot path": {**self.project, "path": "vendor/aosp"},
+            "repository is not owner/name": {**self.project, "url": "https://github.com/x",
+                                             "release_snapshot": {**self.lock, "repository": "x"}},
+        }
+        for label, project in cases.items():
+            with self.subTest(label), self.assertRaises(snapshot.SnapshotError):
+                snapshot.validate(project)
 
     def test_wrong_bytes_stop_before_extraction(self):
         with self.assertRaisesRegex(cloud_source.SourceError, "asset SHA-256 differs"):

@@ -43,7 +43,7 @@ jobs:
   # The only job that sees the install key: no third-party action, no upload,
   # and nothing but the 128-hex-digit signature leaves it.
   sign:
-    if: github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.signature == ''
+    if: github.ref == 'refs/heads/main' && inputs.signature == ''
     environment: install-signing
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -63,7 +63,7 @@ jobs:
 
   preflight:
     needs: sign
-    if: ${{ !cancelled() && github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation == 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.operation == 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
@@ -89,7 +89,7 @@ jobs:
 
   release:
     needs: sign
-    if: ${{ !cancelled() && github.repository == 'coachpo/crux-pe13-distributed' && github.ref == 'refs/heads/main' && inputs.operation != 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.operation != 'preflight' && (needs.sign.result == 'success' || inputs.signature != '') }}
     permissions:
       actions: read
       contents: write

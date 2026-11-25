@@ -91,10 +91,8 @@ jobs:
                        if project.get('archive_type') == 'github-release-snapshot'}
           snapshot_layers = [layer['id'] for layer in manifest['layers']
                              if snapshots.intersection(layer['projects'])]
-          if set(selected).intersection(snapshot_layers) and not os.environ['SOURCE_RUN'] and (
-              os.environ['GITHUB_REPOSITORY'] != 'coachpo/crux-pe13-distributed'
-              or os.environ['GITHUB_REF'] != 'refs/heads/main'
-          ):
+          if (set(selected).intersection(snapshot_layers) and not os.environ['SOURCE_RUN']
+                  and os.environ['GITHUB_REF'] != 'refs/heads/main'):
               raise SystemExit('Private Release snapshots may only be fetched by the trusted main workflow')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print('layers=' + json.dumps(selected), file=output)
