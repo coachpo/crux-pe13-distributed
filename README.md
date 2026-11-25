@@ -8,6 +8,10 @@ not publish here. The two routes are not byte-equivalent: build identities,
 host configuration, host packaging tools and signatures can differ. See
 [`local/`](local/README.md) for the local path and how to check its source pins.
 
+To install the ROM on a crux (including the first install from official MIUI),
+update or roll it back, or build it in a fork or on a Mac, start with the
+[installation and build guide](docs/guide.md).
+
 ## Standard-runner build chain
 
 `nightly.yml` checks the sources every night at 23:37 UTC. When the configured

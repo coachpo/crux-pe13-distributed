@@ -2,7 +2,20 @@
 
 These host tools build path B in OrbStack, package it as the same signed
 crux-install/1 TWRP ZIP that the Actions chain publishes, and reach the U-Boot
-console. No workflow uses this directory, and LOCAL outputs are never A build
+console.
+
+**Supported host:** an Apple Silicon Mac with an OrbStack Ubuntu 22.04 amd64 VM
+(Rosetta), about 48 GiB of VM memory, and a Btrfs filesystem in the VM for the
+managed build cache (`--seed-from` needs reflinks; the state tests need it too).
+A native x86_64 Ubuntu host is neither supported nor tested. The commands below
+drive the VM with `orb -m cruxbuild` and read the workspace through OrbStack's
+`/mnt/mac` view; `cruxbuild` is just the VM name. `build-pe13-local.sh` always
+applies the Rosetta host profile (dexpreopt/profile off, nsjail hidden), which a
+native host would not need. Packaging runs on the Mac, so it needs a Mac
+(Mach-O) `mkimage`: the Linux one that the U-Boot VM and CI builds produce does
+not execute on macOS. Building a cold managed cache and a source checkout from
+the lock from scratch is not documented yet; see the
+[guide](../docs/guide.md#path-b-on-a-mac). No workflow uses this directory, and LOCAL outputs are never A build
 or publication inputs. Every device step needs an exclusive window from the
 coordinator the owner designates and its own write authorization; every debug
 kernel handoff must arm and check the U-Boot watchdog.

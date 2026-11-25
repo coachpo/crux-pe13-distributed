@@ -1,6 +1,8 @@
 # OrbStack isolated cold replay
 
-This is a **local diagnostic**, not an Actions runner or a publication input.
+This is a **local diagnostic** for the maintainer's code changes, not a
+supported build path for others (see the [guide](../docs/guide.md#building)),
+an Actions runner or a publication input.
 It calls the existing `scripts/worker.py`; it does not implement another
 compiler, cache-adoption path, dependency-export policy or signing interface.
 Do not register it as a self-hosted runner.
