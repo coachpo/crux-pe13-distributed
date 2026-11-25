@@ -13,9 +13,12 @@ drive the VM with `orb -m cruxbuild` and read the workspace through OrbStack's
 applies the Rosetta host profile (dexpreopt/profile off, nsjail hidden), which a
 native host would not need. Packaging runs on the Mac, so it needs a Mac
 (Mach-O) `mkimage`: the Linux one that the U-Boot VM and CI builds produce does
-not execute on macOS. Building a cold managed cache and a source checkout from
-the lock from scratch is not documented yet; see the
-[guide](../docs/guide.md#path-b-on-a-mac). No workflow uses this directory, and LOCAL outputs are never A build
+not execute on macOS. On a new VM, create the source checkout with
+`checkout-from-lock.py` (below); `build-pe13-local.sh` without `--resume` starts a
+cold managed cache. How to build the Mac-native `mkimage` is not documented yet; see
+the [guide](../docs/guide.md#path-b-on-a-mac).
+
+No workflow uses this directory, and LOCAL outputs are never A build
 or publication inputs. Every device step needs an exclusive window from the
 coordinator the owner designates and its own write authorization; every debug
 kernel handoff must arm and check the U-Boot watchdog.
@@ -35,6 +38,19 @@ python3 -m venv ~/.venvs/crux-local
 ```
 
 ## B build
+
+0. On a new VM, create the checkout the build reads. `checkout-from-lock.py` makes a
+   shallow Git checkout of every project of `config/cloud-source-manifest.json` at its
+   locked revision under `$H/crux-pe13-offline-2026-09-25/pe13`, the kernel project as
+   `$H/crux-kernel-cepheus` linked into the tree, and the lock's layout links and copies.
+   The two private snapshot projects come from a Git bundle or repository you provide
+   (their commit and tree must equal the lock). It can run again and keeps finished
+   projects and any project with tracked changes:
+
+   ```sh
+   orb -m cruxbuild python3 $M/crux-pe13-distributed/local/checkout-from-lock.py \
+     --snapshot vendor/gms=<gms bundle> --snapshot external/faceunlock=<faceunlock bundle> --jobs 8
+   ```
 
 1. Check the source tree in the VM. Every project must be at the pin of
    `config/cloud-source-manifest.json` with no tracked change:
@@ -225,7 +241,8 @@ The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 ## Tests
 
 `test-ram-boot-pe13.py`, `test-lun0-gpt.py`, `test-write-lun0-gpt.py`,
-`test-b-host-profile.py` and `test-build-b-twrp.py` run on the Mac. `test-ram-twrp-preinit.py` builds the
+`test-b-host-profile.py`, `test-build-b-twrp.py` and `test-checkout-from-lock.py`
+run on the Mac. `test-ram-twrp-preinit.py` builds the
 guard with `-DCRUX_GUARD_TEST` against a synthetic sysfs and needs Linux, so run
 it in the VM (`orb -m cruxbuild bash -lc "cd /tmp && python3
 $M/crux-pe13-distributed/local/test-ram-twrp-preinit.py"`).

@@ -286,11 +286,16 @@ the same locked source as A and packages the same signed ZIP. See
 [`local/README.md`](../local/README.md) for the commands; a cold build takes
 about 2 h 40 min.
 
-**Known gap:** B expects a Git checkout of every locked project at its pinned
-revision (`local/check_local_source.py` checks HEADs). There is no tool here yet
-to create that checkout from the lock, nor documented steps to build a Mac-native
-`mkimage`. The lock has `path`, `url` and `revision` for every project, so a
-repo manifest can be derived from it.
+B reads a Git checkout of every locked project at its pinned revision
+(`local/check_local_source.py` checks each HEAD). On a new VM,
+[`local/checkout-from-lock.py`](../local/README.md#b-build) creates it from the
+lock: shallow fetches by commit from googlesource, GitHub and GitLab, the kernel
+as its own checkout linked into the tree, the lock's layout, and the two snapshot
+projects from the Git bundles or repositories you pass with `--snapshot`. Then
+`build-pe13-local.sh` without `--resume` builds a cold managed cache.
+
+**Known gap:** packaging needs a Mac-native `mkimage`, and the steps to build one
+are not documented yet.
 
 ## Pins in one place
 
