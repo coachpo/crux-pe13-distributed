@@ -163,17 +163,26 @@ needs a unique executed marker, not command echo.
 `2900b2cc1af5`; its VM cold build and Actions run 45329517224 give the same
 bytes). Its DT carries no device identity; the script refuses a source whose
 bootargs hold an ABL identity token. Kernel and DT are kept; the ramdisk gets
-the static build of `ram_twrp_preinit.c` as `/init` (the PID 1 storage guard,
-which binds all writable PE targets to one known LUN0 layout: the former PE-only
-table or the current table of `lun0-gpt.py`, the installer's `volumes[]`; on
-either it starts and its adb can restore the other, on any other extent it
-restarts before Android init), no mount routes except the in-RAM BCB sink, the
+the static build of `ram_twrp_preinit.c` as `/init` (the PID 1 storage guard),
+no mount routes except the in-RAM BCB sink, the
 bounded recovery capabilities, no Qualcomm decryption services, TWRP's default
 RAM folder, the zip-flash slider settings, the B public key (raw 64-byte form in
 `keys/`) and a new profile ID. `ram_twrp_pack.py` holds its FIT and CPIO
 helpers; `test-build-b-twrp.py` covers the ramdisk and DT checks. Rerun it only
 when the B key, TWRP or the PE extents change and publish the result as a new
-tool Release, then update `config/install-twrp.json`:
+tool Release, then update `config/install-twrp.json`.
+
+The guard decides from sysfs before any ioctl. When the named partitions sit on
+their nodes and the four PE targets match one known LUN0 layout (the former
+PE-only table or the current table of `lun0-gpt.py`, the installer's
+`volumes[]`), it makes the ten originals read-only, keeps the PE targets
+writable and writes `/crux-ram-twrp-guard.ready`; on either table its adb can
+restore the other. On any other table, such as the official MIUI GPT before a
+first install, it waits for the six UFS LUNs, makes every UFS block node (whole
+LUNs and all partitions) read-only, writes `/crux-ram-twrp-guard.readonly` and
+no ready receipt, so the installer refuses while adb can read the GPT and back
+up partitions. TWRP starts in both modes; only missing LUNs or malformed sysfs
+restart the phone. Build it from the workspace root:
 
 ```sh
 aarch64-unknown-linux-gnu-gcc -Os -static -s -o <dir>/preinit.elf \
@@ -186,14 +195,18 @@ python3 crux-pe13-distributed/local/build-b-twrp.py --preinit <dir>/preinit.elf 
 
 The profile ID and the kernel, DT and ramdisk components are deterministic; the
 FIT bytes carry the mkimage timestamp. With GCC 15.2.0 the guard source gives
-preinit `5ea73cb8…`. The pinned v6 (`f058a265…`) was derived from an earlier
-RAM TWRP that is not public; this script no longer reproduces it.
+preinit `b12ae87f…`. The pinned v6 (`f058a265…`, preinit `5ea73cb8…` without the
+read-only mode) was derived from an earlier RAM TWRP that is not public; this
+script no longer reproduces it.
 The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 
 ## Tests
 
 `test-ram-boot-pe13.py`, `test-lun0-gpt.py`, `test-b-host-profile.py` and
-`test-build-b-twrp.py` run on the Mac.
+`test-build-b-twrp.py` run on the Mac. `test-ram-twrp-preinit.py` builds the
+guard with `-DCRUX_GUARD_TEST` against a synthetic sysfs and needs Linux, so run
+it in the VM (`orb -m cruxbuild bash -lc "cd /tmp && python3
+$M/crux-pe13-distributed/local/test-ram-twrp-preinit.py"`).
 `test-local-build-state.py` needs the VM's Btrfs filesystem and non-interactive
 mount-namespace sudo:
 
