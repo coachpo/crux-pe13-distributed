@@ -203,9 +203,10 @@ python3 crux-pe13-distributed/local/build-b-twrp.py --preinit <dir>/preinit.elf 
 
 The profile ID and the kernel, DT and ramdisk components are deterministic; the
 FIT bytes carry the mkimage timestamp. With GCC 15.2.0 the guard source gives
-preinit `b12ae87f…`. The pinned v6 (`f058a265…`, preinit `5ea73cb8…` without the
-read-only mode) was derived from an earlier RAM TWRP that is not public; this
-script no longer reproduces it.
+preinit `b12ae87f…`. `config/install-twrp.json` pins v7 (Release `crux-install-twrp-v7`, profile
+`a92f631f…`). The earlier v6 (`f058a265…`, preinit `5ea73cb8…` without the
+read-only mode) was derived from a RAM TWRP that is not public; this script no
+longer reproduces it, and ZIPs that name its profile still need it.
 The Boot and Recovery U-Boot images are built in `crux-uboot/tools/crux/`.
 
 ## Tests
