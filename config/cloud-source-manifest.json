@@ -1716,11 +1716,11 @@
       "url": "https://github.com/PixelExperience/device_qcom_sepolicy_vndr-legacy-um"
     },
     {
-      "expected_tree": "4211995249c0b4f8bd730593a744422518590ecf",
+      "expected_tree": "f043e283c994f041a8d7bd91a06a0f7b8fd04935",
       "patches": [
         {
-          "path": "config/source-patches/device-crux-dev-marker-2026112451.patch",
-          "sha256": "da60142be0cf4b55740e21d257d8a721af79c7b2678f7d709d40e3bfae048749"
+          "path": "config/source-patches/device-crux-dev-marker-2026112550.patch",
+          "sha256": "12679c00530e028bd0307004d5db65a67585e77960acf45c144945134145e8d2"
         }
       ],
       "path": "device/xiaomi/crux",
@@ -5011,7 +5011,7 @@
     },
     {
       "path": "frameworks/base",
-      "revision": "494e97c8dbd84a135b1c91b9080a8bf703eba971",
+      "revision": "8c8d45ff445b2225fe6ba6f58e584782aa12e573",
       "url": "https://github.com/coachpo/crux-pe13-frameworks-base"
     },
     {
