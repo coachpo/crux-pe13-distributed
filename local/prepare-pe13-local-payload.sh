@@ -10,6 +10,10 @@
 # and the unsigned ZIP payload (zip-payload/). The FITs, installer and ZIP payload come from the
 # same code as the Actions assembly in crux-pe13-distributed. No device access.
 # Sign and finalize the ZIP afterwards with crux_zip.py sign and finalize.
+#
+# The ZIP accepts the install TWRP profile of config/install-twrp.json. To accept a
+# new install TWRP before its tool Release, set INSTALL_TWRP_PROFILES to the
+# space-separated profile IDs the package accepts instead.
 set -euo pipefail
 
 scripts=$(cd -- "$(dirname -- "$0")" && pwd -P)
@@ -83,11 +87,18 @@ python3 "$contracts/package-pe13.py" \
     shasum -a 256 -c FIT-SHA256SUMS
 )
 make -s -C "$actions/installer"
+read -r -a profiles <<< "${INSTALL_TWRP_PROFILES:-$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["profile_id"])' \
+    "$actions/config/install-twrp.json")}"
+profile_args=()
+for profile in "${profiles[@]}"; do
+    [[ $profile =~ ^[0-9a-f]{64}$ ]]
+    profile_args+=(--twrp-profile "$profile")
+done
+(( ${#profile_args[@]} ))
 python3 "$actions/scripts/crux_zip.py" prepare \
     --system "$payload/system.raw.img" --vendor "$payload/vendor.raw.img" \
     --recovery-fit "$payload/fits/recovery-cepheus.itb" --rom-fit "$payload/fits/rom-cepheus.itb" \
     --installer "$actions/installer/build/crux-installer" --build-number "$build" --any-serial \
     --forbid-text "/home/$(id -un)" --forbid-text "/Users/$(id -un)" \
-    --twrp-profile "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["profile_id"])' \
-        "$actions/config/install-twrp.json")" \
+    "${profile_args[@]}" \
     --out "$evidence/zip-payload" | tee "$evidence/zip-payload.json"
