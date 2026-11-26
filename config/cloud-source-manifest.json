@@ -1716,11 +1716,11 @@
       "url": "https://github.com/PixelExperience/device_qcom_sepolicy_vndr-legacy-um"
     },
     {
-      "expected_tree": "6b90c4f0aedee2b12bb29b08ce3fd4df640a4c4f",
+      "expected_tree": "33b3ed60a215ec01bad18bcfe249f822a66a220e",
       "patches": [
         {
-          "path": "config/source-patches/device-crux-dev-marker-2026112551.patch",
-          "sha256": "86cfd88ece30222f53e17195482ecb8833b679236f7579e1d6aaa95a601ba89c"
+          "path": "config/source-patches/device-crux-dev-marker-2026112650.patch",
+          "sha256": "54d8296771ba22f38e0e3d5e5816a593382a7a98b6eb621e4fd48dbed502eac4"
         }
       ],
       "path": "device/xiaomi/crux",
