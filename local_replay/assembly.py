@@ -114,11 +114,13 @@ def execute():
         raise ValueError('Installed files missing from the image: ' + json.dumps(inventory))
     pin = replay.read(replay.ROOT / 'config/install-twrp.json')
     fit_directory = output / 'fit-stage/fits'
+    # The forbidden literals are A's CRUX_FORBID_TEXT secret; this credential-free adapter has none,
+    # so its payload records forbidden_text_checked 0 and that scan stays an A check.
     crux_zip.prepare(argparse.Namespace(system=raw / 'system.img', vendor=raw / 'vendor.img',
         recovery_fit=fit_directory / 'recovery-cepheus.itb', rom_fit=fit_directory / 'rom-cepheus.itb',
         installer=installer / 'build/crux-installer', build_number=context['build_number'],
         any_serial=True, serial=None, twrp_profile=[pin['profile_id']], uboot_role=crux_zip.UBOOT_ROLE,
-        zstd_level=12, out=output / 'unsigned-payload'))
+        zstd_level=12, forbid_text=[], out=output / 'unsigned-payload'))
     result = {'schema': replay.SCHEMA, 'diagnostic_only': True, 'status': 'success',
               'signed': False, 'installable': False, 'publication_admission': False,
               'context_sha256': record['context']['sha256'], 'execution_digest': record['execution_digest'],
